@@ -1,0 +1,17 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "FastAPI Dev: main.py",
+            "type": "python",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "runtimeExecutable": "powershell",
+            "args": [
+                "-NoExit",
+                "-Command",
+                ".venv\\Scripts\\Activate.ps1; fastapi dev main.py"
+            ]
+        }
+    ]
+}
