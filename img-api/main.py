@@ -97,6 +97,10 @@ print("routes loaded")
 
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://127.0.0.1:5173")  # change if your dev server uses a different port
+FRONTEND_DIR = os.getenv(
+    "FRONTEND_DIR",
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "vue-project")),
+)
 
 def ensure_frontend_running():
     # Skip if an env flag disables autostart
@@ -116,13 +120,16 @@ def ensure_frontend_running():
 
     DETACHED_PROCESS = 0x00000008
 
+    if not os.path.isdir(FRONTEND_DIR):
+        print(f"Frontend directory not found: {FRONTEND_DIR}")
+        return
+
     # run npm run dev
-    #in H:/ent/ai/NewFolder/vue-project/
     subprocess.Popen(
         ["npm", "run", "dev"],
-        cwd="H:/ent/ai/NewFolder/vue-project/",
+        cwd=FRONTEND_DIR,
         shell=True,
-        creationflags=DETACHED_PROCESS
+        creationflags=DETACHED_PROCESS,
     )
 
 
