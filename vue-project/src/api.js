@@ -11,6 +11,12 @@ export async function GetFromApi(endpoint) {
 export const webState = reactive({
   sidebarWidth: 0,
   remixImage: null,
+    backendId: 'forge',
+    backendLabel: 'Forge',
+    backendRunning: false,
+    backendAvailable: false,
+    backendStatus: 'unknown',
+    backendStatusMessage: '',
   // added for VRAM WS
   vramSocket: null,
   vram: null,
@@ -125,9 +131,6 @@ export function formatRequest(prompt=null) {
         plainRequest.prompt = prompt
     }
 
-    //add current loras in format <lora:name:weight> example: <lora:my_lora:1.0>
-    plainRequest.prompt += current_model.loras.map(lora => ` <lora:${lora.alias}:${lora.weight}>`).join('')
-
     if (!defaultStyles.value[current_model.model.model_name]) {
         defaultStyles.value[current_model.model.model_name] = {
             prompt_prefix: "",
@@ -136,42 +139,6 @@ export function formatRequest(prompt=null) {
     }
     plainRequest.negative_prompt = defaultStyles.value[current_model.model.model_name].negative_prompt_prefix + plainRequest.negative_prompt
     plainRequest.prompt = defaultStyles.value[current_model.model.model_name].prompt_prefix + plainRequest.prompt
-
-    let override_settings = {}
-    override_settings['sd_model_checkpoint'] = current_model.model.model_name
-
-    plainRequest.override_settings = override_settings
-    plainRequest.override_settings_restore_afterwards = false
-
-    if (defaultStyles.value[current_model.model.model_name].override_sampler) {
-        plainRequest.sampler_name = defaultStyles.value[current_model.model.model_name].sampler || plainRequest.sampler_name
-    }
-
-    if (current_model.adetailer) {
-        plainRequest.alwayson_scripts = plainRequest.alwayson_scripts || {}
-        plainRequest.alwayson_scripts.adetailer = {
-            args: [
-                true,
-                {
-                    "ad_model": "face_yolov8n.pt"
-                }
-            ]
-        }
-    }
-
-    if (current_model.blockCache) {
-        plainRequest.alwayson_scripts = plainRequest.alwayson_scripts || {}
-        plainRequest.alwayson_scripts['first block cache / teacache'] = {
-            args: [
-                true,
-                current_model.blockCacheMethod || "First Block Cache",
-                parseFloat(current_model.blockCacheThreshold ?? 0.1),
-                1,
-                0,
-                false
-            ]
-        }
-    }
     return plainRequest
 }
 

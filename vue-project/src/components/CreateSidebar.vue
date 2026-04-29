@@ -4,6 +4,15 @@ import { onUiUpdate } from '@/scripts/autoComplete'
 
 import { useTextareaAutosize } from '@vueuse/core'
 import { api as viewerApi } from 'v-viewer'
+import {
+    backendState,
+    buildBackendRequest,
+    getActiveBackend,
+    getBackendBaseUrl,
+    getBackendConfigStatus,
+    loadBackendSettings
+} from '@/backends'
+import { loadFromFile, saveToFile } from '@/storage'
 
 const chatHistory = ref([])
 
@@ -344,10 +353,33 @@ function formatSamplerPercentage(request) {
     return (pct > 0 ? '+' : '') + pct.toFixed(0) + '%';
 }
 
+const isDataUrl = (value) => typeof value === 'string' && value.startsWith('data:image/')
+
+const resolveImageSrc = (image) => {
+    if (!image) return ''
+    if (isDataUrl(image)) return image
+    return `data:image/png;base64,${image}`
+}
+
+const getImageExtension = (image) => {
+    if (!image) return 'png'
+    if (isDataUrl(image)) {
+        const mime = image.slice('data:image/'.length).split(';')[0]
+        return mime.split('/')[1] || mime || 'png'
+    }
+    return 'png'
+}
+
+const normalizeAiHordeImage = (image) => {
+    if (!image) return ''
+    if (isDataUrl(image)) return image
+    return `data:image/webp;base64,${image}`
+}
+
 function showFullscreen(images) {
     console.log("Showing fullscreen for images:", images)
     viewerApi({
-        images: images,
+        images: (images || []).map(resolveImageSrc),
         options: { "inline": true, "button": true, "navbar": false, "title": false, "toolbar": false, "tooltip": false, "movable": true, "zoomable": true, "rotatable": true, "scalable": true, "transition": true, "fullscreen": true, "keyboard": true, }
     });
 }
@@ -598,16 +630,12 @@ const samplers = ref([
     }
 ])
 
-const url = ref('http://127.0.0.1:7860/')
-
-const selectedBackend = ref('Forge')
-function updateBackendUrl() {
-    if (selectedBackend.value === 'Forge') {
-        url.value = 'http://127.0.0.1:7860/'
-    } else {
-        url.value = 'http://127.0.0.1:8888/'
-    }
-}
+const activeBackend = computed(() => getActiveBackend())
+const backendCapabilities = computed(() => activeBackend.value.capabilities || {})
+const url = computed(() => getBackendBaseUrl())
+const isForgeBackend = computed(() => activeBackend.value.id === 'forge')
+const canSelectModels = computed(() => backendCapabilities.value.supportsLocalModels)
+const canSelectLoras = computed(() => backendCapabilities.value.supportsLoras)
 
 //current selected model and loras
 //save this in local storage
@@ -692,6 +720,9 @@ async function cancelGeneration() {
 
     isGenerating.value = false
 
+    if (!backendCapabilities.value.supportsInterrupt || !url.value) {
+        return
+    }
     //interrupt ongoing generation
     const response = await fetch(url.value + 'sdapi/v1/interrupt', {
         method: 'POST',
@@ -704,6 +735,10 @@ async function cancelGeneration() {
 
 //watch for lora changes
 watch(() => current_model.loras, async (newLoras) => {
+    if (!backendCapabilities.value.supportsLoras) {
+        triggerWords.value = []
+        return
+    }
     triggerWords.value = []
     let infoFiles = []
     for (const element of newLoras) {
@@ -731,6 +766,9 @@ watch(() => current_model.loras, async (newLoras) => {
 
 //watch for model changes
 watch(() => current_model.model, async (newModel) => {
+    if (!backendCapabilities.value.supportsLocalModels) {
+        return
+    }
     if (newModel) {
         if (newModel.info != null) {
             return;
@@ -766,7 +804,7 @@ watch(() => webState.remixImage, async (newVal) => {
         request.prompt = request.prompt.replaceAll(defaultStyles.value[current_model.model.model_name].prompt_prefix, '').trim();
         request.negative_prompt = request.negative_prompt.replaceAll(defaultStyles.value[current_model.model.model_name].negative_prompt_prefix, '').trim();
 
-        if (newVal.Prompt.includes("<lora:")) {
+        if (backendCapabilities.value.supportsLoras && newVal.Prompt.includes("<lora:")) {
             let all_loras = await fetch(url.value + 'sdapi/v1/loras')
             if (!all_loras.ok) {
                 console.error('Failed to fetch loras:', all_loras.statusText)
@@ -812,6 +850,15 @@ watch(() => webState.sidebarWidth, (newWidth) => {
     }
 });
 
+watch(
+    () => [backendState.activeId, backendState.configs[backendState.activeId]],
+    () => {
+        triggerWords.value = []
+        getBackendStatus()
+    },
+    { deep: true }
+)
+
 //watch for change in request and model
 let saveSettingsTimer = null;
 watch([() => request, () => current_model.model], (newValues) => {
@@ -844,33 +891,6 @@ watch(() => request.prompt, (newPrompt) => {
     request.prompt = newPrompt.replaceAll(defaultStyles.value[current_model.model.model_name].prompt_prefix, '').trim()
     request.prompt = newPrompt.replaceAll(",,", ',').trim()
 })
-
-async function saveToFile(data, filename) {
-    if (data) {
-        // Create a Blob from the JSON data
-        const jsonBlob = new Blob([JSON.stringify(data)], { type: 'application/json' })
-
-        // Create FormData and append the file
-        const formData = new FormData()
-        formData.append('file', jsonBlob, filename)
-
-        const response = await fetch(apiUrl + '/save-file?filename=' + filename, {
-            method: 'POST',
-            body: formData
-        })
-    }
-}
-
-async function loadFromFile(filename) {
-    const response = await fetch(apiUrl + '/storage-files/' + filename)
-    if (response.ok) {
-        const data = await response.json()
-        return data
-    } else {
-        console.error('Failed to load file:', response.statusText)
-        return null
-    }
-}
 
 //watch for history changes
 watch(history, async (newHistory) => {
@@ -934,13 +954,85 @@ function sanitizeSelectedStyles() {
 const extensions = ref([])
 
 const adetailerAvailable = computed(() => {
+    if (!backendCapabilities.value.supportsExtensions) return false
     return extensions.value.some(ext => ext.name === 'adetailer' && ext.enabled)
 })
 const blockCacheAvailable = computed(() => {
+    if (!backendCapabilities.value.supportsExtensions) return false
     return extensions.value.some(ext => ext.name === 'sd-forge-blockcache' && ext.enabled)
 })
 
+const backendStatusChip = computed(() => {
+    switch (webState.backendStatus) {
+        case 'ready':
+            return { label: 'Running', className: 'bg-green-600 text-[#FAF8F5]' }
+        case 'starting':
+            return { label: 'Starting', className: 'bg-yellow-500 text-[#FAF8F5]' }
+        case 'misconfigured':
+            return { label: 'Needs Setup', className: 'bg-orange-500 text-[#FAF8F5]' }
+        case 'unsupported':
+            return { label: 'Not Wired', className: 'bg-gray-600 text-[#FAF8F5]' }
+        default:
+            return { label: 'Stopped', className: 'bg-red-600 text-[#FAF8F5]' }
+    }
+})
+
+const backendStatusDetail = computed(() => {
+    if (webState.backendStatusMessage) return webState.backendStatusMessage
+    if (webState.backendStatus === 'ready') {
+        return 'Backend is active and ready to generate images.'
+    }
+    if (webState.backendStatus === 'starting') {
+        return 'Backend is starting up. Please wait...'
+    }
+    if (webState.backendStatus === 'misconfigured') {
+        return 'Backend needs configuration before it can run.'
+    }
+    if (webState.backendStatus === 'unsupported') {
+        return 'Backend adapter not wired yet.'
+    }
+    return 'Backend is not running. Please launch to enable generation.'
+})
+
+const backendStatusDetailClass = computed(() => {
+    switch (webState.backendStatus) {
+        case 'ready':
+            return 'text-gray-400'
+        case 'starting':
+            return 'text-yellow-400'
+        case 'misconfigured':
+            return 'text-orange-400'
+        case 'unsupported':
+            return 'text-gray-400'
+        default:
+            return 'text-red-400'
+    }
+})
+
+const showLaunchBackend = computed(() => isForgeBackend.value && webState.backendStatus === 'stopped')
+
 async function getBackendStatus() {
+    const backend = activeBackend.value
+    webState.backendId = backend.id
+    webState.backendLabel = backend.label
+    webState.backendStatusMessage = ''
+    webState.backendRunning = false
+    webState.backendAvailable = false
+    webState.backendStatus = 'unknown'
+    extensions.value = []
+
+    const configStatus = getBackendConfigStatus(backend.id)
+    if (!configStatus.ok) {
+        webState.backendStatus = 'misconfigured'
+        webState.backendStatusMessage = `Missing ${configStatus.missingFields.join(', ')}`
+        return
+    }
+
+    if (!isForgeBackend.value) {
+        webState.backendStatus = 'unsupported'
+        webState.backendStatusMessage = `${backend.label} adapter not wired yet.`
+        return
+    }
 
     //check if backend is running on the apiUrl
     const response = await fetch(apiUrl + '/webui/status')
@@ -952,7 +1044,7 @@ async function getBackendStatus() {
         webState.backendRunning = false
     }
 
-    webState.backendAvailable = false;
+    webState.backendAvailable = false
     // If backend is not running, try to ping the backend
     try {
         const pingResponse = await fetch(url.value + 'app_id/')
@@ -980,6 +1072,11 @@ async function getBackendStatus() {
         }
     }
 
+    webState.backendStatus = webState.backendAvailable
+        ? 'ready'
+        : webState.backendRunning
+            ? 'starting'
+            : 'stopped'
 
     if (!webState.backendRunning) {
         return
@@ -994,9 +1091,13 @@ async function getBackendStatus() {
     } else {
         console.error('Failed to load extensions:', extensionsResponse.statusText)
     }
-
 }
 async function launchBackend() {
+
+    if (!isForgeBackend.value) {
+        console.warn('Launch backend is only supported for Forge right now.')
+        return
+    }
 
     console.log('Launching backend...')
 
@@ -1078,7 +1179,7 @@ var generationCosts = ref({
 })
 
 onMounted(async () => {
-
+    await loadBackendSettings()
     getBackendStatus()
     onUiUpdate();
     LoadHistory();
@@ -1102,35 +1203,39 @@ onMounted(async () => {
 
     autoResizePositivePrompt();
 
-    if (!current_model.model.title) {
-        const all_model_response = await fetch(url.value + 'sdapi/v1/sd-models')
-        if (!all_model_response.ok) {
-            console.error('Failed to fetch models:', all_model_response.statusText)
-            return
-        }
-        const all_models = await all_model_response.json()
+    if (isForgeBackend.value && backendCapabilities.value.supportsLocalModels && !current_model.model.title) {
+        if (!url.value) {
+            console.warn('Forge URL is missing. Skipping model bootstrap.')
+        } else {
+            const all_model_response = await fetch(url.value + 'sdapi/v1/sd-models')
+            if (!all_model_response.ok) {
+                console.error('Failed to fetch models:', all_model_response.statusText)
+                return
+            }
+            const all_models = await all_model_response.json()
 
-        const state_response = await fetch(url.value + 'state/config.json')
-        if (!state_response.ok) {
-            console.error('Failed to fetch state config:', state_response.statusText)
-            return
-        }
-        const state_config = await state_response.json()
-        let currentModelName = state_config.sd_model_checkpoint || state_config.sd_model || 'None'
-        let currentModel = all_models.find(model => model.title.includes(currentModelName))
+            const state_response = await fetch(url.value + 'state/config.json')
+            if (!state_response.ok) {
+                console.error('Failed to fetch state config:', state_response.statusText)
+                return
+            }
+            const state_config = await state_response.json()
+            let currentModelName = state_config.sd_model_checkpoint || state_config.sd_model || 'None'
+            let currentModel = all_models.find(model => model.title.includes(currentModelName))
 
-        if (currentModel) {
-            current_model.model = { ...currentModel }
-        }
-        //load default styles from browser storage
-        const styles = loadFromFile('defaultStyles.json')
-        if (styles) {
-            defaultStyles.value = JSON.parse(styles)
-        }
-        if (!defaultStyles.value[current_model.model.model_name]) {
-            defaultStyles.value[current_model.model.model_name] = {
-                prompt_prefix: "",
-                negative_prompt_prefix: ""
+            if (currentModel) {
+                current_model.model = { ...currentModel }
+            }
+            //load default styles from browser storage
+            const styles = loadFromFile('defaultStyles.json')
+            if (styles) {
+                defaultStyles.value = JSON.parse(styles)
+            }
+            if (!defaultStyles.value[current_model.model.model_name]) {
+                defaultStyles.value[current_model.model.model_name] = {
+                    prompt_prefix: "",
+                    negative_prompt_prefix: ""
+                }
             }
         }
     }
@@ -1188,7 +1293,8 @@ import PillPrompt from './pillPrompt.vue'
 import ChatPanel from './ChatPanel.vue'
 import CanvasView from '@/views/canvasView.vue'
 import AutoComplete from './autoComplete.vue'
-import { Image } from 'lucide-vue-next'
+import BackendSettingsPanel from './BackendSettingsPanel.vue'
+import { Image, Settings } from 'lucide-vue-next'
 
 const startResize = (e) => {
     isResizing.value = true
@@ -1255,6 +1361,15 @@ const isGenerating = ref(false)
 const generationProgress = ref(0)
 const generationState = ref({})
 const progressInterval = ref(null)
+const AI_HORDE_POLL_INTERVAL_MS = 2000
+const AI_HORDE_MAX_WAIT_MS = 15 * 60 * 1000
+const aiHordeRequestState = reactive({
+    id: null,
+    cancelRequested: false,
+    headers: null,
+    statusUrl: '',
+    checkUrl: ''
+})
 
 // Add WebSocket connection for scan
 const connectScanWebSocket = () => {
@@ -1340,6 +1455,7 @@ const handleScanWebSocketMessage = (data) => {
 // Add progress polling function
 const pollProgress = async () => {
     try {
+        if (!backendCapabilities.value.supportsProgress || !url.value) return
         const response = await fetch(url.value + 'sdapi/v1/progress')
         if (!response.ok) return
 
@@ -1358,9 +1474,120 @@ const pollProgress = async () => {
     }
 }
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const updateAiHordeProgress = (status) => {
+    if (!status) return
+    const finished = status.finished || 0
+    const processing = status.processing || 0
+    const waiting = status.waiting || 0
+    const restarted = status.restarted || 0
+    const total = finished + processing + waiting + restarted
+
+    if (total > 0) {
+        generationProgress.value = Math.min(1, finished / total)
+    }
+
+    generationState.value = {
+        ...generationState.value,
+        sampling_step: finished,
+        sampling_steps: total,
+        job: status.queue_position != null
+            ? `Queue ${status.queue_position}`
+            : processing > 0
+                ? 'Processing'
+                : 'Queued'
+    }
+}
+
+const pollAiHordeStatus = async (backendRequest, requestId) => {
+    const startTime = Date.now()
+
+    while (!aiHordeRequestState.cancelRequested) {
+        if (Date.now() - startTime > AI_HORDE_MAX_WAIT_MS) {
+            throw new Error('AI Horde request timed out.')
+        }
+
+        const checkResponse = await fetch(`${backendRequest.checkUrl}${requestId}`, {
+            headers: backendRequest.headers
+        })
+
+        if (!checkResponse.ok) {
+            throw new Error(`AI Horde status check failed: ${checkResponse.statusText}`)
+        }
+
+        const status = await checkResponse.json()
+        updateAiHordeProgress(status)
+
+        if (status.faulted) {
+            throw new Error('AI Horde request faulted.')
+        }
+
+        if (status.is_possible === false) {
+            throw new Error('AI Horde request cannot be fulfilled with available workers.')
+        }
+
+        if (status.done) {
+            return status
+        }
+
+        await sleep(AI_HORDE_POLL_INTERVAL_MS)
+    }
+
+    return null
+}
+
+const processAiHordeRequest = async (backendRequest) => {
+    aiHordeRequestState.cancelRequested = false
+    aiHordeRequestState.headers = backendRequest.headers
+    aiHordeRequestState.statusUrl = backendRequest.statusUrl
+    aiHordeRequestState.checkUrl = backendRequest.checkUrl
+
+    const response = await fetch(backendRequest.requestUrl, {
+        method: 'POST',
+        headers: backendRequest.headers,
+        body: JSON.stringify(backendRequest.payload)
+    })
+
+    if (!response.ok) {
+        throw new Error(`AI Horde request failed: ${response.statusText}`)
+    }
+
+    const asyncResult = await response.json()
+    const requestId = asyncResult?.id
+    if (!requestId) {
+        throw new Error('AI Horde did not return a request id.')
+    }
+
+    aiHordeRequestState.id = requestId
+
+    await pollAiHordeStatus(backendRequest, requestId)
+
+    if (aiHordeRequestState.cancelRequested) {
+        return null
+    }
+
+    const statusResponse = await fetch(`${backendRequest.statusUrl}${requestId}`, {
+        headers: backendRequest.headers
+    })
+
+    if (!statusResponse.ok) {
+        throw new Error(`AI Horde result fetch failed: ${statusResponse.statusText}`)
+    }
+
+    const statusData = await statusResponse.json()
+    generationProgress.value = 1
+    return statusData
+}
+
 var generationQueue = ref([])
 
 async function GenerateImage() {
+
+    if (!webState.backendAvailable) {
+        console.warn('Backend not available:', webState.backendStatusMessage || webState.backendStatus)
+        return
+    }
 
     const plainRequest = formatRequest();
     plainRequest.prompt = applyStylesToPrompt(plainRequest.prompt)
@@ -1393,27 +1620,40 @@ async function ProcessRequest(queueItem) {
     generationProgress.value = 0
     generationState.value = {}
 
+    if (progressInterval.value) {
+        clearInterval(progressInterval.value)
+        progressInterval.value = null
+    }
+
     if (!queueItem) {
         isGenerating.value = false
         return
     }
 
-    const plainRequest = queueItem.request || queueItem
+    const baseRequest = queueItem.request || queueItem
     const inputImage = queueItem.inputImage || null
     const denoisingStrength = typeof queueItem.denoisingStrength === 'number'
         ? queueItem.denoisingStrength
         : img2imgDenoise.value
-    const requestPayload = inputImage
-        ? {
-            ...plainRequest,
-            init_images: [inputImage],
-            denoising_strength: denoisingStrength
-        }
-        : plainRequest
-    const endpoint = inputImage ? 'sdapi/v1/img2img' : 'sdapi/v1/txt2img'
+    const backendRequest = buildBackendRequest({
+        baseRequest,
+        inputImage,
+        denoisingStrength
+    })
+
+    if (backendRequest.status !== 'ready') {
+        console.warn('Backend request not ready:', backendRequest.reason)
+        webState.backendStatus = backendRequest.status
+        webState.backendStatusMessage = backendRequest.reason
+        webState.backendAvailable = false
+        isGenerating.value = false
+        return
+    }
 
     // Start polling progress every 500ms
-    progressInterval.value = setInterval(pollProgress, 500)
+    if (backendRequest.supportsProgress) {
+        progressInterval.value = setInterval(pollProgress, 500)
+    }
 
     //post to api /ollama/unload-models
     const unloadResponse = await fetch(apiUrl + '/ollama/unload-models', {
@@ -1425,12 +1665,10 @@ async function ProcessRequest(queueItem) {
     })
 
     //post to /sdapi/v1/txt2img with body as plainRequest
-    const response = await fetch(url.value + endpoint, {
+    const response = await fetch(backendRequest.requestUrl, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(requestPayload)
+        headers: backendRequest.headers,
+        body: JSON.stringify(backendRequest.payload)
     })
     if (!response.ok) {
         console.error('Failed to generate image:', response.statusText)
@@ -1456,7 +1694,7 @@ async function ProcessRequest(queueItem) {
 
     // Handle the result as needed, e.g., display the generated image
 
-    const historyRequest = { ...plainRequest }
+    const historyRequest = { ...baseRequest }
     if (inputImage) {
         historyRequest.img2img = true
         historyRequest.denoising_strength = denoisingStrength
@@ -1529,6 +1767,7 @@ function selectModel(model) {
 const placeholderImage = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDUwIiBoZWlnaHQ9IjMwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjMzMzIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxOCIgZmlsbD0iIzk5OSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPk5vIEltYWdlPC90ZXh0Pjwvc3ZnPg==';
 
 const getModelImage = (model, attempt = 0) => {
+    if (!backendCapabilities.value.supportsModelThumbnails || !url.value) return placeholderImage;
     if (!model.filename && !model.path) return placeholderImage;
 
     let modelPath = model.path || model.filename;
@@ -1725,6 +1964,9 @@ async function enhancePrompt() {
 }
 
 async function unloadSD() {
+    if (!isForgeBackend.value || !url.value) {
+        return
+    }
     const response = await fetch(url.value + 'sdapi/v1/unload-checkpoint', { method: 'POST' })
     if (response.ok) console.log('SD unloaded')
 }
@@ -1743,11 +1985,13 @@ async function unloadLLM() {
 
 
 
-    <SelectModelModal v-if="showModelType !== 'none'" :modelType="showModelType" :url="url" class="z-[51]"
-        @close="showModelType = 'none'" @select="selectModel" :current_loras="current_model.loras" />
-    <CivitAILoraModal v-if="showDownloadModal == true" :baseModel="current_model.model.info?.baseModel" class="z-[51]"
-        @close="showDownloadModal = false" @select="selectLora" :webuiUrl="url" />
-    <DownloadLoraModal v-if="downloadLoraId != null" :modelId="downloadLoraId" class="z-[52]"
+    <SelectModelModal
+        v-if="showModelType !== 'none' && ((showModelType === 'checkpoint' && canSelectModels) || (showModelType === 'lora' && canSelectLoras))"
+        :modelType="showModelType" :url="url" class="z-[51]" @close="showModelType = 'none'"
+        @select="selectModel" :current_loras="current_model.loras" />
+    <CivitAILoraModal v-if="showDownloadModal == true && canSelectLoras" :baseModel="current_model.model.info?.baseModel"
+        class="z-[51]" @close="showDownloadModal = false" @select="selectLora" :webuiUrl="url" />
+    <DownloadLoraModal v-if="downloadLoraId != null && canSelectLoras" :modelId="downloadLoraId" class="z-[52]"
         @close="downloadLoraId = null" :url="url" />
 
 
@@ -1901,6 +2145,11 @@ async function unloadLLM() {
                             <path d="M9 11v2" />
                         </svg>
                     </button>
+                    <button @click="activeTab = 'settings'"
+                        :class="activeTab === 'settings' ? 'bg-[#1A1A24] text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-[#1A1A24]'"
+                        class="flex items-center justify-center w-10 h-10 rounded transition-colors" title="Settings">
+                        <Settings class="w-5 h-5" />
+                    </button>
                 </div>
                 <!-- VRAM usage rectangle with label inside at left bottom -->
                 <div v-if="webState.vramUsage" class="w-full flex items-center justify-center mx-4 relative group">
@@ -1988,12 +2237,12 @@ async function unloadLLM() {
                             <div class="flex items-center justify-between mb-2">
                                 <label class="text-sm text-gray-300 font-medium flex items-center gap-2">
                                     Backend Status
-                                    <span v-if="webState.backendRunning && webState.backendAvailable"
-                                        class="bg-green-600 text-[#FAF8F5] px-2 py-0.5 rounded-full text-xs font-semibold">Running</span>
-                                    <span v-else-if="!webState.backendAvailable && webState.backendRunning"
-                                        class="bg-yellow-500 text-[#FAF8F5] px-2 py-0.5 rounded-full text-xs font-semibold">Starting</span>
-                                    <span v-else
-                                        class="bg-red-600 text-[#FAF8F5] px-2 py-0.5 rounded-full text-xs font-semibold">Stopped</span>
+                                    <span class="text-xs text-gray-400">{{ activeBackend.label }}</span>
+                                    <span
+                                        class="px-2 py-0.5 rounded-full text-xs font-semibold"
+                                        :class="backendStatusChip.className">
+                                        {{ backendStatusChip.label }}
+                                    </span>
                                     <button @click="getBackendStatus()"
                                         class="cursor-pointer text-gray-400 hover:text-[#FAF8F5]">
                                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
@@ -2003,31 +2252,19 @@ async function unloadLLM() {
                                         </svg>
                                     </button>
                                 </label>
-                                <button v-if="!webState.backendRunning" @click="launchBackend()"
-                                    class="bg-blue-600 hover:bg-blue-700 text-[#FAF8F5] text-xs px-3 py-1.5 rounded-md font-medium">
-                                    Launch Backend
-                                </button>
+                                <div class="flex items-center gap-2">
+                                    <button @click="activeTab = 'settings'"
+                                        class="bg-[#1A1A24] border border-[#2A2A35] text-xs text-gray-300 hover:text-[#FAF8F5] px-3 py-1.5 rounded-md font-medium">
+                                        Settings
+                                    </button>
+                                    <button v-if="showLaunchBackend" @click="launchBackend()"
+                                        class="bg-blue-600 hover:bg-blue-700 text-[#FAF8F5] text-xs px-3 py-1.5 rounded-md font-medium">
+                                        Launch Backend
+                                    </button>
+                                </div>
                             </div>
-
-                            <!-- Backend Selection UI -->
-                            <div class="mb-2 hidden">
-                                <select v-model="selectedBackend" @change="updateBackendUrl"
-                                    class="w-full bg-[#1A1A24] border border-[#2A2A35] text-sm rounded-lg px-3 py-2 text-[#FAF8F5] focus:outline-none focus:border-blue-500 appearance-none">
-                                    <option value="Forge">Forge</option>
-                                    <option value="ComfyUI">ComfyUI</option>
-                                </select>
-                            </div>
-
-                            <div v-if="webState.backendRunning && webState.backendAvailable"
-                                class="text-xs text-gray-400">
-                                Backend is active and ready to generate images.
-                            </div>
-                            <div v-else-if="!webState.backendAvailable && webState.backendRunning"
-                                class="text-xs text-yellow-400">
-                                Backend is starting up. Please wait...
-                            </div>
-                            <div v-else class="text-xs text-red-400">
-                                Backend is not running. Please launch to enable generation.
+                            <div class="text-xs" :class="backendStatusDetailClass">
+                                {{ backendStatusDetail }}
                             </div>
                         </div>
 
@@ -2045,17 +2282,26 @@ async function unloadLLM() {
 
                         <!-- Model -->
                         <div v-if="!compactMode">
-                            <div class="flex items-center justify-between mb-2">
-                                <div class="flex items-center space-x-2">
-                                    <label class="text-sm text-gray-300 font-medium">Model</label>
-                                    <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor"
-                                        viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                            d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                    </svg>
-                                </div>
+                            <div v-if="!backendCapabilities.supportsLocalModels"
+                                class="bg-[#1A1A24] border border-[#2A2A35] rounded-lg p-4 text-sm text-gray-300">
+                                <p class="font-medium text-[#FAF8F5] mb-1">Models are backend-specific</p>
+                                <p class="text-xs text-gray-400">
+                                    The current backend does not expose local models. Switch to Forge or configure a
+                                    compatible adapter in Settings.
+                                </p>
                             </div>
-                            <div class="bg-[#1A1A24] border border-[#2A2A35] rounded-lg">
+                            <div v-else>
+                                <div class="flex items-center justify-between mb-2">
+                                    <div class="flex items-center space-x-2">
+                                        <label class="text-sm text-gray-300 font-medium">Model</label>
+                                        <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor"
+                                            viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                        </svg>
+                                    </div>
+                                </div>
+                                <div class="bg-[#1A1A24] border border-[#2A2A35] rounded-lg">
                                 <!-- Model Section -->
                                 <div class="p-3 flex items-center justify-between gap-4">
                                     <div class="flex items-center gap-2 min-w-0">
@@ -2145,7 +2391,8 @@ async function unloadLLM() {
                                 </div>
 
                                 <!-- Additional Resources Section -->
-                                <div :class="current_model.showLoras ? 'border-b border-[#2A2A35]' : ''"
+                                <div v-if="backendCapabilities.supportsLoras"
+                                    :class="current_model.showLoras ? 'border-b border-[#2A2A35]' : ''"
                                     class="border-t border-[#2A2A35] p-2"
                                     @click="current_model.showLoras = !current_model.showLoras">
                                     <div class="flex items-center justify-between ">
@@ -2180,7 +2427,8 @@ async function unloadLLM() {
 
                                 </div>
                                 <!-- LoRA Section -->
-                                <div v-if="current_model.showLoras" class=" mx-2 mb-2 mt-3 space-y-2">
+                                <div v-if="backendCapabilities.supportsLoras && current_model.showLoras"
+                                    class=" mx-2 mb-2 mt-3 space-y-2">
                                     <h3 v-if="current_model.loras.length > 0" class="text-sm text-gray-300 font-medium">
                                         LoRA Models</h3>
                                     <!-- lora -->
@@ -2233,6 +2481,7 @@ async function unloadLLM() {
 
 
                                     </div>
+                                </div>
                                 </div>
                             </div>
                         </div>
@@ -3230,6 +3479,10 @@ async function unloadLLM() {
 
                 <div v-if="activeTab == 'chat' && !isFullscreen" class="flex-1 flex flex-col min-h-0">
                     <ChatPanel :history="chatHistory" />
+                </div>
+
+                <div v-if="activeTab == 'settings' && !isFullscreen" class="flex-1 overflow-y-auto p-4">
+                    <BackendSettingsPanel />
                 </div>
             </div>
 

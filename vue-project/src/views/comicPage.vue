@@ -560,7 +560,6 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-/* filepath: H:/ent/ai/NewFolder/vue-project/src/views/comicPage.vue */
 /* Comic-y font stack */
 .font-comic {
   font-family: "Bangers", "Comic Sans MS", "Comic Neue", Impact, system-ui, sans-serif;
