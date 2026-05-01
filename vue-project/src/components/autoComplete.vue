@@ -262,7 +262,7 @@ function ApplyTag(result) {
 </script>
 
 <template>
-    <div v-if="results.length > 0" class="absolute z-50 w-full bg-[#1A1A24]/90 backdrop-blur-xl rounded-[2rem] border border-[#2A2A35] overflow-y-auto p-3 max-h-64 top-full mt-2 shadow-[0_8px_30px_rgb(0,0,0,0.5)]">
+    <div v-if="results.length > 0" class="absolute z-50 w-full bg-[#1A1A24]/90 backdrop-blur-xl  border border-[#2A2A35] overflow-y-auto p-3 max-h-64 top-full mt-2 shadow-[0_8px_30px_rgb(0,0,0,0.5)]">
         <div v-for="(result, index) in results" :key="result.tag"
              @click="ApplyTag(result)"
              @mouseenter="selectedIndex = index"

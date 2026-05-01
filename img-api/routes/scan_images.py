@@ -373,7 +373,8 @@ async def get_metadata(file_path):
         except Exception as parse_error:
             print(f"Error parsing file {file_path}: {parse_error}")
 
-        relative_path = file_path.replace("\\", "/").replace("H:/ent/ai/NewFolder/img-api", "")
+        api_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir)).replace("\\", "/")
+        relative_path = file_path.replace("\\", "/").replace(api_root, "")
         metadata = convert_metadata(prompt_info)
         metadata["Path"] = relative_path
 

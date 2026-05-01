@@ -227,7 +227,7 @@ const mapSamplerName = (backendId, samplerName) => {
 }
 
 const buildLoraTag = (lora) => {
-  const name = lora?.alias || lora?.name || lora?.path || 'lora'
+  const name =  lora?.name || lora?.path || 'lora'
   const weight = typeof lora?.weight === 'number' ? lora.weight : parseFloat(lora?.weight) || 1
   return ` <lora:${name}:${weight}>`
 }
