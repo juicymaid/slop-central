@@ -1,2 +1,4 @@
 img-api/diffusion-toolkit.db
 img-api/comic_creator/
+img-api/storage/generationHistory.json
+/img-api/storage
