@@ -293,6 +293,16 @@ async function GetSuggestions() {
             </button>
           </RouterLink>
 
+          <!-- Posts link -->
+          <RouterLink to="/posts" class="hidden sm:block">
+            <button
+              class="magnetic-button px-4 py-2.5 rounded-full text-sm font-sans font-medium text-[#FAF8F5]/80 hover:text-[#FAF8F5] transition-colors"
+              aria-label="Posts"
+            >
+              <span class="relative z-10">Posts</span>
+            </button>
+          </RouterLink>
+
           <!-- Scan -->
           <RouterLink to="/scan">
             <button class="magnetic-button p-2.5 text-[#FAF8F5]/80 hover:text-[#FAF8F5] rounded-full transition-colors flex items-center justify-center">

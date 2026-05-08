@@ -50,7 +50,7 @@ const props = defineProps({
         type: null,
         default: null
     }
-})  
+})
 
 function handleFocus() {
     isFocused.value = true
@@ -84,11 +84,11 @@ watch(() => props.textareaRef, (newVal, oldVal) => {
 onMounted(async () => {
     // Set up event listeners for cursor position and focus
     attachListeners()
-    
+
     var csv = await fetch("/tags.csv")
         .then(response => response.text())
     var lines = csv.split("\n")
-    
+
     var wildcardsData = await GetFromApi("wildcards")
     if (wildcardsData && wildcardsData.wildcards) {
         for (var w of wildcardsData.wildcards) {
@@ -110,14 +110,14 @@ onMounted(async () => {
         var line = lines[i].trim()
         var parts = line.split(",");
 
-        if(parts.length >= 2) {
+        if (parts.length >= 2) {
             var tag = parts[0].trim()
             var category = parts[1].trim()
             var count = parts[2] ? parseInt(parts[2].trim()) : 0
             var aliases = parts.slice(3).map(alias => alias.trim())
 
             tags.value.push({
-                tag: tag.replaceAll("_", " "),
+                tag: tag.replaceAll("_", " ").replaceAll("(", "\\(").replaceAll(")", "\\)"),
                 category: category,
                 count: count,
                 aliases: aliases
@@ -130,7 +130,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
     window.removeEventListener('keydown', handleKeyDown)
-    
+
     // Clean up textarea event listeners
     if (props.textareaRef) {
         props.textareaRef.removeEventListener('input', updateCursorPosition)
@@ -155,31 +155,31 @@ function updateCursorPosition() {
 function findCurrentTag() {
     const text = props.input
     const cursor = cursorPosition.value
-    
+
     // Find the start and end of the current tag segment
     let start = cursor
     let end = cursor
-    
+
     // Find start of current tag (go backwards to find comma or start of string)
     while (start > 0 && text[start - 1] !== ',') {
         start--
     }
-    
+
     // Find end of current tag (go forwards to find comma or end of string)
     while (end < text.length && text[end] !== ',') {
         end++
     }
-    
+
     currentTagStart.value = start
     currentTagEnd.value = end
-    
+
     // Extract the current tag and trim whitespace
     currentTag = text.substring(start, end).trim().toLowerCase()
-    
+
     // Only search if the tag has changed to avoid resetting selectedIndex on non-mutating events
     if (currentTag === lastSearchTerm) return
     lastSearchTerm = currentTag
-    
+
     // Trigger search with the current tag
     searchForTags(currentTag)
 }
@@ -189,18 +189,18 @@ function searchForTags(searchTerm) {
         results.value = []
         return
     }
-    
+
     clearTimeout(searchTimer)
     searchTimer = setTimeout(() => {
         var matchingTags = tags.value.filter(t => {
             const matchesTag = t.tag.includes(searchTerm)
             const matchesAlias = t.aliases.some(alias => alias.includes(searchTerm))
-            
+
             // Filter out wildcards if no underscores are present in the search term
             if (t.category === "6" && !searchTerm.includes('_')) {
                 return false
             }
-            
+
             return matchesTag || matchesAlias
         })
         results.value = matchingTags.slice(0, 10)
@@ -233,21 +233,21 @@ function handleKeyDown(e) {
 function ApplyTag(result) {
     var insertion = result.tag
     var text = props.input
-    
+
     // Replace the current tag at cursor position
     var beforeTag = text.substring(0, currentTagStart.value)
     var afterTag = text.substring(currentTagEnd.value)
-    
+
     // Add spacing if needed
     var spacing = ''
     if (currentTagStart.value > 0 && !beforeTag.endsWith(' ')) {
         spacing = ' '
     }
-    
+
     var newText = beforeTag + spacing + insertion + ', ' + afterTag
     emit('update:input', newText)
     results.value = []
-    
+
     // Update cursor position to after the inserted tag
     setTimeout(() => {
         if (props.textareaRef) {
@@ -262,18 +262,18 @@ function ApplyTag(result) {
 </script>
 
 <template>
-    <div v-if="results.length > 0" class="absolute z-50 w-full bg-[#1A1A24]/90 backdrop-blur-xl  border border-[#2A2A35] overflow-y-auto p-3 max-h-64 top-full mt-2 shadow-[0_8px_30px_rgb(0,0,0,0.5)]">
-        <div v-for="(result, index) in results" :key="result.tag"
-             @click="ApplyTag(result)"
-             @mouseenter="selectedIndex = index"
-             :class="['px-4 py-2.5 rounded-2xl cursor-pointer transition-colors flex items-center mb-1 last:mb-0',
-                      index === selectedIndex ? 'bg-[#2A2A35] shadow-inner' : 'hover:bg-[#2A2A35]/50']"
-             :style="{ borderLeft: `4px solid ${categoryColorMap[result.category][0]}` }">
+    <div v-if="results.length > 0"
+        class="absolute z-50 w-full bg-[#1A1A24]/90 backdrop-blur-xl  border border-[#2A2A35] overflow-y-auto p-3 max-h-64 top-full mt-2 shadow-[0_8px_30px_rgb(0,0,0,0.5)]">
+        <div v-for="(result, index) in results" :key="result.tag" @click="ApplyTag(result)"
+            @mouseenter="selectedIndex = index" :class="['px-4 py-2.5 rounded-2xl cursor-pointer transition-colors flex items-center mb-1 last:mb-0',
+                index === selectedIndex ? 'bg-[#2A2A35] shadow-inner' : 'hover:bg-[#2A2A35]/50']"
+            :style="{ borderLeft: `4px solid ${categoryColorMap[result.category][0]}` }">
             <div class="flex justify-between items-center w-full ml-2">
                 <span class="font-sans font-medium text-[#FAF8F5]">{{ result.tag }}</span>
                 <span class="text-xs text-[#FAF8F5]/60 flex items-center font-mono">
-                    <span class="inline-block px-2 py-1 rounded-md text-[10px] uppercase tracking-widest mr-3 font-sans font-bold shadow-sm"
-                          :style="{ backgroundColor: categoryColorMap[result.category][1], color: 'white' }">
+                    <span
+                        class="inline-block px-2 py-1 rounded-md text-[10px] uppercase tracking-widest mr-3 font-sans font-bold shadow-sm"
+                        :style="{ backgroundColor: categoryColorMap[result.category][1], color: 'white' }">
                         {{ categoryMap[result.category] }}
                     </span>
                     <span>{{ result.count.toLocaleString() }}</span>

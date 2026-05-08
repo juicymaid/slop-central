@@ -23,7 +23,7 @@ const workflow = ref('Text-to-image')
 const model = ref('PerfectDeliberate')
 const aspectRatio = ref('Portrait')
 const draftMode = ref(false)
-const showAdvanced = ref(true)
+const showAdvanced = ref(false)
 const activeTab = ref('generate')
 const isResizing = ref(false)
 const isFullscreen = ref(false)
@@ -358,6 +358,8 @@ const isDataUrl = (value) => typeof value === 'string' && value.startsWith('data
 const resolveImageSrc = (image) => {
     if (!image) return ''
     if (isDataUrl(image)) return image
+    if (image.startsWith('/files')) return apiUrl + image
+    if (image.startsWith('http')) return image
     return `data:image/png;base64,${image}`
 }
 
@@ -752,28 +754,21 @@ watch(() => current_model.loras, async (newLoras) => {
         triggerWords.value = []
         return
     }
+
+    let loras = await GetFromApi('webui/loras')
+
+    //filter loras to only those in current_model.loras and add trigger words to "triggerWords"
     triggerWords.value = []
-    let infoFiles = []
-    for (const element of newLoras) {
-        let infoPath = element.path.replace(".safetensors", ".civitai.info")
-
-        //fetch /file=infoPath
-        let response = await fetch(url.value + 'file=' + infoPath)
-        if (response.ok) {
-            let info = await response.json()
-            info.file = element.path;
-            infoFiles.push(info)
-        } else {
-            console.error('Failed to fetch info file:', response.statusText)
-        }
-    }
-    //extract trigger words from infoFiles
-    infoFiles.forEach(info => {
-        if (info && info.trainedWords) {
-            triggerWords.value.push(...info.trainedWords)
-
+    loras.forEach(lora => {
+        if (newLoras.find(l => l.name === lora.name || l.alias === lora.name)) {
+            if (lora.civitai && lora.civitai.trainedWords) {
+                triggerWords.value.push(...lora.civitai.trainedWords)
+            }
         }
     })
+
+
+
 
 }, { deep: true });
 
@@ -898,14 +893,36 @@ watch(selectedStyleIds, () => {
     }, 300)
 }, { deep: true })
 
+var cached_loras = [];
+
 //watch request.prompt
-watch(() => request.prompt, (newPrompt) => {
+watch(() => request.prompt, async (newPrompt) => {
     autoResizePositivePrompt()
 
-    //find <lora:name:weight> and check if it exists in current_model.loras and add it 
+    if (cached_loras.length == 0) {
+        cached_loras = await GetFromApi("webui/loras")
+    }
 
-    request.prompt = newPrompt.replaceAll(defaultStyles.value[current_model.model.model_name].prompt_prefix, '')
-    request.prompt = newPrompt.replaceAll(",,", ',')
+    //find every <lora:name:weight> 
+    const loraRegex = /<lora:([^:]+):([^>]+)>/g;
+    const matches = [...newPrompt.matchAll(loraRegex)];
+    matches.forEach(match => {
+        const loraName = match[1];
+        const loraWeight = match[2];
+        const lora = cached_loras.find(l => l.name === loraName);
+        if (lora) {
+            current_model.loras.push({
+                ...lora,
+                name: loraName,
+                weight: parseFloat(loraWeight) || 1.0
+            });
+            //remove from prompt
+            request.prompt = request.prompt.replaceAll(match[0], '')
+        }
+    });
+
+    request.prompt = request.prompt.replaceAll(defaultStyles.value[current_model.model.model_name].prompt_prefix, '')
+    request.prompt = request.prompt.replaceAll(",,", ',')
 })
 
 //watch for history changes
@@ -1248,6 +1265,7 @@ onMounted(async () => {
 
 
     autoResizePositivePrompt();
+    UpdateVRAM()
 
     if (isForgeBackend.value && backendCapabilities.value.supportsLocalModels && !current_model.model.title) {
         if (!url.value) {
@@ -1297,7 +1315,7 @@ onMounted(async () => {
     }
 
 
-    UpdateVRAM()
+
 
 
 })
@@ -1331,6 +1349,7 @@ const updateAspectRatio = (ratio) => {
 
 import { apiUrl, webState } from '@/api'
 import SelectModelModal from './SelectModelModal.vue'
+import AiHordeModelModal from './AiHordeModelModal.vue'
 import DownloadModel from './CivitAILoraModal.vue'
 import CivitAILoraModal from './CivitAILoraModal.vue'
 import DownloadLoraModal from './downloadLoraModal.vue'
@@ -1416,6 +1435,70 @@ const aiHordeRequestState = reactive({
     statusUrl: '',
     checkUrl: ''
 })
+
+const aiHordeCost = ref(0)
+const aiHordeUserKudos = ref(0)
+let aiHordeCostDebounce = null
+
+const getDisplayCost = () => {
+    if (backendState.activeId === 'aiHorde') {
+        const totalImages = Math.max(1, (request.batch_size || 1) * (request.n_iter || 1))
+        return (aiHordeCost.value + 1 + totalImages).toFixed(1)
+    }
+    return calculateCost(request)
+}
+
+const updateAiHordeUserKudos = async () => {
+    if (backendState.activeId !== 'aiHorde' || !url.value) return
+    try {
+        const token = backendState.configs?.aiHorde?.apiToken || '0000000000'
+        const response = await fetch(`${url.value}find_user`, {
+            headers: { 'apikey': token, 'Client-Agent': 'slop-central:0.1:local' }
+        })
+        if (response.ok) {
+            const data = await response.json()
+            if (data.kudos != null) {
+                aiHordeUserKudos.value = data.kudos
+            }
+        }
+    } catch (e) {
+        console.warn("Failed to fetch user kudos", e)
+    }
+}
+
+watch(() => [request, url.value], () => {
+    if (backendState.activeId !== 'aiHorde' || !url.value) return
+
+    clearTimeout(aiHordeCostDebounce)
+    aiHordeCostDebounce = setTimeout(async () => {
+        try {
+            const backendRequest = buildBackendRequest({ baseRequest: request })
+            if (backendRequest.adapter !== 'aiHorde') return
+
+            backendRequest.payload.dry_run = true
+
+            const response = await fetch(`${url.value}generate/async`, {
+                method: 'POST',
+                headers: backendRequest.headers,
+                body: JSON.stringify(backendRequest.payload)
+            })
+            if (response.ok) {
+                const data = await response.json()
+                if (data.kudos != null) {
+                    aiHordeCost.value = data.kudos
+                }
+            }
+        } catch (e) {
+            console.warn("Failed to get dry run kudos", e)
+        }
+    }, 500)
+}, { deep: true, immediate: true })
+
+watch(() => backendState.activeId, () => {
+    if (backendState.activeId === 'aiHorde') {
+        updateAiHordeUserKudos()
+    }
+}, { immediate: true })
 
 // Add WebSocket connection for scan
 const connectScanWebSocket = () => {
@@ -1534,15 +1617,21 @@ const updateAiHordeProgress = (status) => {
         generationProgress.value = Math.min(1, finished / total)
     }
 
+    let jobStatus = 'Queued'
+    if (status.wait_time != null && status.wait_time > 0) {
+        jobStatus = `Wait: ${status.wait_time}s`
+    }
+    if (status.queue_position != null && status.queue_position > 0) {
+        jobStatus = `Queue: ${status.queue_position} (${jobStatus})`
+    } else if (processing > 0) {
+        jobStatus = 'Processing'
+    }
+
     generationState.value = {
         ...generationState.value,
         sampling_step: finished,
         sampling_steps: total,
-        job: status.queue_position != null
-            ? `Queue ${status.queue_position}`
-            : processing > 0
-                ? 'Processing'
-                : 'Queued'
+        job: jobStatus
     }
 }
 
@@ -1638,7 +1727,7 @@ async function GenerateImage() {
     const plainRequest = formatRequest();
     plainRequest.prompt = applyStylesToPrompt(plainRequest.prompt)
 
-    generationCosts.value.totalCosts += parseFloat(calculateCost(plainRequest))
+    generationCosts.value.totalCosts += parseFloat(getDisplayCost())
     console.log("Estimated generation cost:", generationCosts.value.totalCosts)
 
     await saveToFile(generationCosts.value, "generationCosts.json")
@@ -1709,6 +1798,40 @@ async function ProcessRequest(queueItem) {
                 .map((generation) => normalizeAiHordeImage(generation.img))
                 .filter(Boolean)
 
+            // Save images to local storage via img-api
+            const savedImagePaths = []
+            for (let i = 0; i < images.length; i++) {
+                try {
+                    const imgBase64 = images[i]
+                    const generation = statusData.generations[i]
+                    const saveResponse = await fetch(apiUrl + '/save-cloud', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            image_base64: imgBase64,
+                            prompt: baseRequest.prompt,
+                            negative_prompt: baseRequest.negative_prompt,
+                            sampler: baseRequest.sampler_name,
+                            cfg_scale: baseRequest.cfg_scale,
+                            steps: baseRequest.steps,
+                            seed: generation?.seed || baseRequest.seed,
+                            width: baseRequest.width,
+                            height: baseRequest.height,
+                            model_name: current_model.model.model_name,
+                            model_hash: current_model.model.model_hash
+                        })
+                    })
+                    if (saveResponse.ok) {
+                        const savedImg = await saveResponse.json()
+                        savedImagePaths.push(savedImg.Path)
+                    } else {
+                        console.warn('Failed to save cloud image to local API')
+                    }
+                } catch (e) {
+                    console.error('Error saving cloud image:', e)
+                }
+            }
+
             const historyRequest = { ...baseRequest }
             if (inputImage) {
                 historyRequest.img2img = true
@@ -1716,9 +1839,9 @@ async function ProcessRequest(queueItem) {
                 historyRequest.input_image_name = queueItem.inputImageName || null
             }
 
-            history.value.push({
+            history.value.unshift({
                 request: historyRequest,
-                images,
+                images: savedImagePaths.length > 0 ? savedImagePaths : images,
                 timestamp: Date.now(),
                 id: statusData?.id || null,
                 path: null
@@ -2039,9 +2162,28 @@ async function randomizePrompt(source) {
 }
 const promptEnhanceRequest = ref("");
 const promptEnhanceInProgress = ref(false)
+const showEnhancePanel = ref(false)
+const enhanceSubTab = ref('enhance') // 'enhance' | 'history'
+const enhanceHistory = ref([])
+const enhanceLocalPrompt = ref('')
+const enhanceLocalNegativePrompt = ref('')
+const enhanceInstructions = ref('')
+
+function openEnhancePanel() {
+    enhanceLocalPrompt.value = request.prompt
+    enhanceLocalNegativePrompt.value = request.negative_prompt
+    enhanceInstructions.value = promptEnhanceRequest.value
+    enhanceSubTab.value = 'enhance'
+    showEnhancePanel.value = true
+}
+
+function closeEnhancePanel() {
+    showEnhancePanel.value = false
+}
+
 async function enhancePrompt() {
     promptEnhanceInProgress.value = true
-    let url = apiUrl + '/prompt-enhance?prompt=' + encodeURIComponent(request.prompt) + "&request=" + encodeURIComponent(promptEnhanceRequest.value)
+    let url = apiUrl + '/prompt-enhance?prompt=' + encodeURIComponent(enhanceLocalPrompt.value || request.prompt) + "&request=" + encodeURIComponent(enhanceInstructions.value || promptEnhanceRequest.value) + "&negative_prompt=" + encodeURIComponent(enhanceLocalNegativePrompt.value || request.negative_prompt)
     const response = await fetch(url)
     promptEnhanceInProgress.value = false
     if (!response.ok) {
@@ -2049,7 +2191,20 @@ async function enhancePrompt() {
         return
     }
     const data = await response.json()
-    request.prompt = data.enhanced_prompt || request.prompt
+    const originalPrompt = request.prompt
+    const enhanced = data.enhanced_prompt || request.prompt
+    request.prompt = enhanced
+    enhanceLocalPrompt.value = enhanced
+    // Save to enhance history
+    enhanceHistory.value.unshift({
+        id: Date.now(),
+        originalPrompt,
+        enhancedPrompt: enhanced,
+        instructions: enhanceInstructions.value,
+        timestamp: new Date().toLocaleString()
+    })
+    // Keep history to 50 items max
+    if (enhanceHistory.value.length > 50) enhanceHistory.value.pop()
 }
 
 async function unloadSD() {
@@ -2075,9 +2230,12 @@ async function unloadLLM() {
 
 
     <SelectModelModal
-        v-if="showModelType !== 'none' && ((showModelType === 'checkpoint' && canSelectModels) || (showModelType === 'lora' && canSelectLoras))"
+        v-if="showModelType !== 'none' && ((showModelType === 'checkpoint' && canSelectModels && !url.includes('aihorde')) || (showModelType === 'lora' && canSelectLoras))"
         :modelType="showModelType" :url="url" class="z-[51]" @close="showModelType = 'none'" @select="selectModel"
         :current_loras="current_model.loras" />
+    <AiHordeModelModal
+        v-if="showModelType !== 'none' && showModelType === 'checkpoint' && canSelectModels && url.includes('aihorde')"
+        :url="url" class="z-[51]" @close="showModelType = 'none'" @select="selectModel" />
     <CivitAILoraModal v-if="showDownloadModal == true && canSelectLoras"
         :baseModel="current_model.model.info?.baseModel" class="z-[51]" @close="showDownloadModal = false"
         @select="selectLora" :webuiUrl="url" />
@@ -2242,7 +2400,7 @@ async function unloadLLM() {
                     </button>
                 </div>
                 <!-- VRAM usage rectangle with label inside at left bottom -->
-                <div v-if="webState.vramUsage" class="w-full flex items-center justify-center mx-4 relative group">
+                <div class="w-full flex items-center justify-center mx-4 relative group">
                     <div class="relative flex-1 h-8">
                         <div class="w-full h-full bg-[#1F2430] rounded-xl overflow-hidden cursor-pointer">
                             <div class="bg-[#4C9BFF] h-full transition-all duration-300"
@@ -2298,7 +2456,149 @@ async function unloadLLM() {
             <!-- Scrollable Content Area -->
             <div class="flex-1 flex flex-col min-h-0">
                 <!-- Generate Tab Content -->
-                <div v-show="activeTab === 'generate' || isFullscreen" class="flex-1 flex flex-col min-h-0">
+                <div v-show="activeTab === 'generate' || isFullscreen" class="flex-1 flex flex-col min-h-0 relative">
+
+                    <!--Prompt enhance tab-->
+                    <div v-if="showEnhancePanel" class="absolute inset-0 z-30 flex flex-col bg-[#0f1117]">
+                        <!-- Header -->
+                        <div class="flex-shrink-0 px-4 pt-4 pb-3 border-b border-[#222836]">
+                            <div class="flex items-center gap-2 mb-1">
+                                <button @click="closeEnhancePanel"
+                                    class="text-gray-400 hover:text-[#FAF8F5] transition-colors p-0.5 -ml-1">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M15 19l-7-7 7-7" />
+                                    </svg>
+                                </button>
+                                <div>
+                                    <h3 class="text-base font-semibold text-[#FAF8F5] leading-tight">Enhance Prompt</h3>
+                                    <p class="text-xs text-gray-400">Improve your prompt with AI suggestions</p>
+                                </div>
+                            </div>
+                            <!-- Sub-tabs -->
+                            <div class="flex items-center gap-1 mt-3">
+                                <button @click="enhanceSubTab = 'enhance'"
+                                    :class="enhanceSubTab === 'enhance' ? 'text-[#FAF8F5] border-b-2 border-blue-500' : 'text-gray-400 hover:text-gray-200 border-b-2 border-transparent'"
+                                    class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+                                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                        stroke-linejoin="round">
+                                        <path
+                                            d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z" />
+                                    </svg>
+                                    Enhance
+                                </button>
+                                <button @click="enhanceSubTab = 'history'"
+                                    :class="enhanceSubTab === 'history' ? 'text-[#FAF8F5] border-b-2 border-blue-500' : 'text-gray-400 hover:text-gray-200 border-b-2 border-transparent'"
+                                    class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                    History
+                                </button>
+                                <span
+                                    class="ml-auto bg-blue-600/30 text-blue-300 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">Beta</span>
+                            </div>
+                        </div>
+
+                        <!-- Enhance Sub-tab Content -->
+                        <div v-if="enhanceSubTab === 'enhance'" class="flex-1 overflow-y-auto p-4 space-y-5">
+                            <!-- Prompt -->
+                            <div>
+                                <label class="text-sm text-gray-300 font-medium block mb-2">Prompt</label>
+                                <div class="sidebar-card">
+                                    <textarea v-model="enhanceLocalPrompt" placeholder="Enter your prompt to enhance..."
+                                        class="w-full text-sm bg-transparent text-[#E7E9F2] placeholder-gray-500 leading-relaxed resize-none focus:outline-none p-3"
+                                        rows="5"></textarea>
+                                </div>
+                            </div>
+                            <!-- Instructions -->
+                            <div>
+                                <label class="text-sm text-gray-300 font-medium block mb-1">Instructions</label>
+                                <p class="text-xs text-gray-500 mb-2">Guide how the prompt is enhanced (e.g., "expand to
+                                    77 tokens")</p>
+                                <div class="sidebar-card">
+                                    <input v-model="enhanceInstructions" type="text"
+                                        placeholder="Optional instructions..."
+                                        class="w-full text-sm bg-transparent text-[#E7E9F2] placeholder-gray-500 focus:outline-none px-3 py-2.5" />
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- History Sub-tab Content -->
+                        <div v-if="enhanceSubTab === 'history'" class="flex-1 overflow-y-auto p-4 space-y-3">
+                            <div v-if="enhanceHistory.length === 0"
+                                class="flex flex-col items-center justify-center py-12 text-center">
+                                <svg class="w-10 h-10 text-gray-600 mb-3" fill="none" stroke="currentColor"
+                                    viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                                        d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                <p class="text-sm text-gray-400">No enhancement history yet</p>
+                                <p class="text-xs text-gray-500 mt-1">Enhance a prompt to see your history here</p>
+                            </div>
+                            <div v-for="item in enhanceHistory" :key="item.id"
+                                class="sidebar-card p-3 space-y-2 group hover:border-blue-500/40 transition-colors">
+                                <div class="flex items-center justify-between">
+                                    <span class="text-[10px] text-gray-500 font-mono">{{ item.timestamp }}</span>
+                                    <button
+                                        @click="enhanceLocalPrompt = item.enhancedPrompt; request.prompt = item.enhancedPrompt; enhanceSubTab = 'enhance'"
+                                        class="text-xs text-blue-400 hover:text-blue-300 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        Use this
+                                    </button>
+                                </div>
+                                <div>
+                                    <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Original</p>
+                                    <p class="text-xs text-gray-400 line-clamp-2">{{ item.originalPrompt }}</p>
+                                </div>
+                                <div class="border-t border-[#222836] pt-2">
+                                    <p class="text-[10px] text-blue-400/70 uppercase tracking-wider mb-1">Enhanced</p>
+                                    <p class="text-xs text-[#E7E9F2] line-clamp-3">{{ item.enhancedPrompt }}</p>
+                                </div>
+                                <div v-if="item.instructions" class="border-t border-[#222836] pt-2">
+                                    <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Instructions
+                                    </p>
+                                    <p class="text-[11px] text-gray-400 italic">{{ item.instructions }}</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Bottom Bar -->
+                        <div
+                            class="flex-shrink-0 border-t border-[#222836] px-4 py-3 flex items-center gap-3 bg-[#0D0D12]">
+                            <button @click="closeEnhancePanel"
+                                class="text-sm font-medium text-gray-300 hover:text-[#FAF8F5] px-4 py-2 rounded-lg transition-colors">
+                                Back
+                            </button>
+                            <button @click="enhancePrompt()"
+                                :disabled="promptEnhanceInProgress || !enhanceLocalPrompt.trim()" :class="promptEnhanceInProgress || !enhanceLocalPrompt.trim()
+                                    ? 'bg-blue-600/50 cursor-not-allowed'
+                                    : 'bg-blue-600 hover:bg-blue-700'"
+                                class="flex-1 text-sm font-medium text-[#FAF8F5] py-2.5 rounded-lg transition-colors flex items-center justify-center gap-2">
+                                <template v-if="promptEnhanceInProgress">
+                                    <svg class="animate-spin w-4 h-4" viewBox="0 0 24 24">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor"
+                                            stroke-width="4" />
+                                        <path class="opacity-75" fill="currentColor"
+                                            d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                                    </svg>
+                                    Enhancing...
+                                </template>
+                                <template v-else>
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                        stroke-linejoin="round">
+                                        <path
+                                            d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z" />
+                                    </svg>
+                                    Enhance
+                                </template>
+                            </button>
+                        </div>
+                    </div>
+
+
                     <!-- Scrollable middle section -->
                     <div class="flex-1 overflow-y-auto p-4 space-y-6">
                         <!-- Tabs -->
@@ -2403,8 +2703,9 @@ async function unloadLLM() {
                                                     class="text-base md:text-lg font-semibold text-[#FAF8F5] flex items-center gap-2 truncate">
                                                     <span class="truncate">
                                                         {{
-                                                            current_model?.model?.title?.split('\\').pop().replace(".safetensors",
-                                                                "")
+                                                            (current_model?.model?.title || current_model?.model?.name ||
+                                                                '')?.split('\\').pop().replace(".safetensors",
+                                                                    "")
                                                         }}
                                                     </span>
                                                     <a v-if="current_model.model.info?.modelId"
@@ -2472,7 +2773,8 @@ async function unloadLLM() {
                                                 class="sidebar-input w-full text-xs px-3 py-2 rounded-lg transition-colors focus:border-blue-500">
                                                 <option :value="null"></option>
                                                 <option v-for="sampler in samplers" :key="sampler.name"
-                                                    :value="sampler.name">{{ sampler.name }}</option>
+                                                    :value="sampler.name">{{
+                                                        sampler.name }}</option>
 
 
                                             </select>
@@ -2530,7 +2832,7 @@ async function unloadLLM() {
                                                         class="w-12 h-12 rounded-lg object-cover bg-gradient-to-br from-purple-400 to-pink-500 border border-[#2A2A35]"
                                                         @error="handleImageError($event, lora)" />
                                                     <span class="text-sm text-[#FAF8F5] font-medium">{{ lora.name
-                                                        }}</span>
+                                                    }}</span>
                                                     <button class="cursor-pointer" @click="OpenLoraData(lora.path)">
                                                         <svg class="w-4 h-4" fill="none" stroke="currentColor"
                                                             viewBox="0 0 24 24">
@@ -2623,18 +2925,10 @@ async function unloadLLM() {
                                     <input type="text" v-model="promptEnhanceRequest"
                                         placeholder="Enter your prompt here"
                                         class="hidden w-48 bg-[#232323] border border-[#2A2A35] focus:border-blue-500 text-xs text-[#FAF8F5] px-3 py-1 rounded-lg transition-colors placeholder-gray-500 mr-2" />
-                                    <button :title="promptEnhanceInProgress ? 'Enhancing…' : 'AI'"
-                                        @click="enhancePrompt()" :disabled="promptEnhanceInProgress"
-                                        :class="promptEnhanceInProgress ? 'opacity-60 cursor-not-allowed' : ''">
-                                        <template v-if="promptEnhanceInProgress">
-                                            <svg class="animate-spin w-5 h-5 text-blue-400" viewBox="0 0 24 24">
-                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor"
-                                                    stroke-width="4" />
-                                                <path class="opacity-75" fill="currentColor"
-                                                    d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-                                            </svg>
-                                        </template>
-                                        <template v-else>
+                                    <button :title="promptEnhanceInProgress ? 'Enhancing…' : 'AI Enhance'"
+                                        @click="openEnhancePanel()">
+                                        <div class="flex space-x-1">
+                                            <p>Enhance </p>
                                             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
                                                 viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                                                 stroke-linecap="round" stroke-linejoin="round"
@@ -2645,7 +2939,8 @@ async function unloadLLM() {
                                                 <path d="M22 4h-4" />
                                                 <circle cx="4" cy="20" r="2" />
                                             </svg>
-                                        </template>
+
+                                        </div>
                                     </button>
                                     <button @click="randomizePrompt('local')">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
@@ -2664,16 +2959,6 @@ async function unloadLLM() {
                                             <path d="M15 9h.01" />
                                             <path d="M9 15h.01" />
                                         </svg> </button>
-                                    <button @click="randomizePrompt('ai')">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
-                                            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                            stroke-linecap="round" stroke-linejoin="round"
-                                            class="lucide lucide-dice3-icon lucide-dice-3">
-                                            <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
-                                            <path d="M16 8h.01" />
-                                            <path d="M12 12h.01" />
-                                            <path d="M8 16h.01" />
-                                        </svg></button>
                                 </div>
                             </div>
 
@@ -3139,6 +3424,45 @@ async function unloadLLM() {
                                     </div>
 
                                 </div>
+                                <!-- Clip Skip -->
+                                <div>
+                                    <div class="flex items-center justify-between mb-2">
+                                        <label class="text-sm font-medium text-gray-300">Clip Skip</label>
+                                    </div>
+                                    <div class="flex items-center space-x-3">
+                                        <div
+                                            class="flex items-center bg-[#1a1a1a] border border-[#2A2A35] rounded-lg overflow-hidden shadow-sm">
+                                            <input type="number" min="1" max="12" step="1" v-model="request.clip_skip"
+                                                class="bg-transparent text-[#FAF8F5] text-center font-medium w-12 py-2 px-1 focus:outline-none focus:bg-[#1A1A24] transition-colors" />
+                                            <div class="flex flex-col border-l border-[#2A2A35]">
+                                                <button type="button"
+                                                    @click="request.clip_skip = Math.min((request.clip_skip || 1) + 1, 12)"
+                                                    class="px-2 py-1 text-xs text-gray-400 hover:text-[#FAF8F5] hover:bg-[#1A1A24] transition-colors">
+                                                    <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                                        <path fill-rule="evenodd"
+                                                            d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z"
+                                                            clip-rule="evenodd" />
+                                                    </svg>
+                                                </button>
+                                                <button type="button"
+                                                    @click="request.clip_skip = Math.max((request.clip_skip || 1) - 1, 1)"
+                                                    class="px-2 py-1 text-xs text-gray-400 hover:text-[#FAF8F5] hover:bg-[#1A1A24] transition-colors border-t border-[#2A2A35]">
+                                                    <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                                        <path fill-rule="evenodd"
+                                                            d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+                                                            clip-rule="evenodd" />
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <div class="flex-1 relative">
+                                            <input type="range" min="1" max="2" step="1" v-model="request.clip_skip"
+                                                class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer slider focus:outline-none mb-1"
+                                                :style="{ background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${((request.clip_skip || 1) - 1) / 11 * 100}%, #4b5563 ${((request.clip_skip || 1) - 1) / 11 * 100}%, #4b5563 100%)` }">
+                                        </div>
+                                    </div>
+                                </div>
                                 <!-- Adetailer -->
                                 <div v-if="adetailerAvailable && !compactMode"
                                     class="flex items-center justify-between ">
@@ -3230,19 +3554,19 @@ async function unloadLLM() {
 
 
                     <!-- Fixed Bottom Section -->
-                    <div class="flex-shrink-0 border-t border-[#232834] p-4 bg-[#12151C] rounded-t-2xl border-t-3" :style=" { backgroundImage: `url(${resolveImageSrc(generationState.current_image)})` }">
+                    <div class="flex-shrink-0 border-t border-[#232834] p-4 bg-[#12151C] rounded-t-2xl border-t-3">
                         <div class="flex items-center justify-between ">
                             <div v-if="!isGenerating" class="flex  space-x-2 w-full justify-between">
-                                <span  class="text-gray-400 text-sm">
+                                <span class="text-gray-400 text-sm">
                                     No active generation
                                 </span>
 
                                 <div class="group relative">
 
-                                                                    <span class="flex text-yellow-400 space-x-1 items-center text-sm cursor-help">
-                                    Breakdown
-                                    <InfoIcon class="w-4 h-4 ml-1" />
-                                </span>
+                                    <span class="flex text-yellow-400 space-x-1 items-center text-sm cursor-help">
+                                        Breakdown
+                                        <InfoIcon class="w-4 h-4 ml-1" />
+                                    </span>
 
 
                                     <!-- Hover Tooltip/Popover -->
@@ -3263,44 +3587,57 @@ async function unloadLLM() {
                                                 <span>Quantity</span>
                                                 <span class="font-mono text-gray-200">{{ request.batch_size *
                                                     request.n_iter
-                                                    }}x</span>
+                                                }}x</span>
                                             </div>
                                             <div
                                                 class="flex justify-between items-center px-4 py-3 border-b border-[#2A2A35]">
                                                 <span>Size</span>
                                                 <span class="font-mono text-gray-200">{{ formatSizeMultiplier(request)
-                                                    }}x</span>
+                                                }}x</span>
                                             </div>
                                             <div
                                                 class="flex justify-between items-center px-4 py-3 border-b border-[#2A2A35]">
                                                 <span>Steps</span>
                                                 <span class="font-mono text-gray-200">{{ formatStepsPercentage(request)
-                                                    }}</span>
+                                                }}</span>
                                             </div>
                                             <div v-if="formatSamplerPercentage(request) != '0%'"
                                                 class="flex justify-between items-center px-4 py-3 border-b border-[#2A2A35]">
                                                 <span>Sampler</span>
                                                 <span class="font-mono text-gray-200">{{
                                                     formatSamplerPercentage(request)
-                                                    }}</span>
+                                                }}</span>
                                             </div>
                                             <!-- Base Cost -->
                                             <div
                                                 class="flex justify-between items-center px-4 py-4 border-b border-[#2A2A35] bg-[#22222b]">
-                                                <span class="font-bold text-[#FAF8F5]">Base Cost</span>
+                                                <span class="font-bold text-[#FAF8F5]">{{ backendState.activeId ===
+                                                    'aiHorde' ? 'Kudos Cost'
+                                                    : 'Base Cost' }}</span>
                                                 <div class="flex items-center font-bold text-base text-[#FAF8F5]">
-                                                    {{ calculateCost(request) - calculateAdditionalCost(request) }}
+                                                    {{ getDisplayCost() }}
                                                     <svg class="w-4 h-4 ml-1 text-[#3b82f6]" fill="currentColor"
                                                         viewBox="0 0 24 24">
                                                         <path d="M13 10V3L4 14h7v7l9-11h-7z" />
                                                     </svg>
                                                 </div>
                                             </div>
-                                            <div
+                                            <div v-if="backendState.activeId !== 'aiHorde'"
                                                 class="flex justify-between items-center px-4 py-4 border-b border-[#2A2A35] bg-[#1A1A24]">
                                                 <span class="text-gray-300">Additional Resource Cost</span>
                                                 <div class="flex items-center text-sm font-medium text-gray-200">
                                                     {{ calculateAdditionalCost(request) }}
+                                                    <svg class="w-4 h-4 ml-1 text-[#3b82f6]" fill="currentColor"
+                                                        viewBox="0 0 24 24">
+                                                        <path d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                                    </svg>
+                                                </div>
+                                            </div>
+                                            <div v-if="backendState.activeId === 'aiHorde'"
+                                                class="flex justify-between items-center px-4 py-4 border-b border-[#2A2A35] bg-[#1A1A24]">
+                                                <span class="text-gray-300">Your Kudos</span>
+                                                <div class="flex items-center text-sm font-medium text-gray-200">
+                                                    {{ Math.round(aiHordeUserKudos).toLocaleString() }}
                                                     <svg class="w-4 h-4 ml-1 text-[#3b82f6]" fill="currentColor"
                                                         viewBox="0 0 24 24">
                                                         <path d="M13 10V3L4 14h7v7l9-11h-7z" />
@@ -3335,7 +3672,8 @@ async function unloadLLM() {
                         <div class="flex items-center justify-between mb-4">
                             <div class="flex items-center space-x-2 w-full">
                                 <template v-if="isGenerating">
-                                    <span class="text-blue-400 text-sm">⚡ Generating...</span>
+                                    <span class="text-blue-400 text-sm">⚡ {{ generationState.job || 'Generating...'
+                                        }}</span>
                                     <div class="flex-1 bg-gray-600 rounded-full h-2 overflow-hidden mx-2">
                                         <div class="bg-blue-500 h-full transition-all duration-300 ease-out relative overflow-hidden"
                                             :style="{ width: `${Math.round(generationProgress * 100)}%` }">
@@ -3352,9 +3690,6 @@ async function unloadLLM() {
                                     <span class="text-gray-400 text-xs">
                                         {{ generationState.sampling_step || 0 }}/{{ generationState.sampling_steps || 0
                                         }}
-                                    </span>
-                                    <span class="text-gray-400 text-xs ml-2">
-                                        {{ Math.round(generationProgress * 100) }}%
                                     </span>
                                     <span class="text-gray-400 text-xs ml-2">
                                         {{ generationQueue.length }} in queue
@@ -3386,7 +3721,7 @@ async function unloadLLM() {
                                     <svg class="w-3.5 h-3.5 mr-1 text-white" fill="currentColor" viewBox="0 0 24 24">
                                         <path d="M13 10V3L4 14h7v7l9-11h-7z" />
                                     </svg>
-                                    {{ calculateCost(request) }}
+                                    {{ getDisplayCost() }}
                                 </div>
                             </button>
 
@@ -3417,7 +3752,9 @@ async function unloadLLM() {
                                 <div class="flex items-center justify-between mb-3">
                                     <div class="flex items-center space-x-2">
                                         <div class="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-                                        <span class="text-sm font-medium text-blue-400">Generating...</span>
+                                        <span class="text-sm font-medium text-blue-400">{{ generationState.job ||
+                                            'Generating...'
+                                            }}</span>
                                     </div>
                                     <span class="text-xs text-gray-400">
                                         {{ Math.round(generationProgress * 100) }}%
@@ -3429,7 +3766,7 @@ async function unloadLLM() {
                                     <div class="flex justify-between text-xs text-gray-400 mb-1">
                                         <span>Step {{ generationState.sampling_step || 0 }}/{{
                                             generationState.sampling_steps || 0
-                                        }}</span>
+                                            }}</span>
                                         <span>{{ generationState.job || 'Processing' }}</span>
                                     </div>
                                     <div class="bg-gray-700 rounded-full h-2 overflow-hidden">
@@ -3595,7 +3932,7 @@ async function unloadLLM() {
                     <ChatPanel :history="chatHistory" />
                 </div>
 
-                <div v-if="activeTab == 'settings' && !isFullscreen" class="flex-1 overflow-y-auto p-4">
+                <div v-if="activeTab == 'settings'" class="flex-1 overflow-y-auto p-4">
                     <BackendSettingsPanel />
                 </div>
             </div>
@@ -3651,7 +3988,7 @@ async function unloadLLM() {
                                         generationState.sampling_steps || 0 }}</span>
                                 </div>
                                 <span class="font-semibold tabular-nums">{{ Math.round(generationProgress * 100)
-                                    }}%</span>
+                                }}%</span>
                             </div>
                             <div class="bg-white/20 rounded-full h-1 overflow-hidden">
                                 <div class="bg-blue-400 h-full transition-all duration-300 ease-out"

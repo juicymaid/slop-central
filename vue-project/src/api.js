@@ -38,6 +38,7 @@ export const request = reactive({
     save_images: true,
     do_not_save_grid: true,
     resize_mode:1,
+    clip_skip: 1,
 })
 export const current_model = reactive({
     model: {

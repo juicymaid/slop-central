@@ -31,11 +31,11 @@ OllamaClient = Client(
   host='127.0.0.1:11434'
 )
 
-default_model_is_vision = True
-default_model ="huihui_ai/qwen3.5-abliterated:4B"  
+default_model_is_vision = False
+default_model = 'hf.co/DavidAU/gemma-4-E4B-it-The-DECKARD-Expresso-Universe-HERETIC-UNCENSORED-Thinking-GGUF:Q8_0' #"huihui_ai/qwen3.5-abliterated:4B"  
 # "hf.co/mradermacher/L3-8B-Tamamo-v1-GGUF:Q4_K_M"
-default_vision_model = "gemma3:4b"
-default_embedding_mode = "qwen3-embedding:4b"
+default_vision_model = "huihui_ai/qwen3.5-abliterated:2B"
+default_embedding_mode = "huihui_ai/qwen3.5-abliterated:2B"
 
 clean_vram = True
 
@@ -169,7 +169,14 @@ def get_users():
 def get_user(username: str):
     load_users_from_file()
     if username in all_users:
-        return all_users[username]
+
+        comments = get_user_comments(username)
+
+        user = all_users[username]
+
+        user["comments"] = comments
+
+        return user
     raise HTTPException(status_code=404, detail="User not found")
 
 @router.get("/users/{username}/comments")
@@ -305,7 +312,9 @@ def get_comments(
                     {
                         "role": "user",
                         "content": prompt,
-                        "images": [base64_img],
+                        **(
+                            {"images": [base64_img]} if default_model_is_vision else {}
+                        ),
                     },
                 ],
                 format={
@@ -563,8 +572,9 @@ def get_image_description(image_id: int, include_title: bool = False):
 
     ensure_vram_cleared()
 
-    response: ChatResponse = laptopClient.chat(
+    response: ChatResponse = OllamaClient.chat(
         model=default_vision_model,
+        keep_alive = -1,
         messages=[
             {
                 "role": "system",
@@ -573,7 +583,7 @@ def get_image_description(image_id: int, include_title: bool = False):
             },
             {
                 "role": "user",
-                "content": "describe this image. It was generated using these tags: "
+                "content": "describe this image that was generated using these tags: "
                 + str(prompt),
                 "images": [img_b64],
             },

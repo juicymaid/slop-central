@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Query
+from fastapi.responses import FileResponse, JSONResponse
+import json
 import random
 import utils  # changed from "from .. import utils"
 import subprocess
@@ -43,4 +45,50 @@ async def unload_models():
             return {"message": "Models unloaded successfully"}
         else:
             return {"message": "Failed to unload models", "status_code": response.status_code}
-        
+
+
+
+loras_folder = "H:\\ent\\ai\\StabilityMatrix\\Packages\\Backup\\models\\Lora"
+models_folder = "H:\\ent\\ai\\StabilityMatrix\\Packages\\Backup\\models\\Stable-diffusion"
+
+import os
+@router.get("/webui/loras")
+def get_loras():
+    loras = []
+
+    # Get all .safetensors files in the loras_folder recursively
+
+    for root, dirs, files in os.walk(loras_folder):
+        for file in files:
+            if file.endswith(".safetensors"):
+                lora_path = os.path.join(root, file)
+                lora_name = os.path.splitext(file)[0]
+
+                lora_config_path = lora_path.replace(".safetensors", ".json")
+                lora_config = {}
+                if os.path.exists(lora_config_path):
+                    with open(lora_config_path, "r") as f:
+                        lora_config = json.load(f)
+                        
+                civitai_data_path = lora_path.replace(".safetensors", ".civitai.info")
+                civitai_data = {}
+                if os.path.exists(civitai_data_path):
+                    with open(civitai_data_path, "r") as f:
+                        civitai_data = json.load(f)
+
+                loras.append({"name": lora_name, "path": lora_path, "config": lora_config, "civitai": civitai_data})
+
+    return loras
+
+@router.get("/webui/model-image")
+def get_model_image(model_path: str = Query(...)):
+    """Return the model preview image as a file response (PNG)."""
+    image_path = model_path.replace(".safetensors", ".png")
+
+    if not os.path.exists(image_path):
+        image_path = model_path.replace(".safetensors", ".preview.png")
+
+    if os.path.exists(image_path):
+        return FileResponse(image_path, media_type="image/png")
+    #return FileResponse("files/placeholder.png", media_type="image/png")
+    return JSONResponse({"error": "Image not found"}, status_code=404)

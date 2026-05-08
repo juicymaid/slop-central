@@ -86,8 +86,8 @@ export const backendDefinitions = {
       baseUrl: 'https://aihorde.net/api/v2',
     },
     capabilities: {
-      supportsLocalModels: false,
-      supportsLoras: false,
+      supportsLocalModels: true,
+      supportsLoras: true,
       supportsExtensions: false,
       supportsProgress: true,
       supportsInterrupt: true,
@@ -227,7 +227,7 @@ const mapSamplerName = (backendId, samplerName) => {
 }
 
 const buildLoraTag = (lora) => {
-  const name =  lora?.name || lora?.path || 'lora'
+  const name = lora?.name || lora?.path || 'lora'
   const weight = typeof lora?.weight === 'number' ? lora.weight : parseFloat(lora?.weight) || 1
   return ` <lora:${name}:${weight}>`
 }
@@ -258,6 +258,10 @@ const buildAiHordePayload = ({ baseRequest, inputImage, denoisingStrength } = {}
     n: clampNumber(totalImages, 1, 20),
   }
 
+  if (baseRequest.clip_skip != null) {
+    params.clip_skip = Number(baseRequest.clip_skip)
+  }
+
   if (baseRequest.seed != null && baseRequest.seed !== -1) {
     params.seed = String(baseRequest.seed)
   }
@@ -269,7 +273,7 @@ const buildAiHordePayload = ({ baseRequest, inputImage, denoisingStrength } = {}
   const payload = {
     prompt: buildAiHordePrompt(baseRequest.prompt, baseRequest.negative_prompt),
     params,
-    nsfw: false,
+    nsfw: true,
     censor_nsfw: false,
     r2: false,
     shared: false,
@@ -278,6 +282,28 @@ const buildAiHordePayload = ({ baseRequest, inputImage, denoisingStrength } = {}
   if (inputImage) {
     payload.source_image = inputImage
     payload.source_processing = 'img2img'
+  }
+
+  if (current_model?.loras?.length) {
+    params.loras = current_model.loras.map(lora => {
+      // AI horde expects the lora name or CivitAI ID. We will use the lora name or alias.
+      return {
+        name: lora.name || lora.alias || 'unknown',
+        model: typeof lora.weight === 'number' ? lora.weight : parseFloat(lora.weight) || 1,
+        clip: typeof lora.weight === 'number' ? lora.weight : parseFloat(lora.weight) || 1
+      }
+    })
+  }
+
+  const modelName = current_model?.model?.name || current_model?.model?.title || current_model?.model?.model_name;
+  if (modelName) {
+    // Need to extract the actual name if it has file extension
+    let cleanModelName = modelName;
+    if (cleanModelName.includes('.')) {
+      cleanModelName = cleanModelName.substring(0, cleanModelName.lastIndexOf('.'));
+    }
+    // AI horde expects an array of models
+    payload.models = [cleanModelName];
   }
 
   return payload
@@ -292,11 +318,15 @@ const applyForgeOverrides = (baseRequest) => {
   }
 
   const modelName = current_model?.model?.model_name
+  request.override_settings = request.override_settings || {}
+  
   if (modelName) {
-    request.override_settings = {
-      sd_model_checkpoint: modelName,
-    }
+    request.override_settings.sd_model_checkpoint = modelName
     request.override_settings_restore_afterwards = false
+  }
+
+  if (baseRequest.clip_skip != null) {
+    request.override_settings.CLIP_stop_at_last_layers = Number(baseRequest.clip_skip)
   }
 
   const defaultStyle = modelName ? defaultStyles.value?.[modelName] : null

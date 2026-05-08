@@ -12,6 +12,10 @@ import re
 from collections import defaultdict
 from routes import rate
 from pathlib import Path
+from pydantic import BaseModel
+import base64
+import uuid
+from datetime import datetime
 try:
     import numpy as np
 except ImportError:
@@ -798,6 +802,82 @@ def _trash_image(image_id: int):
         raise HTTPException(status_code=404, detail="Image not found")
     if image_id in utils.trash_data:
         return  # already trashed
+
+class CloudImageRequest(BaseModel):
+    image_base64: str
+    prompt: str = ""
+    negative_prompt: str = ""
+    sampler: str = ""
+    cfg_scale: float = 7.0
+    steps: int = 30
+    seed: int = -1
+    width: int = 512
+    height: int = 512
+    model_name: str = ""
+    model_hash: str = ""
+
+@router.post("/save-cloud")
+def save_cloud_image(req: CloudImageRequest):
+    utils.ensure_loaded()
+    
+    # Decode image
+    image_base64_data = req.image_base64.split(",")[1] if "," in req.image_base64 else req.image_base64
+    image_data = base64.b64decode(image_base64_data)
+    
+    # Generate filename and folder
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    folder_path = os.path.join(utils.api_file_root, "automatic", "cloud", today_str)
+    os.makedirs(folder_path, exist_ok=True)
+    
+    file_name = f"{uuid.uuid4().hex}.png"
+    file_path = os.path.join(folder_path, file_name)
+    
+    # Save the file
+    with open(file_path, "wb") as f:
+        f.write(image_data)
+        
+    # Generate new ID
+    new_id = 0
+    if utils.all_images:
+        new_id = max(img.get("Id", 0) for img in utils.all_images) + 1
+    else:
+        new_id = 1
+        
+    phash = utils.compute_phash(file_path)
+    
+    new_img = {
+        "Id": new_id,
+        "Path": f"/files/automatic/cloud/{today_str}/{file_name}",
+        "CreatedDate": utils.datetimeToTicks(datetime.now()),
+        "Prompt": req.prompt,
+        "NegativePrompt": req.negative_prompt,
+        "Sampler": req.sampler,
+        "CFGScale": req.cfg_scale,
+        "Steps": req.steps,
+        "Seed": req.seed,
+        "Width": req.width,
+        "Height": req.height,
+        "ModelName": req.model_name,
+        "ModelHash": req.model_hash,
+        "Likes": 0,
+        "Dislikes": 0,
+        "Rating": 0,
+        "Clicks": 0,
+        "tags_set": {tag.strip().lower() for tag in req.prompt.split(",") if tag.strip()}
+    }
+    
+    if phash:
+        new_img["pHash"] = phash
+        
+    utils.raw_all_images.append(new_img.copy())
+    utils.all_images.append(new_img)
+    utils.images_data[new_id] = new_img
+    
+    utils.save_images()
+    
+    safe_img = new_img.copy()
+    safe_img.pop("tags_set", None)
+    return _sanitize_image_dict(safe_img)
     utils.trash_data[image_id] = {"TrashedAt": int(_time.time())}
     # Remove from active list
     try:

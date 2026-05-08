@@ -26,17 +26,19 @@
       </div>
 
 
-      
+
       <!-- Breadcrumb Navigation -->
       <div class="p-4 border-b border-[#2A2A35]">
         <div class="flex items-center gap-2 flex-wrap">
-          <button class="px-3 py-1 rounded text-sm  text-[#FAF8F5] hover:bg-[#B89A45] hover:text-[#0D0D12] transition-colors magnetic-button"
+          <button
+            class="px-3 py-1 rounded text-sm  text-[#FAF8F5] hover:bg-[#B89A45] hover:text-[#0D0D12] transition-colors magnetic-button"
             @click="navigateToPath('')">
             Root
           </button>
           <span v-if="currentPath" class="text-[#FAF8F5]/40">/</span>
           <template v-for="(segment, index) in pathSegments" :key="index">
-            <button class="px-3 py-1 rounded text-sm  text-[#FAF8F5]/80 hover:bg-[#2A2A35] transition-colors magnetic-button"
+            <button
+              class="px-3 py-1 rounded text-sm  text-[#FAF8F5]/80 hover:bg-[#2A2A35] transition-colors magnetic-button"
               @click="navigateToPath(pathSegments.slice(0, index + 1).join('/'))">
               {{ segment }}
             </button>
@@ -59,10 +61,18 @@
       <!-- Models Grid -->
       <div class="flex-1 overflow-y-auto p-4">
         <div class="grid grid-cols-1 sm:grid-cols-4 lg:grid-cols-4 gap-3">
-          <div v-for="model in filteredModels" :key="model.id" 
+          <div v-for="model in filteredModels" :key="model.id"
             class="relative bg-[#0D0D12] border border-[#2A2A35] rounded-2xl shadow-xl hover:shadow-2xl hover:scale-[1.02] transition-transform overflow-hidden ">
-            <img :src="getModelImage(model, 0)" :alt="model.name" class="w-full h-72 object-cover rounded-t-2xl"
-              @error="handleImageError($event, model)" />
+            <div class="w-full h-72 rounded-t-2xl relative overflow-hidden">
+              <img v-if="!model._imgError" :src="getModelImage(model, 0)" :alt="model.name" class="w-full h-72 object-cover rounded-t-2xl"
+                @error="handleImageError($event, model)" />
+              <div v-else class="w-full h-72 flex items-center justify-center text-[#FAF8F5] text-lg font-semibold relative"
+                :style="{ backgroundImage: `url(${apiUrl + '/random-image-file?model=' + (model.filename || model.name)})`, backgroundSize: 'cover', backgroundPosition: 'center' }">
+                <div class="absolute inset-0 bg-black/95  flex items-center justify-center">
+                  No Image
+                </div>
+              </div>
+            </div>
             <div class="p-6">
               <h3 class="text-lg font-semibold text-[#FAF8F5]"
                 :title="getModelName(model.filename) ?? model.name ?? model.filename">
@@ -78,23 +88,24 @@
               class="absolute inset-0 bg-black/90 bg-opacity-90 text-[#FAF8F5] opacity-0 hover:opacity-100 transition-opacity duration-300 p-6 flex flex-col justify-between rounded-2xl">
               <div>
                 <h3 class="text-xl font-bold mb-4 break-all">
-                  {{ getModelName(model.filename ?? model.name) }}
+                  {{ model?.civitai?.model?.name || getModelName(model.filename ?? model.name) }}
                 </h3>
-                <!--Path-->
-                <p class="text-sm whitespace-pre-wrap break-words">
-                  {{ GetPath(model.path || model.filename) }}
+                <a v-if="model?.civitai?.modelId" class="cursor-pointer flex items-center gap-2 text-blue-400" :href="'https://civitai.com/models/' + model?.civitai?.modelId + '?modelVersionId=' + model?.civitai?.id" target="_blank">
+                  <svg class="w-4 h-4 " fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14">
+                    </path>
+                  </svg>Open on Civitai</a>
+                <!--Desc-->
+                <p class="text-sm whitespace-pre-wrap break-words  overflow-y-hidden h-42"
+                  v-html="model?.civitai?.description">
                 </p>
-                                                                <button class="cursor-pointer" @click="OpenLoraData(lora.path)"> <svg class="w-4 h-4" fill="none" stroke="currentColor"
-                                                        viewBox="0 0 24 24">
-                                                        <path stroke-linecap="round" stroke-linejoin="round"
-                                                            stroke-width="2"
-                                                            d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14">
-                                                        </path>
-                                                    </svg></button>
+
               </div>
-              <button   class="mt-4 bg-[#C9A84C] text-[#0D0D12] hover:bg-[#C9A84C] text-[#0D0D12] text-[#FAF8F5] py-2 rounded-lg font-semibold transition magnetic-button"
+              <button
+                class="mt-4 bg-[#C9A84C] text-[#0D0D12] hover:bg-[#C9A84C] text-[#0D0D12] text-[#FAF8F5] py-2 rounded-lg font-semibold transition magnetic-button"
                 @click="selectModel(model)">
-                {{ !loraSelected(model)? 'Add' : 'Remove' }}
+                {{ !loraSelected(model) ? 'Add' : 'Remove' }}
               </button>
 
 
@@ -109,6 +120,7 @@
 </template>
 
 <script setup>
+import { apiUrl } from '@/api';
 import { ref, computed, onMounted } from 'vue';
 
 function GetPath(path) {
@@ -210,27 +222,38 @@ const getModelImage = (model, attempt = 0) => {
   let baseUrl = props.url + 'sd_extra_networks/thumb?filename=';
 
   if (attempt === 0) {
-    return baseUrl + modelPath.replace(".safetensors", ".png");
-  } else if (attempt === 1) {
-    return baseUrl + modelPath.replace(".safetensors", ".preview.png");
+    return   apiUrl + '/webui/model-image?model_path=' + encodeURIComponent(model.path || model.filename) 
   } else {
-    return placeholderImage;
+    return null;
   }
 };
 
 const handleImageError = (event, model) => {
   const img = event.target;
-  const currentSrc = img.src;
-
-  if (currentSrc === getModelImage(model, 0)) {
-    img.src = getModelImage(model, 1);
-  } else if (currentSrc === getModelImage(model, 1)) {
-    img.src = getModelImage(model, 2);
+  // mark model as having failed to load its image so template shows fallback
+  try {
+    model._imgError = true;
+  } catch (e) {
+    // fallback: assign property immutably
+    Object.assign(model, { _imgError: true });
+  }
+  // set a lightweight placeholder in case image element remains visible briefly
+  if (img && !img.dataset._placeholderSet) {
+    img.src = placeholderImage;
+    img.dataset._placeholderSet = '1';
   }
 };
 
 async function refreshModels() {
   let full_url = props.url;
+  const isAiHorde = props.url.includes('aihorde');
+  
+  if (isAiHorde) {
+    await fetchModels();
+    buildFolderStructure();
+    return;
+  }
+
   if (props.modelType === 'checkpoint') {
     full_url += 'sdapi/v1/refresh-checkpoints';
   } else if (props.modelType === 'lora') {
@@ -252,11 +275,23 @@ onMounted(async () => {
 
 async function fetchModels() {
   let full_url = props.url;
+  const isAiHorde = props.url.includes('aihorde');
 
-  if (props.modelType === 'checkpoint') {
-    full_url += 'sdapi/v1/sd-models';
-  } else if (props.modelType === 'lora') {
-    full_url += 'sdapi/v1/loras';
+  if (isAiHorde) {
+    if (props.modelType === 'checkpoint') {
+      full_url += 'status/models?type=image';
+    } else if (props.modelType === 'lora') {
+      // AI horde does not have an endpoint to list all loras. 
+      // We will rely on Civitai or local loras later, but for now return empty or use the local backend loras.
+      // Actually we will fetch local loras since we can use them to get CivitAI IDs.
+      full_url = apiUrl + '/webui/loras';
+    }
+  } else {
+    if (props.modelType === 'checkpoint') {
+      full_url += 'sdapi/v1/sd-models';
+    } else if (props.modelType === 'lora') {
+      full_url = apiUrl + '/webui/loras';
+    }
   }
 
   const response = await fetch(full_url);

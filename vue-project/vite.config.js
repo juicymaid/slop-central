@@ -44,7 +44,9 @@ export default defineConfig(async ({ command }) => {
 
   if (command === 'serve' && ensureLocalStorage()) {
     const { default: vueDevTools } = await import('vite-plugin-vue-devtools')
-    plugins.push(vueDevTools())
+    plugins.push(vueDevTools({
+      launchEditor: fileURLToPath(new URL('./ag-editor.cmd', import.meta.url))
+    }))
   }
 
   return {
