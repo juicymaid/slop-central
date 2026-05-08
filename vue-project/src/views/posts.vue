@@ -109,16 +109,38 @@ const createPost = async () => {
 }
 
 const isPublishing = ref(false)
+const postAmount = ref(1)
+const isGeneratingAll = ref(false)
+
+async function generateAllMissingImages() {
+    if (isGeneratingAll.value) return
+    isGeneratingAll.value = true
+    try {
+        const postsToGenerate = filteredPosts.value.filter(p => !p.image_url && !getGenState(p).generating)
+        for (const p of postsToGenerate) {
+            if (!isGeneratingAll.value) break
+            await generateImage(p)
+        }
+    } catch (e) {
+        console.error('Failed to generate all images:', e)
+    } finally {
+        isGeneratingAll.value = false
+    }
+}
 
 async function publishPost(charId = null) {
+    if (isPublishing.value) return
     isPublishing.value = true
     try {
         const targetCharId = charId || selectedCharacterId.value
         let url = `${apiUrl}/generate-post`
         if (targetCharId) url += `?character_id=${targetCharId}`
-        const res = await fetch(url, { method: 'POST' })
-        if (!res.ok) throw new Error('generate-post failed')
-        await refreshFeed()
+
+        for (let i = 0; i < postAmount.value; i++) {
+            const res = await fetch(url, { method: 'POST' })
+            if (!res.ok) throw new Error('generate-post failed')
+            await refreshFeed()
+        }
     } catch (e) {
         console.error('Publish failed:', e)
     } finally {
@@ -153,6 +175,25 @@ function dataURLtoFile(dataurl, filename) {
     return new File([u8arr], filename, { type: mime });
 }
 
+function postToPromt(post) {
+    var prompt = [
+        post.image?.rating || '',
+        '1girl',
+        post.character?.prompt_prefix || post.prompt_prefix || '',
+        post.image?.camera_angle || '',
+        post.image?.appearance || '',
+        post.image?.body || '',
+        post.image?.breast_size || '',
+        post.image?.clothing || '',
+        post.image?.pose || '',
+        post.image?.expression || '',
+        post.image?.setting || '',
+        post.image?.other_tags || ''
+    ].join(', ')
+    prompt = prompt.replace(/,\s*,+/g, ',').replace(/^,|,$/g, '').trim()
+    return prompt
+}
+
 async function generateImage(post) {
     const state = getGenState(post)
     state.generating = true
@@ -160,8 +201,9 @@ async function generateImage(post) {
     state.preview = ''
 
     // Build prompt from post image fields
-    var prompt = `${post.image?.rating || ''}, 1girl, ${post.character?.prompt_prefix || post.prompt_prefix || ''}, ${post.image?.camera_angle || ''}, ${post.image?.appearance || ''},${post.image?.body || ''}, ${post.image?.breast_size || ''}, ${post.image?.clothing || ''}, ${post.image?.pose || ''}, ${post.image?.expression || ''}, ${post.image?.setting || ''}, ${post.image?.other_tags || ''}`
-    prompt = prompt.replace(/,\s*,+/g, ',').replace(/^,|,$/g, '').trim()
+
+    prompt = postToPromt(post)
+
 
     console.log(prompt)
 
@@ -288,19 +330,40 @@ async function generateImage(post) {
                                     d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                             </svg>
                         </button>
-                        <button v-if="characters.length > 0" @click="publishPost(null)" :disabled="isPublishing"
-                            class="px-6 py-2.5 bg-[#C9A84C] text-[#0D0D12] rounded-full font-bold font-sans text-sm shadow-[0_0_15px_rgba(201,168,76,0.3)] hover:scale-105 transition-all disabled:opacity-50 disabled:hover:scale-100">
-                            <span v-if="isPublishing" class="flex items-center gap-2">
+                        <button v-if="filteredPosts.some(p => !p.image_url)" @click="generateAllMissingImages"
+                            :disabled="isGeneratingAll"
+                            class="px-5 py-2.5 bg-[#2A2A35] text-[#FAF8F5] rounded-full font-bold font-sans text-sm hover:bg-[#3f3f4e] transition-all duration-300 border border-[#FAF8F5]/10 disabled:opacity-50 flex items-center gap-2">
+                            <span v-if="isGeneratingAll" class="flex items-center gap-2">
                                 <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
                                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor"
                                         stroke-width="4"></circle>
                                     <path class="opacity-75" fill="currentColor"
                                         d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
                                 </svg>
-                                Generating…
+                                Generating...
                             </span>
-                            <span v-else>Generate</span>
+                            <span v-else>Generate Missing Images</span>
                         </button>
+                        <div v-if="characters.length > 0"
+                            class="flex items-center bg-[#C9A84C] rounded-full shadow-[0_0_15px_rgba(201,168,76,0.3)] transition-all overflow-hidden"
+                            :class="{ 'opacity-50 pointer-events-none': isPublishing }">
+                            <input type="number" v-model="postAmount" min="1" max="10"
+                                class="w-14 bg-transparent text-[#0D0D12] px-3 py-2.5 text-sm text-center outline-none border-r border-[#0D0D12]/20 font-bold font-sans"
+                                title="Amount of posts to generate">
+                            <button @click="publishPost(null)" :disabled="isPublishing"
+                                class="px-5 py-2.5 text-[#0D0D12] font-bold font-sans text-sm hover:bg-black/5 transition-all h-full">
+                                <span v-if="isPublishing" class="flex items-center gap-2">
+                                    <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor"
+                                            stroke-width="4"></circle>
+                                        <path class="opacity-75" fill="currentColor"
+                                            d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                                    </svg>
+                                    Generating…
+                                </span>
+                                <span v-else>Generate</span>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -332,19 +395,39 @@ async function generateImage(post) {
                                     class="px-5 py-2.5 bg-[#2A2A35] text-[#FAF8F5] rounded-full font-bold font-sans text-sm hover:bg-[#3f3f4e] transition-all duration-300 border border-[#FAF8F5]/10">
                                     Refresh
                                 </button>
-                                <button @click="publishPost(selectedCharacter.id)" :disabled="isPublishing"
-                                    class="px-5 py-2.5 bg-[#C9A84C] text-[#0D0D12] rounded-full font-bold font-sans text-sm shadow-[0_0_15px_rgba(201,168,76,0.3)] hover:scale-105 transition-all duration-300 disabled:opacity-50 disabled:hover:scale-100">
-                                    <span v-if="isPublishing" class="flex items-center gap-2">
+                                <button v-if="filteredPosts.some(p => !p.image_url)" @click="generateAllMissingImages"
+                                    :disabled="isGeneratingAll"
+                                    class="px-5 py-2.5 bg-[#2A2A35] text-[#FAF8F5] rounded-full font-bold font-sans text-sm hover:bg-[#3f3f4e] transition-all duration-300 border border-[#FAF8F5]/10 disabled:opacity-50 flex items-center gap-2">
+                                    <span v-if="isGeneratingAll" class="flex items-center gap-2">
                                         <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
                                             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor"
                                                 stroke-width="4"></circle>
                                             <path class="opacity-75" fill="currentColor"
                                                 d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
                                         </svg>
-                                        Generating…
+                                        Generating...
                                     </span>
-                                    <span v-else>Publish</span>
+                                    <span v-else>Generate Missing Images</span>
                                 </button>
+                                <div class="flex items-center bg-[#C9A84C] rounded-full shadow-[0_0_15px_rgba(201,168,76,0.3)] transition-all overflow-hidden"
+                                    :class="{ 'opacity-50 pointer-events-none': isPublishing }">
+                                    <input type="number" v-model="postAmount" min="1" max="10"
+                                        class="w-14 bg-transparent text-[#0D0D12] px-3 py-2.5 text-sm text-center outline-none border-r border-[#0D0D12]/20 font-bold font-sans"
+                                        title="Amount of posts to generate">
+                                    <button @click="publishPost(selectedCharacter.id)" :disabled="isPublishing"
+                                        class="px-5 py-2.5 text-[#0D0D12] font-bold font-sans text-sm hover:bg-black/5 transition-all h-full">
+                                        <span v-if="isPublishing" class="flex items-center gap-2">
+                                            <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor"
+                                                    stroke-width="4"></circle>
+                                                <path class="opacity-75" fill="currentColor"
+                                                    d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                                            </svg>
+                                            Generating…
+                                        </span>
+                                        <span v-else>Publish</span>
+                                    </button>
+                                </div>
                             </div>
                         </div>
 
@@ -416,11 +499,17 @@ async function generateImage(post) {
                             <!-- Final image -->
                             <img v-else-if="post.image_url" :src="apiUrl + post.image_url"
                                 class="w-full h-auto  object-cover">
+
                             <!-- Prompt card (no image yet) -->
-                            <div v-else class="relative p-8 font-mono text-sm bg-cover bg-center"
+                            <div v-else class="relative p-8 font-mono text-sm bg-cover bg-center group"
                                 :style="{ backgroundImage: `url('${apiUrl}/random-image-file?seed=${post.created_at}')` }">
-                                <div class="absolute inset-0 bg-[#0D0D12]/90 backdrop-blur-sm"></div>
-                                <div class="relative z-10">
+                                <div
+                                    class="absolute inset-0 bg-[#0D0D12]/90 backdrop-blur-sm group-hover:backdrop-blur-none transition-all duration-500">
+                                </div>
+
+
+
+                                <div class="relative z-10  transition-opacity duration-300">
                                     <div class="flex items-center gap-3 mb-6 border-b border-[#2A2A35] pb-4">
                                         <div class="h-2 w-2 rounded-full bg-[#C9A84C] shadow-[0_0_8px_#C9A84C]">
                                         </div>
@@ -445,6 +534,10 @@ async function generateImage(post) {
                                         <div v-if="post.image.pose" class="flex flex-col"><span
                                                 class="text-[#FAF8F5]/40 text-xs uppercase tracking-widest mb-1">Pose</span>{{
                                                     post.image.pose }}</div>
+                                        <div v-if="post.image.camera_angle" class="flex flex-col"><span
+                                                class="text-[#FAF8F5]/40 text-xs uppercase tracking-widest mb-1">Camera
+                                                Angle</span>{{
+                                                    post.image.camera_angle }}</div>
                                         <div v-if="post.image.expression" class="flex flex-col"><span
                                                 class="text-[#FAF8F5]/40 text-xs uppercase tracking-widest mb-1">Expression</span>{{
                                                     post.image.expression }}</div>
@@ -466,6 +559,7 @@ async function generateImage(post) {
                                     </div>
                                 </div>
                             </div>
+
                         </div>
                     </div>
                 </div>

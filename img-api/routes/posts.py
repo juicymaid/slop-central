@@ -13,16 +13,16 @@ router = APIRouter()
 
 #Image data used to generate image
 class Image(BaseModel):
-    rating: str # [safe, sensitive, questionable, explicit]
-    appearance: str #Hair (length, color), eyes, body, etc, 
-    body:str #chubby, pregnant, overweight, skinny, fat, muscular thick thighs, huge ass etc
-    breast_size: str #small breasts, medium breasts, large breasts, huge breasts, gigantic breasts,
-    clothing: str #specific outfits (e.g., school uniform, long hair, bikini, lingerie, nude, etc ).
-    pose: str #explicit poses, standing, , looking at viewer, sitting
-    expression: str #happy, sad, angry, seductive smile, etc.
-    camera_angle: str #from above, close up, far away, ass focus, from behind, 
-    setting: str #the environment where the image was taken (e.g., bedroom, beach, etc. classroom, forest, night, city).
-    other_tags: str # other tags
+    rating: str = "" # [safe, sensitive, questionable, explicit]
+    appearance: str = "" #Hair (length, color), eyes, body, etc, 
+    body: str = "" #chubby, pregnant, overweight, skinny, fat, muscular thick thighs, huge ass etc
+    breast_size: str = "" #small breasts, medium breasts, large breasts, huge breasts, gigantic breasts,
+    clothing: str = "" #specific outfits (e.g., school uniform, long hair, bikini, lingerie, nude, etc ).
+    pose: str = "" #explicit poses, standing, , looking at viewer, sitting
+    expression: str = "" #happy, sad, angry, seductive smile, etc.
+    camera_angle: str = "" #from above, close up, far away, ass focus, from behind, 
+    setting: str = "" #the environment where the image was taken (e.g., bedroom, beach, etc. classroom, forest, night, city).
+    other_tags: str = "" # other tags
 
 class Post(BaseModel):
     title:str
@@ -218,6 +218,7 @@ class Image(BaseModel):
     expression: str #happy, sad, angry, seductive smile, etc.
     camera_angle: str #from above, close up, far away, ass focus, from behind, 
     setting: str #the environment where the image was taken (e.g., bedroom, beach, etc. classroom, forest, night, city).
+    Most of the posts should be lewd, adult, questinable or explicit. This website is meant for jerking off
     """
 
     if(len(character.posts) > 0):
