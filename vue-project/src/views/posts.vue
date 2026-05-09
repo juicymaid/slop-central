@@ -244,15 +244,10 @@ async function generateImage(post) {
         const charId = post.character?.id
         if (!charId) throw new Error('No character ID on post')
 
-        // Find post index within the character's posts
-        const char = characters.value.find(c => c.id === charId)
-        const postIndex = char ? char.posts.findIndex(p => p.created_at === post.created_at) : -1
-        if (postIndex < 0) throw new Error('Could not find post index')
-
         const formData = new FormData()
         formData.append('file', file)
 
-        const uploadRes = await fetch(`${apiUrl}/characters/${charId}/posts/${postIndex}/image`, {
+        const uploadRes = await fetch(`${apiUrl}/characters/${charId}/posts/${post.created_at}/image`, {
             method: 'POST',
             body: formData
         })
@@ -598,6 +593,7 @@ async function generateImage(post) {
                         URL</label>
                     <input v-model="newChar.avatar" type="text"
                         class="w-full bg-[#0D0D12] border border-[#2A2A35] rounded-xl px-4 py-3 text-[#FAF8F5] font-sans focus:outline-none focus:border-[#C9A84C] focus:ring-1 focus:ring-[#C9A84C] transition-all">
+                    <label class="break-all line-clamp-1">{{ newChar.avatar_tags }}</label>
                 </div>
                 <div>
                     <label

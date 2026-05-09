@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from PIL import Image as PILImage
+import tiktoken
 
 router = APIRouter()
 
@@ -35,6 +36,7 @@ class Character(BaseModel):
     id:str
     name:str
     avatar:str
+    avatar_tags: Optional[str] = ""
     description:str
     prompt_prefix:str
     posts: List[Post] = []
@@ -69,12 +71,51 @@ def get_character(char_id: str):
             return char
     raise HTTPException(status_code=404, detail="Character not found")
 
+def update_avatar_tags(char: Character):
+    if not char.avatar:
+        return
+    
+    from routes import tagger
+    try:
+        path = None
+        url = None
+        if char.avatar.startswith("/files"):
+            file_path = Path(__file__).parent.parent / char.avatar.lstrip("/")
+            path = str(file_path)
+            if not os.path.exists(path):
+                print(f"Avatar file not found: {path}")
+                return
+        elif char.avatar.startswith("http"):
+            url = char.avatar
+        else:
+            return
+
+        print(f"Generating tags for {char.name}'s avatar...")
+        result = tagger.interrogate_image(
+            path=path, 
+            url=url, 
+            threshold=0.35, 
+            model_name="wd14-convnextv2.v1", 
+            exclude_tags=None, 
+            use_cpu=False, 
+            raw_tag=False
+        )
+        if result and "tag_string" in result:
+            char.avatar_tags = result["tag_string"]
+            print(f"Successfully generated tags: {char.avatar_tags[:50]}...")
+    except Exception as e:
+        print(f"Error getting avatar tags for {char.name}: {e}")
+
 @router.post("/characters", response_model=Character)
 def create_character(char: Character):
     characters = load_characters()
     for existing in characters:
         if existing.id == char.id:
             raise HTTPException(status_code=400, detail="Character already exists")
+    
+    if not char.avatar_tags:
+        update_avatar_tags(char)
+        
     characters.append(char)
     save_characters(characters)
     return char
@@ -87,6 +128,10 @@ def edit_character(char_id: str, updated_char: Character):
             # Keep existing posts if not provided in the update
             if not updated_char.posts and char.posts:
                 updated_char.posts = char.posts
+            
+            if (updated_char.avatar != char.avatar) or (not updated_char.avatar_tags and updated_char.avatar):
+                update_avatar_tags(updated_char)
+                
             characters[i] = updated_char
             save_characters(characters)
             return updated_char
@@ -132,9 +177,9 @@ def get_post():
     posts.sort(key=lambda x: x.get('created_at', 0.0), reverse=True)
     return posts
 
-@router.post("/characters/{char_id}/posts/{post_index}/image")
+@router.post("/characters/{char_id}/posts/{post_id}/image")
 async def upload_post_image(
-    char_id: str, post_index: int, file: UploadFile = File(...)
+    char_id: str, post_id: str, file: UploadFile = File(...)
 ):
     """Upload a generated image for a specific post."""
     if not file.content_type or not file.content_type.startswith("image/"):
@@ -161,20 +206,42 @@ async def upload_post_image(
             break
     if not char:
         raise HTTPException(status_code=404, detail="Character not found")
-    if post_index < 0 or post_index >= len(char.posts):
+        
+    post_index = -1
+    try:
+        target_time = float(post_id)
+        for i, p in enumerate(char.posts):
+            if abs(p.created_at - target_time) < 0.001:
+                post_index = i
+                break
+    except ValueError:
+        pass
+
+    if post_index < 0:
+        try:
+            idx = int(post_id)
+            if 0 <= idx < len(char.posts):
+                post_index = idx
+        except ValueError:
+            pass
+
+    if post_index < 0:
         raise HTTPException(status_code=404, detail="Post not found")
 
-    # Save to files/posts/{char_id}/{post_index}.png
+    post_obj = char.posts[post_index]
+    safe_ts = str(post_obj.created_at).replace('.', '_')
+
+    # Save to files/posts/{char_id}/{safe_ts}.png
     out_dir = Path(__file__).parent.parent / "files" / "posts" / char_id
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{post_index}.png"
+    out_path = out_dir / f"{safe_ts}.png"
     try:
         img.save(out_path, format="PNG")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save image: {e}")
 
     # Update the post's image_url
-    image_url = f"/files/posts/{char_id}/{post_index}.png"
+    image_url = f"/files/posts/{char_id}/{safe_ts}.png"
     char.posts[post_index].image_url = image_url
     save_characters(characters)
 
@@ -204,31 +271,39 @@ def generate_post(character_id: Optional[str] = None):
     
     print(f"Creating post for {character.name}")
     
-    prompt = f"""You are {character.name}. {character.description}. \n\n You are posting a photo of yourself to your private nsfw instagram. Come up with a post to upload to your instagram.
+    prompt = f"""You are {character.name}. {character.description.replace('{{char}}', character.name)}. \n\n\n\n Your goal is to populate the private Instagram account of {character.name} with realistic, lewd posts that drive massive engagement from her followers that fit {character.name}'s character.\n\nYou are posting a photo of yourself to your private nsfw instagram. Come up with a post to upload to your instagram.
     Include a title and details about the image you posted. Respond in json format. \n
-    # Image data used to generate image with examples\n:
-    every image element is a list of tags seperated by ","
+    # Image data used to generate image (with examples)\n:
+    every image element is a list of danbooru tags seperated by ",". the tags will be combined to an prompt and then used to generate an image with stable diffusion 
 class Image(BaseModel):
     rating: str # [safe, sensitive, questionable, explicit]
-    appearance: str #Hair (length, color), eyes, etc, 
+    appearance: str #Hair (length, color), eyes, etc, coverd in cum,
     body:str #chubby, pregnant, overweight, skinny, fat, muscular thick thighs, huge ass etc
-    breast_size: str #small breasts (~AA to B cup size), medium breasts(~C to D cup size), large breasts (~E to K cup size), huge breasts (~L to zz cup size), gigantic breasts (~zzz cup size), (cup size is rough estimate) 
+    breast_size: str # "small breasts" = (~AA to B cup size), "medium breasts" = (~C to D cup size), "large breasts" = (~E to K cup size), "huge breasts" = (~L to zz cup size), "gigantic breasts" = (~zzz cup size), (cup size is rough estimate dont include (cup sizes) in the tags only include size "description" ) 
     clothing: str #specific outfits (e.g., school uniform, long hair, bikini, lingerie, nude, etc ).
-    pose: str #explicit poses, standing, , looking at viewer, sitting
-    expression: str #happy, sad, angry, seductive smile, etc.
-    camera_angle: str #from above, close up, far away, ass focus, from behind, 
+    pose: str #explicit poses, standing, , looking at viewer, sitting, female masturbation, sex, etc
+    expression: str #happy, sad, angry, seductive smile, blush, tongue out
+    camera_angle: str #from above, close up, far away, ass focus, from behind, or empty string for automatic angle
     setting: str #the environment where the image was taken (e.g., bedroom, beach, etc. classroom, forest, night, city).
-    Most of the posts should be lewd, adult, questinable or explicit. This website is meant for jerking off
+    Most of the posts should be lewd, adult, questinable or explicit. This website is meant for jerking off. 
     """
+    if character.avatar_tags:
+        prompt += f"\n\nHere is the tags of your profile picture <avatar_tags_start>\n{character.avatar_tags}\n</avatar_tags_start> [USE THESE FOR REFERENCE]"
 
     if(len(character.posts) > 0):
         #show last 2 posts
         last_2_posts = character.posts[:3]
-        prompt += f"\n\nHere are the Latest posts from this character:\n{last_2_posts}"
-        prompt += "\n\nCome up with a new post for this character."
+        prompt += f"\n\nHere are the Latest posts from this character: <previous_posts_start>\n{last_2_posts}\n<previous_posts_end> [DO NOT REPEAT PREVIOUS POSTS]"
+        prompt += "\n\nCome up with a NEW post for this character. "
         
 
     #Generate
+    try:
+        tokenizer = tiktoken.get_encoding("cl100k_base")
+        print("Prompt token count:", len(tokenizer.encode(prompt)))
+    except Exception as e:
+        print("Prompt token count:", len(prompt.split()))
+
 
     if(use_laptop):
         client = comments.laptopClient
@@ -250,6 +325,17 @@ class Image(BaseModel):
     #debug print
     json_response = json.loads(response.message.content)
     print(json_response)
+
+    # Usage prints
+    input_tokens = getattr(response, "prompt_eval_count", 0)
+    output_tokens = getattr(response, "eval_count", 0)
+    eval_duration_ns = getattr(response, "eval_duration", 0)
+    
+    tokens_per_sec = 0
+    if eval_duration_ns and eval_duration_ns > 0:
+        tokens_per_sec = output_tokens / (eval_duration_ns / 1e9)
+        
+    print(f"Usage stats: {input_tokens} input tokens | {output_tokens} output tokens | {tokens_per_sec:.2f} tokens/s")
 
     post = Post.model_validate_json(response.message.content)
     post.image_url = ""
