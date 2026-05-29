@@ -1,19 +1,29 @@
 <template>
   <div class="max-w-[1400px] mx-auto px-6 transition-colors duration-200 mb-12">
     <!-- Main Image Error -->
-    <div v-if="loadError" class="mb-12 bg-[#1A1A24] border border-[#2A2A35] rounded-[2rem] shadow-lg p-10 transition-colors duration-200 text-center">
-      <svg class="mx-auto h-16 w-16 text-red-500 mb-6" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
+    <div v-if="loadError"
+      class="mb-12 bg-[#1A1A24] border border-[#2A2A35] rounded-[2rem] shadow-lg p-10 transition-colors duration-200 text-center">
+      <svg class="mx-auto h-16 w-16 text-red-500 mb-6" fill="none" stroke="currentColor" stroke-width="1.5"
+        viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round"
+          d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+      </svg>
       <h2 class="text-2xl font-serif font-bold italic text-[#FAF8F5] mb-2">Failed to load image</h2>
       <p class="text-[#FAF8F5]/60 font-sans mb-8">{{ loadError }}</p>
-      <button @click="Refresh()" class="magnetic-button px-6 py-3 bg-[#2A2A35] hover:bg-[#1A1A24] text-[#C9A84C] border border-[#C9A84C]/30 rounded-full font-sans font-semibold transition-colors shadow-[0_0_15px_rgba(201,168,76,0.1)]">Try again</button>
+      <button @click="Refresh()"
+        class="magnetic-button px-6 py-3 bg-[#2A2A35] hover:bg-[#1A1A24] text-[#C9A84C] border border-[#C9A84C]/30 rounded-full font-sans font-semibold transition-colors shadow-[0_0_15px_rgba(201,168,76,0.1)]">Try
+        again</button>
     </div>
 
     <!-- Skeleton Loader -->
-    <div v-else-if="isLoading && !currentPin" class="main-image-section mb-12 bg-[#1A1A24] border border-[#2A2A35] rounded-[3rem] shadow-lg p-8 transition-colors duration-200">
+    <div v-else-if="isLoading && !currentPin"
+      class="main-image-section mb-12 bg-[#1A1A24] border border-[#2A2A35] rounded-[3rem] shadow-lg p-8 transition-colors duration-200">
       <div class="flex flex-col md:flex-row gap-8">
         <div class="w-full md:w-1/2">
           <div class="skeleton rounded-lg w-full aspect-[3/4]"></div>
-          <div class="flex justify-center mt-3"><div class="skeleton h-7 w-28 rounded-full"></div></div>
+          <div class="flex justify-center mt-3">
+            <div class="skeleton h-7 w-28 rounded-full"></div>
+          </div>
         </div>
         <div class="w-full md:w-1/2 space-y-4">
           <div class="flex justify-between">
@@ -48,20 +58,20 @@
           <img @click="showFullscreen" :src="ImageSrc(currentPin.Path)" :alt="currentPin.Title"
             class="rounded-[2rem] w-full shadow-lg hover:shadow-xl transition-shadow border border-[#2A2A35]">
           <!-- Rank Badge -->
-           <RouterLink :to="'/rate?id=' + currentPin.Id">
-             <div class="mb-2 flex justify-center mt-2">
-               <span :class="[
-                 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold shadow-sm',
-                 rank.unrated
-                   ? 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 ring-1 ring-gray-300 dark:ring-gray-600 border border-dotted border-gray-400 dark:border-gray-500'
-                   : 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 ring-1 ring-blue-300 dark:ring-blue-600'
-               ]">
-                 <img :src="rankBadgeSrc(rank.tier)" :alt="(rank.label || 'Unranked') + ' badge'"
-                   class="h-6 w-6 object-contain" />
-                 <span>{{ rank.label || 'Unranked' }}</span>
-               </span>
-             </div>
-           </RouterLink>
+          <RouterLink :to="'/rate?id=' + currentPin.Id">
+            <div class="mb-2 flex justify-center mt-2">
+              <span :class="[
+                'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold shadow-sm',
+                rank.unrated
+                  ? 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 ring-1 ring-gray-300 dark:ring-gray-600 border border-dotted border-gray-400 dark:border-gray-500'
+                  : 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 ring-1 ring-blue-300 dark:ring-blue-600'
+              ]">
+                <img :src="rankBadgeSrc(rank.tier)" :alt="(rank.label || 'Unranked') + ' badge'"
+                  class="h-6 w-6 object-contain" />
+                <span>{{ rank.label || 'Unranked' }}</span>
+              </span>
+            </div>
+          </RouterLink>
           <!-- Rank Badge -->
           <div class="absolute top-0 right-0 p-3 flex gap-2">
             <div class="p-2 bg-black/20 hover:bg-black/30 rounded-full flex items-center gap-1 transition-colors">
@@ -93,7 +103,8 @@
                   <ChevronDown class="w-5 h-5 ml-1 mt-0.5" />
                 </span>
               </div>
-              <button class="magnetic-button px-6 py-2.5 bg-[#C9A84C] hover:bg-[#B89A45] text-[#0D0D12] rounded-full font-sans font-semibold transition-colors shadow-lg"
+              <button
+                class="magnetic-button px-6 py-2.5 bg-[#C9A84C] hover:bg-[#B89A45] text-[#0D0D12] rounded-full font-sans font-semibold transition-colors shadow-lg"
                 @click="saveToBoard(currentPin.recommended_boards[selectedBoard].id)">
                 <span class="relative z-10">Save</span>
               </button>
@@ -151,7 +162,7 @@
             </div>
             <div class="flex flex-wrap gap-2">
               <RouterLink v-for="(lora, index) in displayLoras" :key="`${lora.name}-${lora.weight}-${index}`"
-                :to="{ path: `/models/lora:${lora.name}`}"
+                :to="{ path: `/models/lora:${lora.name}` }"
                 class="magnetic-button text-xs px-3 py-1.5 bg-[#2A2A35]/50 hover:bg-[#2A2A35] border border-[#2A2A35] text-[#FAF8F5]/80 hover:text-[#FAF8F5] rounded-full flex items-center transition-all">
                 <span class="relative z-10">{{ lora.name }}</span>
                 <span v-if="lora.weight" class="relative z-10 ml-2 text-[#C9A84C]">{{ lora.weight }}</span>
@@ -330,25 +341,28 @@
             </div>
             <div v-else-if="commentError" class="p-4 text-center">
               <p class="text-red-500 dark:text-red-400 text-sm mb-2">{{ commentError }}</p>
-              <button @click="GetComments(true)" class="text-sm px-3 py-1.5 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-md hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors">Retry</button>
+              <button @click="GetComments(true)"
+                class="text-sm px-3 py-1.5 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-md hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors">Retry</button>
             </div>
             <div v-else class="space-y-4">
               <div v-for="(comment, index) in comments" :key="comment.Id" class="flex items-start space-x-3">
-                
-                <RouterLink :to="'/user/' + comment.username">
+
+                <RouterLink :to="'/user/' + (comment.character_id || comment.username)">
                   <img
-                    :src="comment.op ? ImageSrc(currentPin.Path) : `${apiUrl}/random-image-file?user=${comment.username}`"
+                    :src="comment.avatar || `${apiUrl}/random-image-file?user=${comment.username}`"
                     :alt="`${comment.username}'s avatar`" class="w-10 h-10 rounded-full object-cover" />
                 </RouterLink>
                 <div class="w-full">
-                  <p class="text-gray-900 dark:text-white font-semibold">{{ comment.username }}</p>
+                  <RouterLink :to="'/user/' + (comment.character_id || comment.username)" class="hover:text-[#C9A84C] transition-colors">
+                    <p class="text-gray-900 dark:text-white font-semibold">{{ comment.username }}</p>
+                  </RouterLink>
                   <p class="text-gray-700 dark:text-gray-300">{{ comment.content }}</p>
                   <!-- Replies section -->
                   <div v-if="comment.replies && comment.replies.length > 0"
                     class="mt-3 pl-4 border-l-2 border-gray-200 dark:border-gray-700 space-y-3">
                     <div v-for="reply in comment.replies" :key="reply.Id" class="flex items-start space-x-3">
                       <img
-                        :src="reply.op ? ImageSrc(currentPin.Path) : `${apiUrl}/random-image-file?user=${reply.username}`"
+                        :src="reply.avatar || `${apiUrl}/random-image-file?user=${reply.username}`"
                         :alt="`${reply.username}'s avatar`" class="w-10 h-10 rounded-full object-cover" />
                       <div>
                         <p class="text-gray-900 dark:text-white font-semibold text-sm">{{ reply.username }}</p>
@@ -482,7 +496,8 @@
   <div class="mt-12">
     <div class="flex justify-between items-center mb-6">
       <h2 class="text-xl font-bold text-gray-900 dark:text-white">More like this</h2>
-      <select v-model="similarityMode" @change="RefreshRecommendations" class="bg-[#1A1A24] border border-[#2A2A35] text-[#FAF8F5] rounded-lg px-3 py-1.5 focus:outline-none focus:border-[#C9A84C] text-sm">
+      <select v-model="similarityMode" @change="RefreshRecommendations"
+        class="bg-[#1A1A24] border border-[#2A2A35] text-[#FAF8F5] rounded-lg px-3 py-1.5 focus:outline-none focus:border-[#C9A84C] text-sm">
         <option value="full">Full Similarity</option>
         <option value="prompt">Prompt Only</option>
         <option value="hash">Visual Only</option>
@@ -490,12 +505,18 @@
     </div>
     <!-- Rec Error -->
     <div v-if="recError" class="bg-white dark:bg-gray-800 rounded-xl shadow p-8 text-center">
-      <svg class="mx-auto h-10 w-10 text-red-400 dark:text-red-500 mb-3" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
+      <svg class="mx-auto h-10 w-10 text-red-400 dark:text-red-500 mb-3" fill="none" stroke="currentColor"
+        stroke-width="1.5" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round"
+          d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+      </svg>
       <p class="text-gray-500 dark:text-gray-400 mb-4">{{ recError }}</p>
-      <button @click="retryRecommendations()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">Retry</button>
+      <button @click="retryRecommendations()"
+        class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">Retry</button>
     </div>
     <!-- Rec Skeleton -->
-    <div v-else-if="isLoading && recommendations.length === 0" class="columns-2 md:columns-3 lg:columns-4 xl:columns-5 gap-4 space-y-4">
+    <div v-else-if="isLoading && recommendations.length === 0"
+      class="columns-2 md:columns-3 lg:columns-4 xl:columns-5 gap-4 space-y-4">
       <div v-for="n in 12" :key="n" class="break-inside-avoid">
         <div class="skeleton rounded-lg w-full" :style="{ height: (180 + (n % 3) * 80) + 'px' }"></div>
       </div>
@@ -1074,7 +1095,7 @@ function showFullscreen() {
   ];
   viewerApi({
     images: images,
-    options: { "inline": true, "button": true, "navbar": false, "title": false, "toolbar": false, "tooltip": false, "movable": true, "zoomable": true, "rotatable": true, "scalable": true, "transition": true, "fullscreen": true, "keyboard": true,}
+    options: { "inline": true, "button": true, "navbar": false, "title": false, "toolbar": false, "tooltip": false, "movable": true, "zoomable": true, "rotatable": true, "scalable": true, "transition": true, "fullscreen": true, "keyboard": true, }
   });
 }
 
@@ -1129,7 +1150,12 @@ function showFullscreen() {
 }
 
 @keyframes skeleton-shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
+  0% {
+    background-position: 200% 0;
+  }
+
+  100% {
+    background-position: -200% 0;
+  }
 }
 </style>

@@ -346,12 +346,21 @@ async def assistant_ws(websocket: WebSocket):
 
             # Streaming + tool loop, similar to provided example
             while True:
-                stream = comments.OllamaClient.chat(
-                    model=comments.default_model,
+                from routes.ai_settings import load_ai_settings
+                _ai = load_ai_settings()
+                _client = comments.laptopClient if _ai.use_laptop else comments.OllamaClient
+
+                options = {}
+                if _ai.override_temperature:
+                    options["temperature"] = _ai.temperature
+
+                stream = _client.chat(
+                    model=_ai.default_assistant_model or _ai.default_model,
                     messages=convo,
                     tools=[search_images, get_random_images, show_image, generate_new_image, search_civitai_models, get_civitai_images, show_prompt],
                     stream=True,
-                    think=True,
+                    options=options,
+                    think=_ai.use_thinking,
                 )
 
                 thinking = ""
@@ -378,6 +387,14 @@ async def assistant_ws(websocket: WebSocket):
                     if getattr(chunk.message, "tool_calls", None):
                         calls = chunk.message.tool_calls
                         tool_calls.extend(calls)
+                        
+                    # Token usage stats are typically in the final chunk
+                    if getattr(chunk, "prompt_eval_count", None):
+                        input_tokens = getattr(chunk, "prompt_eval_count", 0)
+                        output_tokens = getattr(chunk, "eval_count", 0)
+                        eval_duration_ns = getattr(chunk, "eval_duration", 0)
+                        tokens_per_sec = output_tokens / (eval_duration_ns / 1e9) if eval_duration_ns else 0
+                        print(f"Usage stats: {input_tokens} input tokens | {output_tokens} output tokens | {tokens_per_sec:.2f} tokens/s")
 
                 # Append accumulated assistant message
                 if thinking or content or tool_calls:

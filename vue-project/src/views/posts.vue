@@ -1,6 +1,9 @@
 <script setup>
-import { ref, onMounted, computed, reactive } from 'vue'
+import { ref, onMounted, computed, reactive, watch } from 'vue'
 import { GetFromApi, PostToApi, apiUrl, formatRequest } from '../api'
+
+
+
 
 const characters = ref([])
 const allPosts = ref([])
@@ -14,6 +17,11 @@ const newChar = ref({
     avatar: '',
     description: '',
     prompt_prefix: ''
+})
+
+// Auto-format id: spaces → underscores, lowercase
+watch(() => newChar.value.id, (val) => {
+    newChar.value.id = val.replace(/\s/g, '_').toLowerCase()
 })
 
 const showCreatePostModal = ref(false)
@@ -446,14 +454,15 @@ async function generateImage(post) {
             <div v-for="(post, index) in filteredPosts" :key="post.created_at || index"
                 class="bg-[#14141A] rounded-2xl border border-[#2A2A35] overflow-hidden shadow-lg transition-transform duration-300 hover:-translate-y-1 hover:shadow-xl hover:border-[#2A2A35]/80">
                 <div class="p-6 flex gap-4">
-                    <img @click="selectedCharacterId = post.character.id"
-                        :src="post.character?.avatar || 'https://images.unsplash.com/photo-1511275539165-cc46b1ee89bf?w=100&h=100&fit=crop'"
-                        class="w-12 h-12 rounded-full object-cover shadow-sm border border-[#2A2A35] cursor-pointer hover:opacity-80 transition-opacity">
+                    <router-link :to="'/user/' + post.character?.id">
+                        <img :src="post.character?.avatar || 'https://images.unsplash.com/photo-1511275539165-cc46b1ee89bf?w=100&h=100&fit=crop'"
+                            class="w-12 h-12 rounded-full object-cover shadow-sm border border-[#2A2A35] cursor-pointer hover:opacity-80 transition-opacity">
+                    </router-link>
                     <div class="flex-1 min-w-0">
-                        <div class="flex items-center gap-2 mb-2 cursor-pointer w-max"
-                            @click="selectedCharacterId = post.character.id">
-                            <span class="font-bold font-sans text-[#FAF8F5] hover:text-[#C9A84C] transition-colors">{{
-                                post.character?.name }}</span>
+                        <div class="flex items-center gap-2 mb-2 cursor-pointer w-max">
+                            <router-link :to="'/user/' + post.character?.id"
+                                class="font-bold font-sans text-[#FAF8F5] hover:text-[#C9A84C] transition-colors">{{
+                                    post.character?.name }}</router-link>
                             <span class="text-[#FAF8F5]/40 font-mono text-sm">@{{ post.character?.id }}</span>
                         </div>
                         <p class="text-[#FAF8F5]/90 font-sans leading-relaxed text-[15px] mb-4 whitespace-pre-wrap">
@@ -593,7 +602,7 @@ async function generateImage(post) {
                         URL</label>
                     <input v-model="newChar.avatar" type="text"
                         class="w-full bg-[#0D0D12] border border-[#2A2A35] rounded-xl px-4 py-3 text-[#FAF8F5] font-sans focus:outline-none focus:border-[#C9A84C] focus:ring-1 focus:ring-[#C9A84C] transition-all">
-                    <label class="break-all line-clamp-1">{{ newChar.avatar_tags }}</label>
+                    <label class="break-all text-xs">{{ newChar.avatar_tags }}</label>
                 </div>
                 <div>
                     <label

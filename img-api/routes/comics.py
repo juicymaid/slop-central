@@ -258,8 +258,8 @@ def generate_comic(prompt: str = Query(..., description="Prompt for the comic pa
         + f'\n\n---\n\nNow create a comic based on this prompt:\n"{prompt}"\n\nGenerate the comic JSON:'
     )
 
-    response: ChatResponse = comments.OllamaClient.chat(
-        model=comments.default_model,
+    response: ChatResponse = comments.get_ollama_client().chat(
+        model=comments.get_default_model(),
         messages=[{"role": "system", "content": full_prompt}],
         format={
             "type": "object",
@@ -280,7 +280,9 @@ def generate_comic(prompt: str = Query(..., description="Prompt for the comic pa
             },
             "required": ["title", "topic", "panels"],
         },
+        options=comments.get_ollama_options()
     )
+    comments.print_usage(response)
     comic = json.loads(response["message"]["content"])
 
     save = save_comic(-1, comic)
@@ -332,8 +334,8 @@ def generate_comic_panel(
 
     print("System Prompt:", system_prompt)
 
-    response: ChatResponse = comments.OllamaClient.chat(
-        model=comments.default_model,
+    response: ChatResponse = comments.get_ollama_client().chat(
+        model=comments.get_default_model(),
         messages=[
             {"role": "system", "content": system_prompt + str(panel)},
             {
@@ -351,7 +353,9 @@ def generate_comic_panel(
             },
             "required": ["prompt", "texts"],
         },
+        options=comments.get_ollama_options()
     )
+    comments.print_usage(response)
 
     updated_panel = json.loads(response["message"]["content"])
     comic["panels"][panel_index] = updated_panel
@@ -402,8 +406,8 @@ def create_examples(
 
                 texts = []
 
-                response: ChatResponse = comments.OllamaClient.chat(
-                    model=comments.default_model,
+                response: ChatResponse = comments.get_ollama_client().chat(
+                    model=comments.get_default_model(),
                     messages=[
                         {
                             "role": "system",
@@ -418,7 +422,9 @@ def create_examples(
                         },
                         "required": ["texts"],
                     },
+                    options=comments.get_ollama_options()
                 )
+                comments.print_usage(response)
                 extracted = json.loads(response["message"]["content"])
                 if "texts" in extracted:
                     texts = extracted["texts"]

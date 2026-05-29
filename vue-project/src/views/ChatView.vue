@@ -4,23 +4,42 @@
         <div class="chat-sidebar">
             <div class="sidebar-header">
                 <h2>Messages</h2>
-                <button class="new-chat-btn">
+                <button class="new-chat-btn" title="Show characters">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                             d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                     </svg>
                 </button>
             </div>
-            <div class="chat-list">
+
+            <!-- Characters Section -->
+            <div v-if="characters.length" class="sidebar-section">
+                <div class="section-label">Characters</div>
+                <router-link v-for="char in characters" :key="char.id"
+                    :to="{ name: 'chat', params: { id: char.id } }" class="chat-item"
+                    :class="{ active: route.params.id == char.id }">
+                    <div class="chat-avatar">
+                        <img :src="char.avatar || `${apiUrl}/random-image-file?user=${char.id}`" />
+                    </div>
+                    <div class="chat-info">
+                        <div class="chat-name">{{ char.name }}</div>
+                        <div class="last-message">{{ char.description?.substring(0, 50) || 'Start chatting…' }}…</div>
+                    </div>
+                </router-link>
+            </div>
+
+            <!-- Existing Chats -->
+            <div v-if="all_chats.length" class="sidebar-section">
+                <div class="section-label">Recent</div>
                 <router-link v-for="chat in all_chats" :key="chat.id"
                     :to="{ name: 'chat', params: { id: chat.chat_id } }" class="chat-item"
                     :class="{ active: route.params.id == chat.chat_id }">
                     <div class="chat-avatar">
-                        <img :src="apiUrl + '/image-file/' + chat.chat_id" />
+                        <img :src="chat.character?.avatar || (chat.is_character_chat ? `${apiUrl}/random-image-file?user=${chat.chat_id}` : apiUrl + '/image-file/' + chat.chat_id)" />
                     </div>
                     <div class="chat-info">
-                        <div class="chat-name">{{ chat.character.character_name }}</div>
-                        <div class="last-message">{{ chat.messages[chat.messages.length - 1]?.text }}</div>
+                        <div class="chat-name">{{ chat.character?.character_name || 'Chat' }}</div>
+                        <div class="last-message">{{ chat.messages?.[chat.messages.length - 1]?.text || 'No messages yet' }}</div>
                     </div>
                     <div class="chat-meta">
                         <div class="chat-time">{{ chat.time }}</div>
@@ -36,7 +55,7 @@
                 <!-- Chat Header -->
                 <div class="chat-header">
                     <div class="chat-user-info">
-                        <img :src="apiUrl + '/image-file/' + chat.chat_id"
+                        <img :src="chat.character?.avatar || (chat.is_character_chat ? `${apiUrl}/random-image-file?user=${chat.chat_id}` : apiUrl + '/image-file/' + chat.chat_id)"
                             :alt="chat.character?.character_name ?? 'Loading...'" class="user-avatar" />
                         <div>
                             <h3>{{ chat.character?.character_name ?? "Loading..." }}</h3>
@@ -69,11 +88,12 @@
 
 
 
-                    <div v-if="chat.chat_id" class="received">
+
+                    <div v-if="chat.chat_id && !chat.is_character_chat" class="received">
                         <div class="message-content">
                             <div class="message-image">
                                 <img :src="apiUrl + '/image-file/' + chat.chat_id" :alt="'Shared image'"
-                                    @click="openImage(message.image)" />
+                                    @click="openImage(apiUrl + '/image-file/' + chat.chat_id)" />
                             </div>
                         </div>
                     </div>
@@ -157,8 +177,8 @@
 </template>
 
 <script setup>
-import { apiUrl, formatRequest } from '@/api';
-import { ref, reactive, nextTick, onMounted } from 'vue';
+import { apiUrl, formatRequest, GetFromApi } from '@/api';
+import { ref, reactive, nextTick, onMounted, watch } from 'vue';
 import { useRoute } from 'vue-router'
 
 const route = useRoute()
@@ -166,6 +186,7 @@ const route = useRoute()
 const chat = ref({});
 
 const all_chats = ref([]);
+const characters = ref([]);
 
 
 async function RefreshChat() {
@@ -186,9 +207,24 @@ async function RefreshChat() {
     all_chats.value = await chatResponse.json();
 }
 
+async function loadCharacters() {
+    try {
+        const data = await GetFromApi('characters');
+        if (data && Array.isArray(data)) {
+            characters.value = data;
+        }
+    } catch (e) {
+        console.error('Failed to load characters:', e);
+    }
+}
+
 onMounted(() => {
     RefreshChat();
+    loadCharacters();
+});
 
+watch(() => route.params.id, () => {
+    RefreshChat();
 });
 
 const selectedChat = ref(null);
@@ -464,6 +500,19 @@ onMounted(() => {
     flex: 1;
     overflow-y: auto;
     padding: 8px 0;
+}
+
+.sidebar-section {
+    padding: 4px 0;
+}
+
+.section-label {
+    padding: 8px 20px 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: #9ca3af;
 }
 
 .chat-item {

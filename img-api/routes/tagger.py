@@ -345,8 +345,8 @@ example_prompts = [
 def generate_prompt(
     request: str = Query(..., description="Request to generate a prompt"),
 ):
-    response: ChatResponse = chat(
-        model=default_model,
+    response: ChatResponse = comments.get_ollama_client().chat(
+        model=comments.get_default_model(),
         messages=[
             {
                 "role": "system",
@@ -364,8 +364,10 @@ def generate_prompt(
                 "image_prompt": {"type": "string"},
             },
             "required": ["title", "image_prompt"],
-        }
+        },
+        options=comments.get_ollama_options()
     )
+    comments.print_usage(response)
     return json.loads(response["message"]["content"])
 
 

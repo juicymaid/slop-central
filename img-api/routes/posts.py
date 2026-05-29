@@ -248,10 +248,8 @@ async def upload_post_image(
     return {"image_url": image_url}
 
 from routes import comments
+from routes.ai_settings import load_ai_settings
 import random
-
-use_thinking = False
-use_laptop = True
 
 @router.post("/generate-post")
 def generate_post(character_id: Optional[str] = None):
@@ -304,14 +302,20 @@ class Image(BaseModel):
     except Exception as e:
         print("Prompt token count:", len(prompt.split()))
 
+    # Use centralized AI settings
+    settings = load_ai_settings()
 
-    if(use_laptop):
+    if settings.use_laptop:
         client = comments.laptopClient
     else:
         client = comments.OllamaClient
 
+    options = {}
+    if settings.override_temperature:
+        options["temperature"] = settings.temperature
+
     response: ChatResponse = client.chat(
-        model=comments.default_model,
+        model=settings.default_model,
         messages=[
             {
                 "role": "system",
@@ -319,7 +323,8 @@ class Image(BaseModel):
             }
         ],
         format=Post.model_json_schema(),
-        think=use_thinking
+        options=options,
+        think=settings.use_thinking
     )
 
     #debug print

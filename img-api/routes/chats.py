@@ -8,6 +8,7 @@ from ollama import chat
 
 import utils  
 from routes import comments
+from routes.ai_settings import load_ai_settings
 
 router = APIRouter()
 
@@ -22,11 +23,36 @@ def get_chat(chat_id: str):
     if chat:
         return chat
     
+    # Try to load as a character first
+    from routes.posts import load_characters
+    characters = load_characters()
+    char = None
+    for c in characters:
+        if c.id == chat_id:
+            char = c
+            break
+
+    if char:
+        # Character-based chat
+        chat = {
+            "chat_id": chat_id,
+            "messages": [],
+            "character": {
+                "character_name": char.name,
+                "short_description": char.description[:200] if char.description else "",
+                "avatar": char.avatar,
+                "character_id": char.id,
+            },
+            "is_character_chat": True,
+        }
+        all_chats[chat_id] = chat
+        save_chats()
+        return chat
+    
+    # Fallback: Legacy image-based chat
     chat = {
         "chat_id": chat_id,
-        "messages": [
-            
-        ],
+        "messages": [],
     }
 
     image = utils.images_data.get(int(chat_id))  # Ensure the image exists
@@ -68,32 +94,63 @@ def add_message(chat_id: str, message: str, image_request: object = Body(...)):
     })
 
     character = _chat.get("character", {})
+    is_character_chat = _chat.get("is_character_chat", False)
 
-    prompt = comments.clean_prompt(_chat['image_prompt'])
+    settings = load_ai_settings()
+
+    if is_character_chat:
+        # Character-based chat uses character description directly
+        from routes.posts import load_characters
+        characters = load_characters()
+        char = None
+        for c in characters:
+            if c.id == chat_id:
+                char = c
+                break
+
+        char_name = character.get("character_name", "Character")
+        char_desc = char.description if char else character.get("short_description", "")
+
+        system_content = (
+            comments.ollama_jailbreak
+            + f"You are now fully roleplaying as {char_name}. {char_desc}."
+            " Stay in character at all times, respond naturally and immersively as if you are truly this character."
+            " Do not write thoughts or actions in brackets, only write dialogue."
+            " Do not break character or refer to yourself as an AI."
+            " You can also send images in the chat by including an 'image_prompt' field in your response."
+            " If user says [something in brackets], you should include that in your image_prompt field."
+            " If you don't want to send an image, just leave the 'image_prompt' field empty or null."
+            " The image_prompt should be a list of tags separated by commas, describing the image you want to generate."
+        )
+    else:
+        # Legacy image-based chat
+        prompt = comments.clean_prompt(_chat.get('image_prompt', ''))
+        char_name = character.get('character_name', 'Character')
+        system_content = (
+            comments.ollama_jailbreak
+            + f"You are now fully roleplaying as {char_name}, {character.get('short_description', '')}."
+            f" Your personality traits: {character.get('personality_traits', '')}."
+            f" You enjoy: {character.get('likes', '')}."
+            f" Your fetishes: {character.get('fetishes', '')}."
+            f" You dislike: {character.get('dislikes', '')}."
+            f" Your current mood: {character.get('current_mood', '')}."
+            f" You are currently {character.get('current_activity', '')} in the image."
+            f" You have just posted an image of yourself online and are now chatting with a user who is responding to your post."
+            f" The image you posted is described as: {_chat.get('original_image_description', '')}."
+            " Stay in character at all times, respond naturally and immersively as if you are truly this character."
+            " Do not write thoughts or actions in brackets, only write dialogue."
+            " Do not break character or refer to yourself as an AI."
+            " You can also send images in the chat by including an 'image_prompt' field in your response."
+            " If user says [something in brackets], you should include that in your image_prompt field."
+            "If you don't want to send an image, just leave the 'image_prompt' field empty or null. Note generating images may take a while so don't generate them if not needed."
+            "The image_prompt should be a list of tags seperated by commas, describing the image you want to generate."
+            f"for example the prompt of the image you posted is: {prompt}"
+        )
 
     _messages = [
         {
             "role": "system",
-            "content": (
-                comments.ollama_jailbreak
-                + f"You are now fully roleplaying as {character['character_name']}, {character['short_description']}."
-                f" Your personality traits: {character['personality_traits']}."
-                f" You enjoy: {character['likes']}."
-                f" Your fetishes: {character['fetishes']}."
-                f" You dislike: {character['dislikes']}."
-                f" Your current mood: {character['current_mood']}."
-                f" You are currently {character['current_activity']} in the image."
-                f" You have just posted an image of yourself online and are now chatting with a user who is responding to your post."
-                f" The image you posted is described as: {_chat['original_image_description']}."
-                " Stay in character at all times, respond naturally and immersively as if you are truly this character."
-                " Do not write thoughts or actions in brackets, only write dialogue."
-                " Do not break character or refer to yourself as an AI."
-                " You can also send images in the chat by including an 'image_prompt' field in your response."
-                " If user says [something in brackets], you should include that in your image_prompt field."
-                "If you don't want to send an image, just leave the 'image_prompt' field empty or null. Note generating images may take a while so don't generate them if not needed."
-                "The image_prompt should be a list of tags seperated by commas, describing the image you want to generate."
-                f"for example the prompt of the image you posted is: {prompt}"
-            ),
+            "content": system_content,
         }
     ]
     
@@ -101,16 +158,20 @@ def add_message(chat_id: str, message: str, image_request: object = Body(...)):
         if "text" in msg and msg["text"] is not None:
             content = msg["text"]
             if msg.get("image_prompt"):
-                content += f"\n[{character['character_name']} Sends an image with prompt: {msg['image_prompt']}]"
+                content += f"\n[{char_name} Sends an image with prompt: {msg['image_prompt']}]"
                 
             _messages.append({
                 "role": "user" if msg.get("isUser", False) else "assistant",
                 "content": content
             })
 
-        
-    response: ChatResponse = chat(
-        model=comments.default_model,
+    options = {}
+    if settings.override_temperature:
+        options["temperature"] = settings.temperature
+
+    _client = comments.laptopClient if settings.use_laptop else comments.OllamaClient
+    response: ChatResponse = _client.chat(
+        model=settings.default_model,
         messages=_messages,
         format={
             "type": "object",
@@ -119,8 +180,15 @@ def add_message(chat_id: str, message: str, image_request: object = Body(...)):
                 "image_prompt": {"type": "string"},
             },
             "required": ["text", "image_prompt"],
-        }
+        },
+        options=options
     )
+
+    input_tokens = getattr(response, "prompt_eval_count", 0)
+    output_tokens = getattr(response, "eval_count", 0)
+    eval_duration_ns = getattr(response, "eval_duration", 0)
+    tokens_per_sec = output_tokens / (eval_duration_ns / 1e9) if eval_duration_ns else 0
+    print(f"Usage stats: {input_tokens} input tokens | {output_tokens} output tokens | {tokens_per_sec:.2f} tokens/s")
 
     data = json.loads(response["message"]["content"])
 
@@ -144,7 +212,7 @@ def add_message(chat_id: str, message: str, image_request: object = Body(...)):
     load_chats()
     return {"status": "Message added successfully", "chat_id": chat_id, "message": data["text"], "image_prompt": data.get("image_prompt", "")}
 
-# get the latest image file in /files and add the url to the chat message like http://127.0.0.1:8000/files/automatic/txt2img-images/2025-07-29/00000-3047433532.png
+# get the latest image file in /files and add the url to the chat message
 @router.post("/chat/{chat_id}/{message_index}/image")
 def add_image_to_message(chat_id: str, message_index: int):
     # Validate chat and message index
@@ -170,11 +238,11 @@ def add_image_to_message(chat_id: str, message_index: int):
     if not latest_file:
         return {"error": "No image files found."}
 
-    # Build the URL (assuming /files is served at http://127.0.0.1:8000/files)
+    # Build the URL
     rel_path = os.path.relpath(latest_file, utils.api_file_root).replace("\\", "/")
     image_url = f"http://127.0.0.1:8000/files/{rel_path}"
 
-    # Add image_prompt and image to the message
+    # Add image to the message
     messages[message_index]["image"] = image_url
 
     save_chats()

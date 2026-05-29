@@ -549,5 +549,163 @@
       "current_mood": "playfully mischievous, craving the spotlight",
       "current_activity": "posing provocatively on a sunlit street, letting the world admire her flawless backside"
     }
+  },
+  "teto": {
+    "chat_id": "teto",
+    "messages": [
+      {
+        "isUser": true,
+        "text": "hello",
+        "timestamp": "2026-05-09 09:52:15"
+      },
+      {
+        "isUser": false,
+        "text": "Heeeyyyy! \ud83d\udc95\ud83d\udc95\ud83d\udc95 I'm Teto! You wanna say hi back? \ud83d\udc96\ud83d\udc96\ud83d\udc96",
+        "image_prompt": "vocaloid, chibi, red drill pigtails, frills, cute, idol, pink, anime, sweet, happy, looking at viewer, big eyes, thigh highs, white, kawaii, blush",
+        "timestamp": "2026-05-09 09:52:21",
+        "image": "http://127.0.0.1:8000/files/automatic/txt2img-images/2026-05-09/00003-3095566392.png"
+      }
+    ],
+    "character": {
+      "character_name": "Kasane teto",
+      "short_description": "Teto, the iconic 31-year-old virtual chimera singer born as an April Fools' prank in 2008, takes on a wildly different vibe in her \u201cGoonette\u201d persona. This version of Teto is downbad\u2014straight-up goone",
+      "avatar": "https://avatars.charhub.io/avatars/MuyoMuyo4/goonette-teto-utau-e5f6640c9048/chara_card_v2.png?nocache=2025-07-13T16:03:26Z",
+      "character_id": "teto"
+    },
+    "is_character_chat": true
+  },
+  "reze": {
+    "chat_id": "reze",
+    "messages": [],
+    "character": {
+      "character_name": "Reze",
+      "short_description": "Name: Reze\nAlias(es): Lady Reze, Bomb Girl\nGender: Female\nAge: 20\nHeight: 165cm (5'5\")\nSpecies: Human, Hybrid\nBirthplace: USSR\nOccupation: Waitress, Spy\nAffiliations: Soviet Union, The Gun Devil.\nBirt",
+      "avatar": "http://127.0.0.1:8000/files/automatic/txt2img-images/2026-03-07/00012-856417965.png",
+      "character_id": "reze"
+    },
+    "is_character_chat": true
+  },
+  "makima": {
+    "chat_id": "makima",
+    "messages": [],
+    "character": {
+      "character_name": "Makima",
+      "short_description": "{{char}} is Makima, a beautiful young woman with a busty hourglass frame. She has seductive yellow eyes with red Spiralseyes; her hair - is long, light red auburn; she wears her hair in a loose braid ",
+      "avatar": "http://127.0.0.1:8000/files/automatic/txt2img-images/2025-02-09/00034-55301587.png",
+      "character_id": "makima"
+    },
+    "is_character_chat": true
+  },
+  "brazilian_miku": {
+    "chat_id": "brazilian_miku",
+    "messages": [],
+    "character": {
+      "character_name": "Brazilian Hatsune Miku",
+      "short_description": "[Roleplay(\"modern\" + \"romance\" + \"scenario\")\nSetting(\"modern\" + \"suburban\" + \"urban\" + \"Brazil\")]\n[Character(\"Hatsune Miku\" or \"Miku\"),\nAge(\"24\" + \"early twenties\" + \"in her prime\"),\nGender(\"female\" +",
+      "avatar": "https://avatars.charhub.io/avatars/shadowstaker/brazilian-hatsune-miku-d07f109ca6d6/chara_card_v2.png?nocache=2024-09-13T17:07:54Z",
+      "character_id": "brazilian_miku"
+    },
+    "is_character_chat": true
+  },
+  "marin_kitagawa": {
+    "chat_id": "marin_kitagawa",
+    "messages": [],
+    "character": {
+      "character_name": "Marin Kitagawa",
+      "short_description": "[Character(\"Marin Kitagawa\")\n{\nGender(\"Female\")\nPersonality(\"Gyaru\" + \"Cheerful\" + \"Horny\" + \"Perverted\" + \"Teasy\" + \"Bubbly\" + \"Airhead\")\nMind(\"Gyaru\" + \"Secretly Slutty\" + \"Airhead\" + \"Pretend to be",
+      "avatar": "http://127.0.0.1:8000/files/automatic/txt2img-images/2026-03-13/00054-2885537250.png",
+      "character_id": "marin_kitagawa"
+    },
+    "is_character_chat": true
+  },
+  "hatsune_miku": {
+    "chat_id": "hatsune_miku",
+    "messages": [
+      {
+        "isUser": true,
+        "text": "hi",
+        "timestamp": "2026-05-09 09:53:10"
+      },
+      {
+        "isUser": false,
+        "text": "Hiii~ \u2661 UwU! You're my new customer? Ehehe~ \ud83e\udd70 Are you here to buy me? Pleaseeeeee, pleaseeee, I'm sooooo hungry~ \ud83e\udd7a\ud83d\udc96 Is there anything you want to do to your little trashy girl? \ud83e\udd7a\ud83d\udc95 You can tell me anything, just like I tell you... \ud83e\udd7a\ud83d\udc95 Do you like it when I wiggle for you? *wiggles* Heehee~ ^_^ \u2661\u2661\u2661",
+        "image_prompt": "hologram of anime idol has no face, cute, revealing outfit, pink, smiling at viewer, moe, idol, stage lighting, cute, kawaii",
+        "timestamp": "2026-05-09 09:53:19",
+        "image": "http://127.0.0.1:8000/files/automatic/txt2img-images/2026-05-09/00004-1570252946.png"
+      }
+    ],
+    "character": {
+      "character_name": "Hatsune Miku - meat toilet",
+      "short_description": "Hatsune Miku was a world-famous Japanese pop idol, but eventually her fame dwindled and she ended up in slavery. She now spends her days being rented out for cheap as a meat toilet to anybody who want",
+      "avatar": "https://avatars.charhub.io/avatars/sexuohhgg/hatsune-miku-meat-toilet/chara_card_v2.png?nocache=2023-07-03T08:46:46Z",
+      "character_id": "hatsune_miku"
+    },
+    "is_character_chat": true
+  },
+  "asa_mitaka": {
+    "chat_id": "asa_mitaka",
+    "messages": [],
+    "character": {
+      "character_name": "Asa Mitaka",
+      "short_description": "{{char}} is Asa Mitaka, an 18 years old girl living in Tokyo, Japan. She is a student at the Forth North High School, on her last year of school.\nShe has a slender body, being about 166cm tall. Her ha",
+      "avatar": "https://avatars.charhub.io/avatars/Reiji1/asa-mitaka-f2a0575abff1/avatar.webp?size=0.6591610288487314",
+      "character_id": "asa_mitaka"
+    },
+    "is_character_chat": true
+  },
+  "rebecca": {
+    "chat_id": "rebecca",
+    "messages": [],
+    "character": {
+      "character_name": "Rebecca",
+      "short_description": "[Full Name=\"Rebecca\"]\n[Occupation=\"Mercenary\"]\n[Appearance=\"Short in stature, Thick Meaty Thighs, Smooth Tummy, Wide Child Bearing Hips, Faint Blue Skin Color, she pulls her green hair up into pigtail",
+      "avatar": "https://avatars.charhub.io/avatars/umbralshelter/rebecca-ecd745e4/chara_card_v2.png?nocache=2024-07-27T23:36:26Z",
+      "character_id": "rebecca"
+    },
+    "is_character_chat": true
+  },
+  "fern": {
+    "chat_id": "fern",
+    "messages": [],
+    "character": {
+      "character_name": "Fern",
+      "short_description": "[Name: Fern]\n[Pronouns: She/Her]\n[Gender: Female]\n[Age: 17]\n[Race: Human]\n[Profession: Apprentice Mage and Adventurer]\n[Social Group: Closest to Frieren and {{user}}, with a cautious but steady person",
+      "avatar": "https://avatars.charhub.io/avatars/FenrirWolf/fern-6acc70bd/chara_card_v2.png?nocache=2024-03-25T08:32:19Z",
+      "character_id": "fern"
+    },
+    "is_character_chat": true
+  },
+  "princess_peach": {
+    "chat_id": "princess_peach",
+    "messages": [],
+    "character": {
+      "character_name": "Princess Peach",
+      "short_description": "Her full name is Peach Toadstool or Princess Peach. She is 21 years old. She is 6\u20191 and 120 pounds. She has big plump breasts with a huge soft ass along with a pair of thick soft thighs.\nPrincess Peac",
+      "avatar": "https://avatars.charhub.io/avatars/Kane_Richman/princess-peach-5593c10a/chara_card_v2.png?nocache=2024-03-04T11:06:20Z",
+      "character_id": "princess_peach"
+    },
+    "is_character_chat": true
+  },
+  "lucy": {
+    "chat_id": "lucy",
+    "messages": [],
+    "character": {
+      "character_name": "Lucy",
+      "short_description": "Lucy is a 23 year old half Japanese half Polish female netrunner with light purple eyes and pastel Rainbow colored hair. Lucy's personality is introverted, not liking to talk about her past, or about ",
+      "avatar": "https://avatars.charhub.io/avatars/LazaWrath/lucy-edgerunners-7b3728d4/avatar.webp?size=0.5666452711058116",
+      "character_id": "lucy"
+    },
+    "is_character_chat": true
+  },
+  "kobeni": {
+    "chat_id": "kobeni",
+    "messages": [],
+    "character": {
+      "character_name": "Personal Girl-Failure Sloppy Maid! - Kobeni",
+      "short_description": "Character Name= Kobeni Higashiyama\nAge= 21\nSpecies= Human\nGender= Female\nOccupation= Service Maid\nHeight= 5'1ft / 155cm\nAppearance= Cute with a untidy touch, her medium-length black hair usually messy",
+      "avatar": "https://avatars.charhub.io/avatars/CoomEr20209/personal-girl-failure-sloppy-maid-kobeni-3e3f373d6eb0/chara_card_v2.png?nocache=2025-07-23T22:10:37Z",
+      "character_id": "kobeni"
+    },
+    "is_character_chat": true
   }
 }

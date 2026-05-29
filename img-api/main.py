@@ -4,7 +4,7 @@ import random
 from fastapi import FastAPI, HTTPException, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
-from routes import images, rec, tags, boards, phashes, scan_images, scoring, tagger, models, comments, webui, chats, rate, comics, ai_search, stories, assistant, posts
+from routes import images, rec, tags, boards, phashes, scan_images, scoring, tagger, models, comments, webui, chats, rate, comics, ai_search, stories, assistant, posts, ai_settings
 from fastapi.staticfiles import StaticFiles
 from utils import (
     images_data, all_images, clicks_data, boards_data,
@@ -93,6 +93,7 @@ app.include_router(utils.router)
 # Assistant routes (includes WS /assistant)
 app.include_router(assistant.router)
 app.include_router(posts.router)
+app.include_router(ai_settings.router)
 print("routes loaded")
 
 

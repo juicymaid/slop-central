@@ -8,11 +8,56 @@ import {
   saveBackendSettings,
   setActiveBackend,
 } from '@/backends'
+import { apiUrl } from '@/api'
 
 const isLoaded = ref(false)
 const saveState = ref('idle')
 const lastSavedAt = ref(null)
 let saveTimer = null
+
+// AI Settings
+const aiSettings = ref({
+  default_model: '',
+  default_vision_model: '',
+  default_assistant_model: '',
+  model_is_vision: false,
+  use_thinking: false,
+  use_laptop: true,
+  override_temperature: false,
+  temperature: 0.7,
+})
+const aiSaveState = ref('idle')
+
+async function loadAiSettings() {
+  try {
+    const res = await fetch(`${apiUrl}/ai-settings`)
+    if (res.ok) aiSettings.value = await res.json()
+  } catch (e) {
+    console.error('Failed to load AI settings:', e)
+  }
+}
+
+let aiSaveTimer = null
+function scheduleAiSave() {
+  if (!isLoaded.value) return
+  if (aiSaveTimer) clearTimeout(aiSaveTimer)
+  aiSaveState.value = 'saving'
+  aiSaveTimer = setTimeout(async () => {
+    try {
+      await fetch(`${apiUrl}/ai-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(aiSettings.value),
+      })
+      aiSaveState.value = 'saved'
+    } catch (e) {
+      console.error('Failed to save AI settings:', e)
+      aiSaveState.value = 'error'
+    }
+  }, 400)
+}
+
+watch(aiSettings, scheduleAiSave, { deep: true })
 
 const activeBackendId = computed({
   get: () => backendState.activeId,
@@ -71,6 +116,7 @@ const scheduleSave = () => {
 
 onMounted(async () => {
   await loadBackendSettings()
+  await loadAiSettings()
   isLoaded.value = true
   ensureActiveConfig()
 })
@@ -109,11 +155,9 @@ watch(backendState, scheduleSave, { deep: true })
             : 'border-[#232836] bg-[#111118]/60 hover:border-[#3A3A48] hover:bg-[#151820]/80'"
           @click="activeBackendId = backend.id">
           <div class="flex items-center gap-3">
-            <!-- Active dot -->
             <div class="flex-shrink-0 w-2 h-2 rounded-full transition-colors duration-200"
               :class="backend.id === activeBackendId ? 'bg-blue-400' : 'bg-[#2A2A35] group-hover:bg-[#3A3A48]'">
             </div>
-
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2">
                 <span class="text-sm font-medium"
@@ -124,7 +168,6 @@ watch(backendState, scheduleSave, { deep: true })
               </div>
               <p class="text-xs text-gray-500 mt-0.5 truncate">{{ backend.description }}</p>
             </div>
-
             <span class="flex-shrink-0 rounded-full px-2.5 py-0.5 text-[10px] font-mono border"
               :class="getBackendBadge(backend.id).className">
               {{ getBackendBadge(backend.id).label }}
@@ -136,8 +179,6 @@ watch(backendState, scheduleSave, { deep: true })
 
     <!-- Config Card -->
     <div class="rounded-2xl border border-[#232836] bg-[#0F0F16] overflow-hidden">
-
-      <!-- Card Header -->
       <div class="flex items-center justify-between px-4 py-3 border-b border-[#1E1E28]">
         <div class="flex items-center gap-2">
           <svg class="w-3.5 h-3.5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -148,13 +189,10 @@ watch(backendState, scheduleSave, { deep: true })
         </div>
         <span class="text-[10px] text-gray-600 font-mono">config</span>
       </div>
-
-      <!-- Fields -->
       <div class="p-4 space-y-4">
         <div v-if="!(activeBackend.fields || []).length" class="text-xs text-gray-500 text-center py-4">
           No configuration fields for this adapter.
         </div>
-
         <div v-for="field in (activeBackend.fields || [])" :key="field.key" class="space-y-1.5">
           <label class="text-[10px] uppercase tracking-[0.2em] text-gray-500 block">{{ field.label }}</label>
           <input v-model="backendState.configs[activeBackendId][field.key]" :type="field.type || 'text'"
@@ -163,8 +201,6 @@ watch(backendState, scheduleSave, { deep: true })
           <p v-if="field.hint" class="text-[11px] text-gray-600 leading-relaxed">{{ field.hint }}</p>
         </div>
       </div>
-
-      <!-- Missing Fields Warning -->
       <div v-if="!activeStatus.ok"
         class="mx-4 mb-4 flex items-start gap-2.5 rounded-xl border border-orange-500/20 bg-orange-500/8 px-3 py-2.5">
         <svg class="w-3.5 h-3.5 text-orange-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor"
@@ -179,13 +215,120 @@ watch(backendState, scheduleSave, { deep: true })
       </div>
     </div>
 
+    <!-- ═══════════════════════════════════════════════ -->
+    <!-- AI Generation Settings                         -->
+    <!-- ═══════════════════════════════════════════════ -->
+    <div class="rounded-2xl border border-[#232836] bg-[#0F0F16] overflow-hidden">
+      <div class="flex items-center justify-between px-4 py-3 border-b border-[#1E1E28]">
+        <div class="flex items-center gap-2">
+          <svg class="w-3.5 h-3.5 text-[#C9A84C]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+          </svg>
+          <span class="text-xs font-semibold text-[#FAF8F5]">AI Generation</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="w-1.5 h-1.5 rounded-full"
+            :class="aiSaveState === 'saving' ? 'bg-[#C9A84C] animate-pulse' : aiSaveState === 'error' ? 'bg-red-400' : 'bg-emerald-400'"></span>
+          <span class="text-[10px] text-gray-600 font-mono">
+            {{ aiSaveState === 'saving' ? 'saving…' : aiSaveState === 'error' ? 'error' : 'synced' }}
+          </span>
+        </div>
+      </div>
+
+      <div class="p-4 space-y-5">
+        <div class="space-y-1.5">
+          <label class="text-[10px] uppercase tracking-[0.2em] text-gray-500 block">Default Model</label>
+          <input v-model="aiSettings.default_model" type="text" placeholder="hf.co/org/model-name:Q8_0"
+            class="w-full rounded-xl border border-[#2A2A35] bg-[#0A0A10] px-3 py-2.5 text-sm text-[#FAF8F5] placeholder-gray-600 focus:border-[#C9A84C]/60 focus:ring-1 focus:ring-[#C9A84C]/20 focus:outline-none transition-all font-mono" />
+          <p class="text-[11px] text-gray-600 leading-relaxed">Ollama model for comments, posts, and chat.</p>
+        </div>
+        <div class="space-y-1.5">
+          <label class="text-[10px] uppercase tracking-[0.2em] text-gray-500 block">Default Vision Model</label>
+          <input v-model="aiSettings.default_vision_model" type="text" placeholder="model-name:tag"
+            class="w-full rounded-xl border border-[#2A2A35] bg-[#0A0A10] px-3 py-2.5 text-sm text-[#FAF8F5] placeholder-gray-600 focus:border-[#C9A84C]/60 focus:ring-1 focus:ring-[#C9A84C]/20 focus:outline-none transition-all font-mono" />
+          <p class="text-[11px] text-gray-600 leading-relaxed">Model used for image descriptions and vision tasks.</p>
+        </div>
+        <div class="space-y-1.5">
+          <label class="text-[10px] uppercase tracking-[0.2em] text-gray-500 block">Default Assistant Model</label>
+          <input v-model="aiSettings.default_assistant_model" type="text" placeholder="model-name:tag"
+            class="w-full rounded-xl border border-[#2A2A35] bg-[#0A0A10] px-3 py-2.5 text-sm text-[#FAF8F5] placeholder-gray-600 focus:border-[#C9A84C]/60 focus:ring-1 focus:ring-[#C9A84C]/20 focus:outline-none transition-all font-mono" />
+          <p class="text-[11px] text-gray-600 leading-relaxed">Model used for the AI assistant chat.</p>
+        </div>
+
+        <!-- Toggles Row -->
+        <div class="grid grid-cols-3 gap-3">
+          <button type="button" @click="aiSettings.use_laptop = !aiSettings.use_laptop"
+            class="rounded-xl border px-3 py-3 text-center transition-all duration-200 cursor-pointer"
+            :class="aiSettings.use_laptop
+              ? 'border-[#C9A84C]/50 bg-[#C9A84C]/8 ring-1 ring-[#C9A84C]/30'
+              : 'border-[#232836] bg-[#111118]/60 hover:border-[#3A3A48]'">
+            <div class="text-[10px] uppercase tracking-widest mb-1"
+              :class="aiSettings.use_laptop ? 'text-[#C9A84C]' : 'text-gray-600'">Laptop</div>
+            <div class="text-xs font-semibold"
+              :class="aiSettings.use_laptop ? 'text-[#FAF8F5]' : 'text-gray-500'">
+              {{ aiSettings.use_laptop ? 'ON' : 'OFF' }}
+            </div>
+          </button>
+          <button type="button" @click="aiSettings.use_thinking = !aiSettings.use_thinking"
+            class="rounded-xl border px-3 py-3 text-center transition-all duration-200 cursor-pointer"
+            :class="aiSettings.use_thinking
+              ? 'border-[#C9A84C]/50 bg-[#C9A84C]/8 ring-1 ring-[#C9A84C]/30'
+              : 'border-[#232836] bg-[#111118]/60 hover:border-[#3A3A48]'">
+            <div class="text-[10px] uppercase tracking-widest mb-1"
+              :class="aiSettings.use_thinking ? 'text-[#C9A84C]' : 'text-gray-600'">Thinking</div>
+            <div class="text-xs font-semibold"
+              :class="aiSettings.use_thinking ? 'text-[#FAF8F5]' : 'text-gray-500'">
+              {{ aiSettings.use_thinking ? 'ON' : 'OFF' }}
+            </div>
+          </button>
+          <button type="button" @click="aiSettings.model_is_vision = !aiSettings.model_is_vision"
+            class="rounded-xl border px-3 py-3 text-center transition-all duration-200 cursor-pointer"
+            :class="aiSettings.model_is_vision
+              ? 'border-[#C9A84C]/50 bg-[#C9A84C]/8 ring-1 ring-[#C9A84C]/30'
+              : 'border-[#232836] bg-[#111118]/60 hover:border-[#3A3A48]'">
+            <div class="text-[10px] uppercase tracking-widest mb-1"
+              :class="aiSettings.model_is_vision ? 'text-[#C9A84C]' : 'text-gray-600'">Vision</div>
+            <div class="text-xs font-semibold"
+              :class="aiSettings.model_is_vision ? 'text-[#FAF8F5]' : 'text-gray-500'">
+              {{ aiSettings.model_is_vision ? 'ON' : 'OFF' }}
+            </div>
+          </button>
+          <button type="button" @click="aiSettings.override_temperature = !aiSettings.override_temperature"
+            class="rounded-xl border px-3 py-3 text-center transition-all duration-200 cursor-pointer"
+            :class="aiSettings.override_temperature
+              ? 'border-[#C9A84C]/50 bg-[#C9A84C]/8 ring-1 ring-[#C9A84C]/30'
+              : 'border-[#232836] bg-[#111118]/60 hover:border-[#3A3A48]'">
+            <div class="text-[10px] uppercase tracking-widest mb-1"
+              :class="aiSettings.override_temperature ? 'text-[#C9A84C]' : 'text-gray-600'">Override Temp</div>
+            <div class="text-xs font-semibold"
+              :class="aiSettings.override_temperature ? 'text-[#FAF8F5]' : 'text-gray-500'">
+              {{ aiSettings.override_temperature ? 'ON' : 'OFF' }}
+            </div>
+          </button>
+        </div>
+
+        <div v-if="aiSettings.override_temperature" class="space-y-3 pt-2">
+          <div class="flex justify-between items-center">
+            <label class="text-[10px] uppercase tracking-[0.2em] text-gray-500 block">Temperature</label>
+            <span class="text-xs text-[#C9A84C] font-mono">{{ aiSettings.temperature.toFixed(2) }}</span>
+          </div>
+          <input v-model.number="aiSettings.temperature" type="range" min="0.0" max="2.0" step="0.05"
+            class="w-full accent-[#C9A84C] bg-[#2A2A35] rounded-lg appearance-none h-1.5 focus:outline-none focus:ring-1 focus:ring-[#C9A84C]/50" />
+          <div class="flex justify-between text-[10px] text-gray-600 font-mono">
+            <span>0.0</span>
+            <span>1.0</span>
+            <span>2.0</span>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div class="space-y-1.5">
       <div class="text-[10px] uppercase tracking-[0.25em] text-gray-600 px-0.5">AutoComplete</div>
       <div class="flex flex-col gap-2">
       </div>
     </div>
-
 
   </div>
 </template>
