@@ -169,7 +169,7 @@ def add_message(chat_id: str, message: str, image_request: object = Body(...)):
     if settings.override_temperature:
         options["temperature"] = settings.temperature
 
-    _client = comments.laptopClient if settings.use_laptop else comments.OllamaClient
+    _client = comments.laptopClient
     response: ChatResponse = _client.chat(
         model=settings.default_model,
         messages=_messages,

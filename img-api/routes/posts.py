@@ -1,4 +1,4 @@
-from ollama import ChatResponse
+from routes.comments import ChatResponse
 from pydantic import BaseModel
 from typing import List, Optional
 import json
@@ -305,10 +305,7 @@ class Image(BaseModel):
     # Use centralized AI settings
     settings = load_ai_settings()
 
-    if settings.use_laptop:
-        client = comments.laptopClient
-    else:
-        client = comments.OllamaClient
+    client = comments.laptopClient
 
     options = {}
     if settings.override_temperature:

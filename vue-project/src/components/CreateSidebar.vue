@@ -19,6 +19,18 @@ const chatHistory = ref([])
 
 const textarea = useTextareaAutosize()
 
+const isMobile = ref(false)
+const checkMobile = () => {
+    isMobile.value = window.innerWidth < 768
+}
+onMounted(() => {
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+})
+onBeforeUnmount(() => {
+    window.removeEventListener('resize', checkMobile)
+})
+
 const workflow = ref('Text-to-image')
 const model = ref('PerfectDeliberate')
 const aspectRatio = ref('Portrait')
@@ -646,6 +658,12 @@ const canSelectLoras = computed(() => backendCapabilities.value.supportsLoras)
 // Main API request object and state
 //save this in local storage
 import { request, UpdateVRAM, current_model, formatRequest, defaultStyles, GetFromApi, PostToApi } from '@/api'
+
+watch(() => webState.sidebarWidth, (newWidth) => {
+    if (newWidth > 0) {
+        UpdateVRAM()
+    }
+})
 
 const history = ref([])
 
@@ -1360,6 +1378,7 @@ import CanvasView from '@/views/canvasView.vue'
 import AutoComplete from './autoComplete.vue'
 import BackendSettingsPanel from './BackendSettingsPanel.vue'
 import { Image, InfoIcon, Settings } from 'lucide-vue-next'
+import ClearArt from './ClearArt.vue'
 
 const startResize = (e) => {
     isResizing.value = true
@@ -2169,12 +2188,63 @@ const enhanceLocalPrompt = ref('')
 const enhanceLocalNegativePrompt = ref('')
 const enhanceInstructions = ref('')
 
+const enhanceOriginalPrompt = ref('')
+const enhanceResultPrompt = ref('')
+const hasEnhancedResult = ref(false)
+
+function diffWords(oldStr, newStr) {
+    if (!oldStr) oldStr = '';
+    if (!newStr) newStr = '';
+
+    // Split by word boundaries, spaces, and punctuation to keep exact structure
+    const oldWords = oldStr.split(/(\s+|\b)/).filter(Boolean);
+    const newWords = newStr.split(/(\s+|\b)/).filter(Boolean);
+
+    const dp = Array(oldWords.length + 1).fill(null).map(() => Array(newWords.length + 1).fill(0));
+    for (let i = 1; i <= oldWords.length; i++) {
+        for (let j = 1; j <= newWords.length; j++) {
+            if (oldWords[i - 1] === newWords[j - 1]) {
+                dp[i][j] = dp[i - 1][j - 1] + 1;
+            } else {
+                dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+            }
+        }
+    }
+
+    const result = [];
+    let i = oldWords.length;
+    let j = newWords.length;
+    while (i > 0 || j > 0) {
+        if (i > 0 && j > 0 && oldWords[i - 1] === newWords[j - 1]) {
+            result.unshift({ type: 'normal', value: oldWords[i - 1] });
+            i--;
+            j--;
+        } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+            result.unshift({ type: 'added', value: newWords[j - 1] });
+            j--;
+        } else if (i > 0 && (j === 0 || dp[i][j - 1] < dp[i - 1][j])) {
+            result.unshift({ type: 'removed', value: oldWords[i - 1] });
+            i--;
+        }
+    }
+    return result;
+}
+
+const promptDiff = computed(() => {
+    return diffWords(enhanceOriginalPrompt.value, enhanceResultPrompt.value);
+});
+
 function openEnhancePanel() {
     enhanceLocalPrompt.value = request.prompt
     enhanceLocalNegativePrompt.value = request.negative_prompt
     enhanceInstructions.value = promptEnhanceRequest.value
     enhanceSubTab.value = 'enhance'
     showEnhancePanel.value = true
+
+    // Reset any pending diff state on open
+    hasEnhancedResult.value = false
+    enhanceOriginalPrompt.value = ''
+    enhanceResultPrompt.value = ''
 }
 
 function closeEnhancePanel() {
@@ -2183,7 +2253,10 @@ function closeEnhancePanel() {
 
 async function enhancePrompt() {
     promptEnhanceInProgress.value = true
-    let url = apiUrl + '/prompt-enhance?prompt=' + encodeURIComponent(enhanceLocalPrompt.value || request.prompt) + "&request=" + encodeURIComponent(enhanceInstructions.value || promptEnhanceRequest.value) + "&negative_prompt=" + encodeURIComponent(enhanceLocalNegativePrompt.value || request.negative_prompt)
+    const original = enhanceLocalPrompt.value || request.prompt
+    enhanceOriginalPrompt.value = original
+
+    let url = apiUrl + '/prompt-enhance?prompt=' + encodeURIComponent(original) + "&request=" + encodeURIComponent(enhanceInstructions.value || promptEnhanceRequest.value) + "&negative_prompt=" + encodeURIComponent(enhanceLocalNegativePrompt.value || request.negative_prompt)
     const response = await fetch(url)
     promptEnhanceInProgress.value = false
     if (!response.ok) {
@@ -2191,20 +2264,47 @@ async function enhancePrompt() {
         return
     }
     const data = await response.json()
-    const originalPrompt = request.prompt
-    const enhanced = data.enhanced_prompt || request.prompt
-    request.prompt = enhanced
-    enhanceLocalPrompt.value = enhanced
+    const enhanced = data.enhanced_prompt || original
+
+    enhanceResultPrompt.value = enhanced
+    hasEnhancedResult.value = true
+}
+
+function acceptEnhancement() {
+    if (!enhanceResultPrompt.value) return;
+
+    const original = enhanceOriginalPrompt.value;
+    const enhanced = enhanceResultPrompt.value;
+
+    request.prompt = enhanced;
+    enhanceLocalPrompt.value = enhanced;
+
     // Save to enhance history
     enhanceHistory.value.unshift({
         id: Date.now(),
-        originalPrompt,
+        originalPrompt: original,
         enhancedPrompt: enhanced,
         instructions: enhanceInstructions.value,
         timestamp: new Date().toLocaleString()
-    })
-    // Keep history to 50 items max
-    if (enhanceHistory.value.length > 50) enhanceHistory.value.pop()
+    });
+
+    if (enhanceHistory.value.length > 50) enhanceHistory.value.pop();
+
+    // Clear pending state
+    hasEnhancedResult.value = false;
+    enhanceOriginalPrompt.value = '';
+    enhanceResultPrompt.value = '';
+
+    // Save settings
+    SaveCurrentSettings();
+    closeEnhancePanel();
+}
+
+function revertEnhancement() {
+    // Clear pending state, original prompt in enhanceLocalPrompt remains untouched
+    hasEnhancedResult.value = false;
+    enhanceOriginalPrompt.value = '';
+    enhanceResultPrompt.value = '';
 }
 
 async function unloadSD() {
@@ -2248,7 +2348,7 @@ async function unloadLLM() {
     <div v-else :class="[
         isFullscreen ? 'fixed inset-0 flex' : 'fixed top-0 left-0',
         webState.sidebarWidth == 0 ? 'hidden' : ''
-    ]" :style="isFullscreen ? {} : { width: `${webState.sidebarWidth}px`, height: '100vh' }"
+    ]" :style="isFullscreen ? {} : { width: isMobile ? '100vw' : `${webState.sidebarWidth}px`, height: '100vh' }"
         class="sidebar-shell text-[#F4F6FA] shadow-[0_24px_60px_rgba(0,0,0,0.45)] z-50">
 
         <div v-if="showStyleManager"
@@ -2402,13 +2502,32 @@ async function unloadLLM() {
                 <!-- VRAM usage rectangle with label inside at left bottom -->
                 <div class="w-full flex items-center justify-center mx-4 relative group">
                     <div class="relative flex-1 h-8">
+                        <!-- Segmented VRAM bar -->
                         <div class="w-full h-full bg-[#1F2430] rounded-xl overflow-hidden cursor-pointer">
-                            <div class="bg-[#4C9BFF] h-full transition-all duration-300"
-                                :style="{ width: `${webState.vramUsage * 100}%` }"></div>
+                            <!-- Breakdown mode: segmented bar (SD=orange, LM=purple, rest=gray) -->
+                            <template v-if="webState.vramBreakdown && webState.vram">
+                                <div class="flex h-full">
+                                    <div class="bg-[#FF8C42] h-full transition-all duration-500"
+                                        :style="{ width: `${(webState.vramBreakdown.stable_diffusion / webState.vram.memory_total) * 100}%` }"
+                                        :title="`SD: ${(webState.vramBreakdown.stable_diffusion / 1024).toFixed(1)} GB`">
+                                    </div>
+                                    <div class="bg-[#8B5CF6] h-full transition-all duration-500"
+                                        :style="{ width: `${(webState.vramBreakdown.lm_studio / webState.vram.memory_total) * 100}%` }"
+                                        :title="`LM Studio: ${(webState.vramBreakdown.lm_studio / 1024).toFixed(1)} GB`">
+                                    </div>
+                                    <div class="bg-[#4A5568] h-full transition-all duration-500"
+                                        :style="{ width: `${(webState.vramBreakdown.system / webState.vram.memory_total) * 100}%` }"
+                                        :title="`System: ${(webState.vramBreakdown.system / 1024).toFixed(1)} GB`">
+                                    </div>
+                                </div>
+                            </template>
+                            <!-- Fallback: single blue bar -->
+                            <template v-else>
+                                <div class="bg-[#4C9BFF] h-full transition-all duration-300"
+                                    :style="{ width: `${webState.vramUsage * 100}%` }"></div>
+                            </template>
                         </div>
-                        <span class="absolute left-2 bottom-1 text-xs font-semibold text-[#F4F6FA]">
-                            VRAM
-                        </span>
+                        <span class="absolute left-2 bottom-1 text-xs font-semibold text-[#F4F6FA]">VRAM</span>
                         <span class="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-semibold text-[#F4F6FA]">
                             {{ (webState.vramUsage * 100).toFixed(1) }}%
                         </span>
@@ -2416,7 +2535,34 @@ async function unloadLLM() {
 
                     <!-- Dropdown Menu -->
                     <div
-                        class="absolute top-full left-0 mt-2 w-40 bg-[#151922] border border-[#242A36] rounded-xl shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-40">
+                        class="absolute top-full left-0 mt-2 w-52 bg-[#151922] border border-[#242A36] rounded-xl shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-40">
+                        <!-- Color legend (only when breakdown available) -->
+                        <template v-if="webState.vramBreakdown && webState.vram">
+                            <div class="px-3 pt-3 pb-2 space-y-1.5 border-b border-[#242A36]">
+                                <div class="flex items-center justify-between text-xs">
+                                    <span class="flex items-center gap-1.5 text-gray-300">
+                                        <span class="w-2.5 h-2.5 rounded-sm bg-[#FF8C42] inline-block"></span>Stable
+                                        Diffusion
+                                    </span>
+                                    <span class="font-mono text-gray-400">{{ (webState.vramBreakdown.stable_diffusion /
+                                        1024).toFixed(1) }}GB</span>
+                                </div>
+                                <div class="flex items-center justify-between text-xs">
+                                    <span class="flex items-center gap-1.5 text-gray-300">
+                                        <span class="w-2.5 h-2.5 rounded-sm bg-[#8B5CF6] inline-block"></span>LM Studio
+                                    </span>
+                                    <span class="font-mono text-gray-400">{{ (webState.vramBreakdown.lm_studio /
+                                        1024).toFixed(1) }}GB</span>
+                                </div>
+                                <div class="flex items-center justify-between text-xs">
+                                    <span class="flex items-center gap-1.5 text-gray-300">
+                                        <span class="w-2.5 h-2.5 rounded-sm bg-[#4A5568] inline-block"></span>System
+                                    </span>
+                                    <span class="font-mono text-gray-400">{{ (webState.vramBreakdown.system /
+                                        1024).toFixed(1) }}GB</span>
+                                </div>
+                            </div>
+                        </template>
                         <button @click="unloadSD()"
                             class="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-[#232836] hover:text-[#F4F6FA] transition-colors rounded-t-xl">
                             Unload SD
@@ -2504,26 +2650,49 @@ async function unloadLLM() {
 
                         <!-- Enhance Sub-tab Content -->
                         <div v-if="enhanceSubTab === 'enhance'" class="flex-1 overflow-y-auto p-4 space-y-5">
-                            <!-- Prompt -->
-                            <div>
-                                <label class="text-sm text-gray-300 font-medium block mb-2">Prompt</label>
-                                <div class="sidebar-card">
-                                    <textarea v-model="enhanceLocalPrompt" placeholder="Enter your prompt to enhance..."
-                                        class="w-full text-sm bg-transparent text-[#E7E9F2] placeholder-gray-500 leading-relaxed resize-none focus:outline-none p-3"
-                                        rows="5"></textarea>
+                            <template v-if="hasEnhancedResult">
+                                <!-- Diff View -->
+                                <div>
+                                    <label class="text-sm text-gray-300 font-medium block mb-2">Prompt Difference
+                                        (Git-style)</label>
+                                    <div
+                                        class="sidebar-card p-4 font-mono text-sm leading-relaxed overflow-y-auto max-h-[320px] bg-[#0b0c10] border border-[#222836] rounded-lg">
+                                        <span v-for="(chunk, idx) in promptDiff" :key="idx" :class="{
+                                            'bg-red-500/20 text-red-400 px-0.5 rounded line-through decoration-red-500/50': chunk.type === 'removed',
+                                            'bg-green-500/25 text-green-300 px-0.5 rounded font-semibold': chunk.type === 'added',
+                                            'text-gray-300': chunk.type === 'normal'
+                                        }">{{ chunk.value }}</span>
+                                    </div>
+                                    <p class="text-[11px] text-gray-500 mt-2 italic">
+                                        Red strikethrough text represents original words removed. Green text represents
+                                        enhanced additions.
+                                    </p>
                                 </div>
-                            </div>
-                            <!-- Instructions -->
-                            <div>
-                                <label class="text-sm text-gray-300 font-medium block mb-1">Instructions</label>
-                                <p class="text-xs text-gray-500 mb-2">Guide how the prompt is enhanced (e.g., "expand to
-                                    77 tokens")</p>
-                                <div class="sidebar-card">
-                                    <input v-model="enhanceInstructions" type="text"
-                                        placeholder="Optional instructions..."
-                                        class="w-full text-sm bg-transparent text-[#E7E9F2] placeholder-gray-500 focus:outline-none px-3 py-2.5" />
+                            </template>
+                            <template v-else>
+                                <!-- Prompt -->
+                                <div>
+                                    <label class="text-sm text-gray-300 font-medium block mb-2">Prompt</label>
+                                    <div class="sidebar-card">
+                                        <textarea v-model="enhanceLocalPrompt"
+                                            placeholder="Enter your prompt to enhance..."
+                                            class="w-full text-sm bg-transparent text-[#E7E9F2] placeholder-gray-500 leading-relaxed resize-none focus:outline-none p-3"
+                                            rows="5"></textarea>
+                                    </div>
                                 </div>
-                            </div>
+                                <!-- Instructions -->
+                                <div>
+                                    <label class="text-sm text-gray-300 font-medium block mb-1">Instructions</label>
+                                    <p class="text-xs text-gray-500 mb-2">Guide how the prompt is enhanced (e.g.,
+                                        "expand to
+                                        77 tokens")</p>
+                                    <div class="sidebar-card">
+                                        <input v-model="enhanceInstructions" type="text"
+                                            placeholder="Optional instructions..."
+                                            class="w-full text-sm bg-transparent text-[#E7E9F2] placeholder-gray-500 focus:outline-none px-3 py-2.5" />
+                                    </div>
+                                </div>
+                            </template>
                         </div>
 
                         <!-- History Sub-tab Content -->
@@ -2567,34 +2736,51 @@ async function unloadLLM() {
                         <!-- Bottom Bar -->
                         <div
                             class="flex-shrink-0 border-t border-[#222836] px-4 py-3 flex items-center gap-3 bg-[#0D0D12]">
-                            <button @click="closeEnhancePanel"
-                                class="text-sm font-medium text-gray-300 hover:text-[#FAF8F5] px-4 py-2 rounded-lg transition-colors">
-                                Back
-                            </button>
-                            <button @click="enhancePrompt()"
-                                :disabled="promptEnhanceInProgress || !enhanceLocalPrompt.trim()" :class="promptEnhanceInProgress || !enhanceLocalPrompt.trim()
-                                    ? 'bg-blue-600/50 cursor-not-allowed'
-                                    : 'bg-blue-600 hover:bg-blue-700'"
-                                class="flex-1 text-sm font-medium text-[#FAF8F5] py-2.5 rounded-lg transition-colors flex items-center justify-center gap-2">
-                                <template v-if="promptEnhanceInProgress">
-                                    <svg class="animate-spin w-4 h-4" viewBox="0 0 24 24">
-                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor"
-                                            stroke-width="4" />
-                                        <path class="opacity-75" fill="currentColor"
-                                            d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-                                    </svg>
-                                    Enhancing...
-                                </template>
-                                <template v-else>
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                            <template v-if="hasEnhancedResult">
+                                <button @click="revertEnhancement"
+                                    class="text-sm font-medium text-gray-300 hover:text-[#FAF8F5] px-4 py-2.5 rounded-lg transition-colors bg-[#1c1e24] border border-[#2d313d] hover:bg-[#252830]">
+                                    Revert
+                                </button>
+                                <button @click="acceptEnhancement"
+                                    class="flex-1 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-500 py-2.5 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/20">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
                                         fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
                                         stroke-linejoin="round">
-                                        <path
-                                            d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z" />
+                                        <polyline points="20 6 9 17 4 12" />
                                     </svg>
-                                    Enhance
-                                </template>
-                            </button>
+                                    Accept
+                                </button>
+                            </template>
+                            <template v-else>
+                                <button @click="closeEnhancePanel"
+                                    class="text-sm font-medium text-gray-300 hover:text-[#FAF8F5] px-4 py-2 rounded-lg transition-colors">
+                                    Back
+                                </button>
+                                <button @click="enhancePrompt()"
+                                    :disabled="promptEnhanceInProgress || !enhanceLocalPrompt.trim()" :class="promptEnhanceInProgress || !enhanceLocalPrompt.trim()
+                                        ? 'bg-blue-600/50 cursor-not-allowed'
+                                        : 'bg-blue-600 hover:bg-blue-700'"
+                                    class="flex-1 text-sm font-medium text-[#FAF8F5] py-2.5 rounded-lg transition-colors flex items-center justify-center gap-2">
+                                    <template v-if="promptEnhanceInProgress">
+                                        <svg class="animate-spin w-4 h-4" viewBox="0 0 24 24">
+                                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor"
+                                                stroke-width="4" />
+                                            <path class="opacity-75" fill="currentColor"
+                                                d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                                        </svg>
+                                        Enhancing...
+                                    </template>
+                                    <template v-else>
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+                                            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                            stroke-linecap="round" stroke-linejoin="round">
+                                            <path
+                                                d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z" />
+                                        </svg>
+                                        Enhance
+                                    </template>
+                                </button>
+                            </template>
                         </div>
                     </div>
 
@@ -3253,7 +3439,8 @@ async function unloadLLM() {
                                         <select v-model="request.sampler_name"
                                             class="w-full bg-[#1a1a1a] border border-[#2A2A35] text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
                                             <option v-for="sampler in samplers" :key="sampler.name"
-                                                :value="sampler.name">{{ sampler.name }}
+                                                :value="sampler.name">{{
+                                                sampler.name }}
                                             </option>
                                         </select>
                                     </div>
@@ -3544,8 +3731,9 @@ async function unloadLLM() {
                                 :alt="generationState.current_image ? 'Generated Preview' : 'Image URL Preview'"
                                 class="h-96 w-full object-contain rounded-lg" />
 
-                            <div v-else class="flex items-center justify-center h-48">
-                                <span class="text-gray-400">No preview available</span>
+                            <div v-else class="flex flex-col items-center justify-center min-h-48 py-4">
+                                <ClearArt class="max-h-80 max-w-full rounded-lg mb-2" />
+                                <span class="text-gray-400 text-xs">No preview available</span>
                             </div>
                         </div>
 
@@ -3813,11 +4001,7 @@ async function unloadLLM() {
                         </div>
 
                         <div v-if="history.length == 0" class="text-center text-gray-400 py-12">
-                            <svg class="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor"
-                                viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
+                            <ClearArt class="max-h-96 mx-auto" />
                             <h3 class="text-lg font-medium mb-2">No Generation History</h3>
                             <p class="text-sm">Your generated images will appear here</p>
                         </div>
@@ -3904,7 +4088,13 @@ async function unloadLLM() {
                 </div>
 
                 <div v-if="activeTab == 'gallery' && !isFullscreen" class="flex-1 overflow-y-auto px-2 py-4">
-                    {{ }}
+
+                    <div v-if="history.length == 0" class="text-center">
+                        <ClearArt class="max-h-96 mx-auto mb-4" />
+                        <h3 class="text-lg font-medium mb-2">No Generation History</h3>
+                        <p class="text-sm">Your generated images will appear here</p>
+                    </div>
+
                     <div class="grid grid-cols-2 gap-2">
                         <img v-if="generationState?.current_image && isGenerating"
                             :src="resolveImageSrc(generationState.current_image)" alt=""
@@ -3999,10 +4189,7 @@ async function unloadLLM() {
                 </div>
 
                 <div v-if="history.length == 0" class="flex flex-col items-center justify-center h-full text-gray-400">
-                    <svg class="w-24 h-24 mb-6 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
+                    <ClearArt class="max-h-[60vh]" />
                     <h3 class="text-2xl font-semibold mb-2">No History Yet</h3>
                     <p class="text-base text-gray-500">Your generated images will appear here</p>
                 </div>
@@ -4129,7 +4316,13 @@ async function unloadLLM() {
             </div>
 
             <div v-if="activeTab == 'gallery'" class="flex-1 overflow-y-auto  py-6 px-3">
-                {{ }}
+
+                <div v-if="history.length == 0" class="flex flex-col items-center justify-center h-full text-gray-400">
+                    <ClearArt class="max-h-[60vh]" />
+                    <h3 class="text-2xl font-semibold mb-2">No History Yet</h3>
+                    <p class="text-base text-gray-500">Your generated images will appear here</p>
+                </div>
+
                 <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
                     <img v-if="generationState?.current_image && isGenerating"
                         :src="resolveImageSrc(generationState.current_image)" alt=""

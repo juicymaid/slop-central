@@ -85,7 +85,7 @@ def build_image_embeddings(
     save_every=N saves embeddings every N successful updates.
     progress_every=N logs progress every N items.
     """
-    import ollama
+    from routes.comments import get_embeddings
     load_embeddings()
     to_process = []
     for img in all_images:
@@ -105,8 +105,7 @@ def build_image_embeddings(
             text = _embedding_text(img)
             if not text:
                 continue
-            resp = ollama.embeddings(model=model_name, prompt=text)
-            vec = resp.get("embedding")
+            vec = get_embeddings(model_name, text)
             if not vec:
                 continue
             # store vector + precomputed norm
@@ -404,6 +403,105 @@ def compute_phash(image_path: str) -> str:
     except Exception as e:
         return None
 
+def get_vram_process_breakdown():
+    """Use Windows Performance Counters or nvidia-smi to get per-process VRAM usage, categorized by app.
+    Returns dict: { 'stable_diffusion': MB, 'lm_studio': MB, 'system': MB }
+    """
+    import subprocess
+    import sys
+    import psutil
+
+    breakdown = {"stable_diffusion": 0.0, "lm_studio": 0.0, "system": 0.0}
+
+    # ── Windows specific fast performance counter method ────────────────────
+    if sys.platform == "win32":
+        try:
+            # Query the local GPU process memory counters using PowerShell
+            cmd = [
+                "powershell", "-NoProfile", "-Command",
+                '(Get-Counter -Counter "\\GPU Process Memory(*)\\Local Usage" -ErrorAction SilentlyContinue).CounterSamples | Where-Object { $_.CookedValue -gt 0 } | ForEach-Object { $pidVal = 0; if ($_.InstanceName -match "pid_(\\d+)") { $pidVal = [int]$Matches[1] }; Write-Output ("{0};{1}" -f $pidVal, ($_.CookedValue / 1MB)) }'
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            if res.returncode == 0 and res.stdout.strip():
+                pid_map = {}
+                for line in res.stdout.strip().splitlines():
+                    parts = line.split(";")
+                    if len(parts) == 2:
+                        try:
+                            pid = int(parts[0])
+                            mem_mb = float(parts[1].replace(",", "."))
+                            if pid > 0:
+                                pid_map[pid] = pid_map.get(pid, 0.0) + mem_mb
+                        except ValueError:
+                            continue
+
+                # Categorize processes using fast psutil lookup
+                for pid, mem_mb in pid_map.items():
+                    proc_name = ""
+                    try:
+                        proc_name = psutil.Process(pid).name().lower()
+                    except Exception:
+                        pass
+
+                    # Categorize based on process name keywords
+                    if any(k in proc_name for k in ("python", "forge", "stable", "webui", "sd")):
+                        breakdown["stable_diffusion"] += mem_mb
+                    elif any(k in proc_name for k in ("lms", "lm studio", "lmstudio")):
+                        breakdown["lm_studio"] += mem_mb
+                    else:
+                        breakdown["system"] += mem_mb
+
+                # Round values for nice display
+                for k in breakdown:
+                    breakdown[k] = round(breakdown[k], 1)
+                return breakdown
+        except Exception as e:
+            print(f"[VRAM] Windows performance counter query failed: {e}. Falling back to nvidia-smi...")
+
+    # ── Fallback / non-Windows: nvidia-smi method ───────────────────────────
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-compute-apps=pid,used_gpu_memory", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            lines = result.stdout.strip().splitlines()
+            for line in lines:
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) < 2:
+                    continue
+                try:
+                    pid = int(parts[0])
+                    mem_str = parts[1]
+                    if "[n/a]" in mem_str.lower() or "n/a" in mem_str.lower():
+                        continue
+                    mem_mb = float(mem_str)
+                except ValueError:
+                    continue
+
+                proc_name = ""
+                try:
+                    proc_name = psutil.Process(pid).name().lower()
+                except Exception:
+                    pass
+
+                if any(k in proc_name for k in ("python", "forge", "stable", "webui", "sd")):
+                    breakdown["stable_diffusion"] += mem_mb
+                elif any(k in proc_name for k in ("lms", "lm studio", "lmstudio")):
+                    breakdown["lm_studio"] += mem_mb
+                else:
+                    breakdown["system"] += mem_mb
+
+            for k in breakdown:
+                breakdown[k] = round(breakdown[k], 1)
+            return breakdown
+    except Exception as e:
+        print(f"[VRAM] Fallback nvidia-smi breakdown failed: {e}")
+
+    return None
+
+
+
 def get_vram_usage():
     try:
         gpus = GPUtil.getGPUs()
@@ -412,15 +510,21 @@ def get_vram_usage():
         
         gpu_info = []
         for gpu in gpus:
+            # Compute memory_util directly — GPUtil's memoryUtil can return 0 on Windows
+            mem_total = gpu.memoryTotal or 1
+            mem_used = gpu.memoryUsed or 0
+            computed_util = mem_used / mem_total
+
             gpu_data = {
                 "id": gpu.id,
                 "name": gpu.name,
-                "memory_total": gpu.memoryTotal,
-                "memory_used": gpu.memoryUsed,
+                "memory_total": mem_total,
+                "memory_used": mem_used,
                 "memory_free": gpu.memoryFree,
-                "memory_util": gpu.memoryUtil,
+                "memory_util": computed_util,
                 "load": gpu.load,
-                "temperature": getattr(gpu, 'temperature', None)
+                "temperature": getattr(gpu, 'temperature', None),
+                "breakdown": get_vram_process_breakdown(),
             }
             gpu_info.append(gpu_data)
         
@@ -558,3 +662,97 @@ def image_to_base64(image_path):
     except Exception as e:
         print(f"Failed to encode image {image_path} to base64: {e}")
         return None
+
+
+def is_vram_high_enough_to_unload(threshold=0.40):
+    try:
+        gpus = GPUtil.getGPUs()
+        if not gpus:
+            print("[VRAM] No GPUs found. Assuming we need to unload.")
+            return True
+        for gpu in gpus:
+            util = gpu.memoryUtil
+            # Double check with direct calculation
+            if gpu.memoryTotal > 0:
+                calc_util = gpu.memoryUsed / gpu.memoryTotal
+            else:
+                calc_util = util
+            print(f"[VRAM] GPU {gpu.id} ({gpu.name}): VRAM usage = {calc_util * 100:.1f}%, used = {gpu.memoryUsed}MB, total = {gpu.memoryTotal}MB")
+            if calc_util >= threshold:
+                return True
+        return False
+    except Exception as e:
+        print(f"[VRAM] Error checking VRAM usage: {e}")
+        return True
+
+
+def unload_sd_models_sync(url="http://127.0.0.1:7860/"):
+    import requests
+    try:
+        # Check VRAM first
+        if not is_vram_high_enough_to_unload():
+            print("[VRAM] VRAM usage is under 40%. Skipping Stable Diffusion WebUI unload.")
+            return False
+
+        print("[VRAM] Unloading Stable Diffusion WebUI models...")
+        # Get current model for debug logging before unloading
+        current_model = "Unknown"
+        try:
+            opt_resp = requests.get(url.rstrip("/") + "/sdapi/v1/options", timeout=3)
+            if opt_resp.status_code == 200:
+                current_model = opt_resp.json().get("sd_model_checkpoint", "Unknown")
+        except Exception:
+            pass
+
+        resp = requests.post(url.rstrip("/") + "/sdapi/v1/unload-checkpoint", timeout=10)
+        if resp.status_code == 200:
+            print(f"[VRAM] Unloaded SD model: {current_model}")
+            return True
+        else:
+            print(f"[VRAM] Failed to unload SD models: {resp.status_code}")
+            return False
+    except Exception as e:
+        print(f"[VRAM] Error unloading SD models: {e}")
+        return False
+
+
+def unload_lm_studio_models_sync(base_url="http://127.0.0.1:1234"):
+    import requests
+    try:
+        # Check VRAM first
+        if not is_vram_high_enough_to_unload():
+            print("[VRAM] VRAM usage is under 40%. Skipping LM Studio unload.")
+            return False
+
+        root_url = base_url.rstrip("/")
+        if root_url.endswith("/v1"):
+            root_url = root_url[:-3]
+        
+        url = f"{root_url}/api/v1/models"
+        resp = requests.get(url, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            models = data.get("models", [])
+            unloaded_any = False
+            for m in models:
+                loaded_instances = m.get("loaded_instances", [])
+                for inst in loaded_instances:
+                    inst_id = inst.get("instance_id")
+                    if inst_id:
+                        print(f"[VRAM] Unloading LM Studio model instance: {inst_id}...")
+                        unload_url = f"{root_url}/api/v1/models/unload"
+                        unload_resp = requests.post(unload_url, json={"instance_id": inst_id}, timeout=15)
+                        if unload_resp.status_code == 200:
+                            print(f"[VRAM] Unloaded model {inst_id}")
+                            unloaded_any = True
+                        else:
+                            print(f"[VRAM] Failed to unload model {inst_id}: {unload_resp.status_code}")
+            if not unloaded_any:
+                print("[VRAM] No loaded LM Studio models found to unload.")
+            return unloaded_any
+        else:
+            print(f"[VRAM] Failed to get LM Studio models: {resp.status_code}")
+            return False
+    except Exception as e:
+        print(f"[VRAM] Error unloading LM Studio models: {e}")
+        return False

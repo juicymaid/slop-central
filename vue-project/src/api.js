@@ -1,26 +1,29 @@
 import { reactive } from "vue"
 
-export const apiUrl = 'http://127.0.0.1:8000'
-export const wsUrl = 'ws://127.0.0.1:8000'
+const hostname = typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1'
+export const apiUrl = `http://${hostname}:8000`
+export const wsUrl = `ws://${hostname}:8000`
+
 
 export async function GetFromApi(endpoint) {
-  const response = await fetch(`${apiUrl}/${endpoint}`)
-  return await response.json()
+    const response = await fetch(`${apiUrl}/${endpoint}`)
+    return await response.json()
 }
 
 export const webState = reactive({
-  sidebarWidth: 0,
-  remixImage: null,
+    sidebarWidth: 0,
+    remixImage: null,
     backendId: 'forge',
     backendLabel: 'Forge',
     backendRunning: false,
     backendAvailable: false,
     backendStatus: 'unknown',
     backendStatusMessage: '',
-  // added for VRAM WS
-  vramSocket: null,
-  vram: null,
-  vramUsage: 0,
+    // VRAM tracking
+    vramSocket: null,
+    vram: null,
+    vramUsage: 0,          // 0–1 fraction of total VRAM used
+    vramBreakdown: null,   // { stable_diffusion: MB, lm_studio: MB, system: MB } or null
 })
 export const request = reactive({
     prompt: "",
@@ -37,7 +40,7 @@ export const request = reactive({
     send_images: true,
     save_images: true,
     do_not_save_grid: true,
-    resize_mode:1,
+    resize_mode: 1,
     clip_skip: 1,
 })
 export const current_model = reactive({
@@ -58,7 +61,7 @@ export async function PostToApi(endpoint, data) {
     const response = await fetch(`${apiUrl}/${endpoint}`, {
         method: 'POST',
         headers: {
-        'Content-Type': 'application/json',
+            'Content-Type': 'application/json',
         },
         body: JSON.stringify(data),
     })
@@ -70,7 +73,7 @@ export async function UpdateVRAM(params) {
     if (webState.sidebarWidth === 0) {
         // Close socket if sidebar not open
         if (webState.vramSocket && webState.vramSocket.readyState === WebSocket.OPEN) {
-            try { webState.vramSocket.close() } catch {}
+            try { webState.vramSocket.close() } catch { }
         }
         webState.vramSocket = null
         return
@@ -95,11 +98,17 @@ export async function UpdateVRAM(params) {
         try {
             const data = JSON.parse(event.data)
             if (!data.gpus || data.gpus.length === 0) {
-                console.error("No GPU data available")
+                console.warn("No GPU data available")
                 return
             }
-            webState.vram = data.gpus[0]
-            webState.vramUsage = webState.vram.memory_util
+            const gpu = data.gpus[0]
+            webState.vram = gpu
+            // Always compute from raw values — GPUtil's memoryUtil can be 0 on Windows
+            const memTotal = gpu.memory_total || 1
+            const memUsed = gpu.memory_used || 0
+            webState.vramUsage = memUsed / memTotal
+            // Per-process breakdown (from nvidia-smi, may be null if not available)
+            webState.vramBreakdown = gpu.breakdown || null
         } catch (e) {
             console.error("Failed to parse VRAM WS message:", e)
         }
@@ -118,14 +127,14 @@ export async function UpdateVRAM(params) {
     }
 }
 
-export function ImageSrc(path){
+export function ImageSrc(path) {
     return `${apiUrl}${path}`
 }
 
 export const defaultStyles = reactive({})
 
-export function formatRequest(prompt=null) {
-        // Unproxy the request object to a plain JS object
+export function formatRequest(prompt = null) {
+    // Unproxy the request object to a plain JS object
     const plainRequest = { ...request }
 
     if (prompt) {
@@ -145,14 +154,14 @@ export function formatRequest(prompt=null) {
 
 // story helpers
 export async function listStories() {
-  return await GetFromApi('stories')
+    return await GetFromApi('stories')
 }
 
 export async function getStory(storyId) {
-  return await GetFromApi(`stories/${storyId}`)
+    return await GetFromApi(`stories/${storyId}`)
 }
 
 export async function generateStory() {
-  // backend expects POST with empty body
-  return await PostToApi('stories/generate', {})
+    // backend expects POST with empty body
+    return await PostToApi('stories/generate', {})
 }

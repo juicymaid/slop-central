@@ -22,7 +22,7 @@ const aiSettings = ref({
   default_assistant_model: '',
   model_is_vision: false,
   use_thinking: false,
-  use_laptop: true,
+  manage_vram: false,
   override_temperature: false,
   temperature: 0.7,
 })
@@ -114,9 +114,26 @@ const scheduleSave = () => {
   }, 300)
 }
 
+const availableModels = ref([])
+const showCustomDefaultModel = ref(false)
+const showCustomVisionModel = ref(false)
+const showCustomAssistantModel = ref(false)
+
+async function loadAvailableModels() {
+  try {
+    const res = await fetch(`${apiUrl}/lmstudio/models`)
+    if (res.ok) {
+      availableModels.value = await res.json()
+    }
+  } catch (e) {
+    console.error('Failed to load available LM Studio models:', e)
+  }
+}
+
 onMounted(async () => {
   await loadBackendSettings()
   await loadAiSettings()
+  await loadAvailableModels()
   isLoaded.value = true
   ensureActiveConfig()
 })
@@ -237,37 +254,81 @@ watch(backendState, scheduleSave, { deep: true })
       </div>
 
       <div class="p-4 space-y-5">
+        <!-- Default Model -->
         <div class="space-y-1.5">
-          <label class="text-[10px] uppercase tracking-[0.2em] text-gray-500 block">Default Model</label>
-          <input v-model="aiSettings.default_model" type="text" placeholder="hf.co/org/model-name:Q8_0"
-            class="w-full rounded-xl border border-[#2A2A35] bg-[#0A0A10] px-3 py-2.5 text-sm text-[#FAF8F5] placeholder-gray-600 focus:border-[#C9A84C]/60 focus:ring-1 focus:ring-[#C9A84C]/20 focus:outline-none transition-all font-mono" />
-          <p class="text-[11px] text-gray-600 leading-relaxed">Ollama model for comments, posts, and chat.</p>
+          <div class="flex justify-between items-center">
+            <label class="text-[10px] uppercase tracking-[0.2em] text-gray-500 block">Default Model</label>
+            <button v-if="availableModels.length > 0" type="button" @click="showCustomDefaultModel = !showCustomDefaultModel"
+              class="text-[10px] text-[#C9A84C] hover:underline bg-none border-none cursor-pointer">
+              {{ showCustomDefaultModel ? 'Use Dropdown' : 'Type Manually' }}
+            </button>
+          </div>
+          <div class="space-y-2">
+            <select v-if="availableModels.length > 0 && !showCustomDefaultModel" v-model="aiSettings.default_model"
+              class="w-full rounded-xl border border-[#2A2A35] bg-[#0A0A10] px-3 py-2.5 text-sm text-[#FAF8F5] focus:border-[#C9A84C]/60 focus:ring-1 focus:ring-[#C9A84C]/20 focus:outline-none transition-all font-mono">
+              <option v-for="m in availableModels" :key="m" :value="m">{{ m }}</option>
+              <option v-if="!availableModels.includes(aiSettings.default_model) && aiSettings.default_model" :value="aiSettings.default_model">{{ aiSettings.default_model }} (custom)</option>
+            </select>
+            <input v-if="availableModels.length === 0 || showCustomDefaultModel" v-model="aiSettings.default_model" type="text" placeholder="hf.co/org/model-name:Q8_0"
+              class="w-full rounded-xl border border-[#2A2A35] bg-[#0A0A10] px-3 py-2.5 text-sm text-[#FAF8F5] placeholder-gray-600 focus:border-[#C9A84C]/60 focus:ring-1 focus:ring-[#C9A84C]/20 focus:outline-none transition-all font-mono" />
+          </div>
+          <p class="text-[11px] text-gray-600 leading-relaxed">LM Studio model for comments, posts, and chat.</p>
         </div>
+
+        <!-- Default Vision Model -->
         <div class="space-y-1.5">
-          <label class="text-[10px] uppercase tracking-[0.2em] text-gray-500 block">Default Vision Model</label>
-          <input v-model="aiSettings.default_vision_model" type="text" placeholder="model-name:tag"
-            class="w-full rounded-xl border border-[#2A2A35] bg-[#0A0A10] px-3 py-2.5 text-sm text-[#FAF8F5] placeholder-gray-600 focus:border-[#C9A84C]/60 focus:ring-1 focus:ring-[#C9A84C]/20 focus:outline-none transition-all font-mono" />
+          <div class="flex justify-between items-center">
+            <label class="text-[10px] uppercase tracking-[0.2em] text-gray-500 block">Default Vision Model</label>
+            <button v-if="availableModels.length > 0" type="button" @click="showCustomVisionModel = !showCustomVisionModel"
+              class="text-[10px] text-[#C9A84C] hover:underline bg-none border-none cursor-pointer">
+              {{ showCustomVisionModel ? 'Use Dropdown' : 'Type Manually' }}
+            </button>
+          </div>
+          <div class="space-y-2">
+            <select v-if="availableModels.length > 0 && !showCustomVisionModel" v-model="aiSettings.default_vision_model"
+              class="w-full rounded-xl border border-[#2A2A35] bg-[#0A0A10] px-3 py-2.5 text-sm text-[#FAF8F5] focus:border-[#C9A84C]/60 focus:ring-1 focus:ring-[#C9A84C]/20 focus:outline-none transition-all font-mono">
+              <option v-for="m in availableModels" :key="m" :value="m">{{ m }}</option>
+              <option v-if="!availableModels.includes(aiSettings.default_vision_model) && aiSettings.default_vision_model" :value="aiSettings.default_vision_model">{{ aiSettings.default_vision_model }} (custom)</option>
+            </select>
+            <input v-if="availableModels.length === 0 || showCustomVisionModel" v-model="aiSettings.default_vision_model" type="text" placeholder="model-name:tag"
+              class="w-full rounded-xl border border-[#2A2A35] bg-[#0A0A10] px-3 py-2.5 text-sm text-[#FAF8F5] placeholder-gray-600 focus:border-[#C9A84C]/60 focus:ring-1 focus:ring-[#C9A84C]/20 focus:outline-none transition-all font-mono" />
+          </div>
           <p class="text-[11px] text-gray-600 leading-relaxed">Model used for image descriptions and vision tasks.</p>
         </div>
+
+        <!-- Default Assistant Model -->
         <div class="space-y-1.5">
-          <label class="text-[10px] uppercase tracking-[0.2em] text-gray-500 block">Default Assistant Model</label>
-          <input v-model="aiSettings.default_assistant_model" type="text" placeholder="model-name:tag"
-            class="w-full rounded-xl border border-[#2A2A35] bg-[#0A0A10] px-3 py-2.5 text-sm text-[#FAF8F5] placeholder-gray-600 focus:border-[#C9A84C]/60 focus:ring-1 focus:ring-[#C9A84C]/20 focus:outline-none transition-all font-mono" />
+          <div class="flex justify-between items-center">
+            <label class="text-[10px] uppercase tracking-[0.2em] text-gray-500 block">Default Assistant Model</label>
+            <button v-if="availableModels.length > 0" type="button" @click="showCustomAssistantModel = !showCustomAssistantModel"
+              class="text-[10px] text-[#C9A84C] hover:underline bg-none border-none cursor-pointer">
+              {{ showCustomAssistantModel ? 'Use Dropdown' : 'Type Manually' }}
+            </button>
+          </div>
+          <div class="space-y-2">
+            <select v-if="availableModels.length > 0 && !showCustomAssistantModel" v-model="aiSettings.default_assistant_model"
+              class="w-full rounded-xl border border-[#2A2A35] bg-[#0A0A10] px-3 py-2.5 text-sm text-[#FAF8F5] focus:border-[#C9A84C]/60 focus:ring-1 focus:ring-[#C9A84C]/20 focus:outline-none transition-all font-mono">
+              <option v-for="m in availableModels" :key="m" :value="m">{{ m }}</option>
+              <option v-if="!availableModels.includes(aiSettings.default_assistant_model) && aiSettings.default_assistant_model" :value="aiSettings.default_assistant_model">{{ aiSettings.default_assistant_model }} (custom)</option>
+            </select>
+            <input v-if="availableModels.length === 0 || showCustomAssistantModel" v-model="aiSettings.default_assistant_model" type="text" placeholder="model-name:tag"
+              class="w-full rounded-xl border border-[#2A2A35] bg-[#0A0A10] px-3 py-2.5 text-sm text-[#FAF8F5] placeholder-gray-600 focus:border-[#C9A84C]/60 focus:ring-1 focus:ring-[#C9A84C]/20 focus:outline-none transition-all font-mono" />
+          </div>
           <p class="text-[11px] text-gray-600 leading-relaxed">Model used for the AI assistant chat.</p>
         </div>
 
         <!-- Toggles Row -->
         <div class="grid grid-cols-3 gap-3">
-          <button type="button" @click="aiSettings.use_laptop = !aiSettings.use_laptop"
+          <button type="button" @click="aiSettings.manage_vram = !aiSettings.manage_vram"
             class="rounded-xl border px-3 py-3 text-center transition-all duration-200 cursor-pointer"
-            :class="aiSettings.use_laptop
+            :class="aiSettings.manage_vram
               ? 'border-[#C9A84C]/50 bg-[#C9A84C]/8 ring-1 ring-[#C9A84C]/30'
               : 'border-[#232836] bg-[#111118]/60 hover:border-[#3A3A48]'">
             <div class="text-[10px] uppercase tracking-widest mb-1"
-              :class="aiSettings.use_laptop ? 'text-[#C9A84C]' : 'text-gray-600'">Laptop</div>
+              :class="aiSettings.manage_vram ? 'text-[#C9A84C]' : 'text-gray-600'">Manage VRAM</div>
             <div class="text-xs font-semibold"
-              :class="aiSettings.use_laptop ? 'text-[#FAF8F5]' : 'text-gray-500'">
-              {{ aiSettings.use_laptop ? 'ON' : 'OFF' }}
+              :class="aiSettings.manage_vram ? 'text-[#FAF8F5]' : 'text-gray-500'">
+              {{ aiSettings.manage_vram ? 'ON' : 'OFF' }}
             </div>
           </button>
           <button type="button" @click="aiSettings.use_thinking = !aiSettings.use_thinking"

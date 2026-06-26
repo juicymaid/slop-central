@@ -1,7 +1,7 @@
 <script setup>
+import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 const windowWidth = ref(window.innerWidth)
 const scale = ref(0.7)
-import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { GetFromApi, webState, PostToApi } from '../api'
 import Image from '../components/Image.vue'
 
@@ -12,6 +12,14 @@ const emit = defineEmits(['load-more'])
 const isResizing = ref(false)
 const startX = ref(0)
 const startWidth = ref(0)
+
+const columnCount = computed(() => {
+  const isMobile = windowWidth.value < 768
+  const activeSidebarWidth = (isMobile || webState.sidebarWidth === 0) ? 0 : webState.sidebarWidth
+  const width = Math.max(300, windowWidth.value - activeSidebarWidth)
+  const calculated = Math.ceil(((width / scale.value * 0.9) - 320) / 400)
+  return Math.max(1, calculated)
+})
 
 // Multi-select state
 const selectedIds = ref(new Set())
@@ -132,8 +140,9 @@ const props = defineProps({
 <template>
   <!-- Responsive grid layout for images -->
   <div class="w-full flex gap-2">
-    <!-- Resize handle for sidebar -->
+    <!-- Resize handle for sidebar - hidden on mobile -->
     <div 
+      v-if="windowWidth >= 768"
       class="fixed left-0 top-0 w-1 h-full bg-transparent hover:bg-blue-500 cursor-col-resize z-50 transition-colors"
       :style="{ left: webState.sidebarWidth + 'px' }"
       @mousedown="startResize"
@@ -143,7 +152,7 @@ const props = defineProps({
     <Teleport to="body">
       <div
         v-if="selectedIds.size > 0"
-        class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-gray-900 text-white px-5 py-3 rounded-full shadow-xl"
+        class="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-gray-900 text-white px-5 py-3 rounded-full shadow-xl"
       >
         <span class="text-sm font-medium">{{ selectedIds.size }} selected</span>
         <button
@@ -167,8 +176,8 @@ const props = defineProps({
       </div>
     </Teleport>
 
-    <div class="w-full" v-for="ci in Math.ceil((((windowWidth-webState.sidebarWidth)/scale * 0.9) - 320) / 400)" :key="ci">
-      <Image v-for="pin in pins.filter((p, pi) => ((pi + 1 - ci) % Math.ceil((((windowWidth-webState.sidebarWidth)/scale * 0.9) - 320) / 400)) === 0)"
+    <div class="w-full" v-for="ci in columnCount" :key="ci">
+      <Image v-for="pin in pins.filter((p, pi) => ((pi + 1 - ci) % columnCount) === 0)"
         :key="pin.Id" :pin="pin" class="mb-2"
         :isSelected="selectedIds.has(pin.Id)"
         :board="inBoard"

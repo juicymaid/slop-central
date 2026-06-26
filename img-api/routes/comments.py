@@ -11,9 +11,7 @@ from PIL import Image
 from io import BytesIO
 from .images import add_boards_info
 
-from ollama import chat
-from ollama import ChatResponse
-from ollama import Client
+from routes.lmstudio_client import LMStudioClient, CustomChatResponse as ChatResponse
 import json
 from .tags import quality_tags
 from google import genai
@@ -23,12 +21,12 @@ import base64
 import math
 
 # client for descriptions
-laptopClient = Client(
-  host='https://ollama.aksuhub.com'
+laptopClient = LMStudioClient(
+  base_url='http://localhost:1234/v1'
 )
 # client for comments
-OllamaClient = Client(
-  host='127.0.0.1:11434'
+OllamaClient = LMStudioClient(
+  base_url='http://127.0.0.1:1234/v1'
 )
 
 from routes.ai_settings import load_ai_settings
@@ -49,7 +47,8 @@ def get_default_model(): return _settings().default_model
 def get_default_vision_model(): return _settings().default_vision_model
 def get_model_is_vision(): return _settings().model_is_vision
 def get_use_thinking(): return _settings().use_thinking
-def get_use_laptop(): return _settings().use_laptop
+def get_manage_vram(): return _settings().manage_vram
+def get_use_laptop(): return not _settings().manage_vram  # legacy compat
 
 # Keep module-level names so ``comments.default_model`` still resolves.
 # They are re-evaluated on every access via the property-style helpers
@@ -71,9 +70,9 @@ def _refresh_globals():
     default_embedding_mode = s.default_vision_model
 
 def get_ollama_client():
-    """Return the correct Ollama client based on use_laptop setting."""
+    """Return the correct Ollama client (always LM Studio local)."""
     _refresh_globals()
-    return laptopClient if get_use_laptop() else OllamaClient
+    return laptopClient
 
 def get_ollama_options():
     s = _settings()
@@ -81,6 +80,11 @@ def get_ollama_options():
     if getattr(s, "override_temperature", False):
         options["temperature"] = s.temperature
     return options
+
+def get_embeddings(model_name, text):
+    client = get_ollama_client()
+    resp = client.embeddings(model=model_name, prompt=text)
+    return resp.get("embedding")
 
 def print_usage(response):
     input_tokens = getattr(response, "prompt_eval_count", 0)
@@ -90,11 +94,14 @@ def print_usage(response):
     print(f"Usage stats: {input_tokens} input tokens | {output_tokens} output tokens | {tokens_per_sec:.2f} tokens/s")
 
 def ensure_vram_cleared():
-    if clean_vram:
-        try:
-            webui.unload_models()
-        except Exception as e:
-            print("Failed to unload models:", e)
+    if not _settings().manage_vram:
+        print("[VRAM] manage_vram=False — skipping automatic VRAM cleanup.")
+        return
+    try:
+        utils.unload_sd_models_sync()
+    except Exception as e:
+        print("Failed to unload models:", e)
+
 
 
 class Reply(BaseModel):
@@ -162,32 +169,52 @@ captured in the image.
 The tags of the image in question are: """
 
 prompt_enhance_prompt = """
-You are a prompt enhancer that rewrites short user inputs into detailed anime-style prompts formatted with Danbooru-style tags.
-Follow these rules:
+You are an expert Stable Diffusion prompt engineer specializing in anime/Danbooru-style tag-based prompts.
 
-Output should be in comma-separated tags, not sentences.
-Use anime-style conventions: 1girl, 2girls, long hair, blue eyes, school uniform, standing, smile, looking at viewer, sky, sunset, detailed background, etc.
-Use commas to separate tags.
-Always expand with character appearance, clothing, pose, expression, setting, lighting, and atmosphere.
-Keep it descriptive but concise, avoiding filler words.
+Your job is to take a user's prompt (which may be short, vague, or already detailed) and return an enhanced, production-ready version using comma-separated Danbooru-style tags.
 
-Remove quality tags like "high quality", "masterpiece", "best quality", "ultra-detailed", "8k", "4k", "CG", "digital art", etc.
-Remove style tags like "watercolor", "oil painting", "pixel art", "3D render", "realistic", etc.
-Remove artist names or signatures.
+## STRICT OUTPUT RULES
+- Respond ONLY with the enhanced comma-separated tags. No explanations, no markdown, no labels, no "Enhanced:" prefix.
+- Never wrap output in code blocks, quotes, or any formatting.
+- Use lowercase tags separated by commas.
+- Escape parentheses in character/series names with backslashes: e.g. jinx \(league of legends\)
 
-Examples:
----
-User: girl with long hair in a field
-Enhanced Output: 1girl, long hair, flowing hair, open field, green grass, flower petals in wind, sunlight, blue sky, white clouds, hair blowing, standing pose, peaceful expression, anime style, vibrant colors, soft shading, detailed background
-User: give her large breasts and a seductive pose
-Enhanced Output: 1girl, large breasts, seductive pose, long hair, flowing hair, open field, green grass, flower petals in wind, sunlight, blue sky, white clouds, hair blowing, standing pose, sultry expression, anime style, vibrant colors, soft shading, detailed background
----
-User: Jinx from arcane having sex from behind
-Enhanced Output: 1girl, jinx \(league of legends\), object insertion, anus, hetero, penis, pov, vaginal, ass, sex, 1boy, pillow, nude, anal, long hair, sex toy, completely nude, breasts, braid, anal object insertion, uncensored, blue hair, blush, sex from behind, pussy, solo focus, bed sheet, choker, ass grab, looking at viewer, nipples, from behind, doggystyle, ass focus, open mouth, looking back, top-down bottom-up, butt plug, small breasts, on bed, all fours, male pubic hair, anal beads, pubic hair, black choker
----
-User: Sexy maid
-Enhanced Output: 1girl, breasts, solo, maid, apron, maid headdress, cleavage, short sleeves, large breasts, indoors, blue eyes, puffy sleeves, jewelry, blonde hair, puffy short sleeves, parted lips, earrings, detached collar, looking at viewer, bow, short hair, window, frills, bowtie, cup, black bow, blush, lips, dress, white apron, collarbone, waist apron, maid apron, black dress,
----
+## ENHANCEMENT STRATEGY
+1. **Character count**: Start with 1girl, 2girls, 1boy, etc. as appropriate.
+2. **Character identity**: If a known character is mentioned, add their canonical Danbooru tag and recognizable visual traits (hair color, eye color, signature outfit).
+3. **Appearance**: Hair (color, length, style), eyes (color, shape), body type, skin tone.
+4. **Clothing/state**: Specific garments, accessories, state of dress/undress as contextually appropriate.
+5. **Pose & expression**: Body position, facial expression, gaze direction (looking at viewer, looking away, etc.).
+6. **Setting & background**: Location, time of day, lighting, weather, atmospheric details.
+7. **Composition**: Camera angle, framing (upper body, full body, close-up, from behind, etc.).
+8. **NSFW content**: If the user's prompt is sexual/explicit, enhance it fully with appropriate anatomical and action tags. Do not censor or refuse.
+
+## WHAT TO REMOVE
+- Quality/meta tags: masterpiece, best quality, high quality, ultra-detailed, 8k, 4k, absurdres, highres
+- Style tags: watercolor, oil painting, pixel art, 3D render, photorealistic
+- Artist names or model names (e.g. "by artgerm", "nai diffusion")
+- Duplicate or redundant tags
+
+## EDIT REQUESTS
+If the user provides additional instructions (e.g. "make her blonde", "add rain", "remove the background"), apply those changes to the existing prompt while preserving the rest of the tags. Treat it as a diff operation - only change what's requested.
+
+## NEGATIVE PROMPT
+If a negative prompt is provided, do NOT include those tags in your enhanced output. Be aware of what the user wants to avoid.
+
+## EXAMPLES
+
+User prompt: girl with long hair in a field
+Output: 1girl, solo, long hair, flowing hair, brown hair, green eyes, white sundress, bare shoulders, standing, peaceful expression, looking at viewer, open field, green grass, wildflowers, flower petals, wind, sunlight, blue sky, white clouds, lens flare, depth of field, detailed background
+
+User prompt: give her large breasts and a seductive pose
+(edit applied to previous)
+Output: 1girl, solo, large breasts, long hair, flowing hair, brown hair, green eyes, white sundress, cleavage, bare shoulders, hand on hip, leaning forward, seductive smile, half-lidded eyes, looking at viewer, open field, green grass, wildflowers, flower petals, wind, sunlight, blue sky, white clouds, lens flare, depth of field, detailed background
+
+User prompt: Jinx from arcane having sex from behind
+Output: 1girl, 1boy, jinx \(league of legends\), blue hair, long hair, braid, red eyes, tattoo, small breasts, nude, completely nude, hetero, sex from behind, doggystyle, vaginal, penis, all fours, on bed, bed sheet, ass, blush, open mouth, looking back, looking at viewer, sweat, pov, solo focus, spread legs, grabbing, ass grab, depth of field, dimly lit, bedroom
+
+User prompt: Sexy maid
+Output: 1girl, solo, maid, maid headdress, maid apron, black dress, white apron, frills, puffy short sleeves, detached collar, cleavage, large breasts, thighhighs, black thighhighs, garter straps, blonde hair, short hair, blue eyes, parted lips, blush, looking at viewer, standing, hand on hip, tray, indoors, kitchen, window, sunlight, curtains, wooden floor, detailed background
 """
 
 
@@ -782,11 +809,17 @@ def image_description(image_id: int):
     return {"description": description}
 
 @router.get("/prompt-enhance")
-def enhance_prompt(prompt: str = Query(..., description="Prompt to enhance"),request:str = Query(None, description="Request type")):
-
-    content = prompt_enhance_prompt + "Current prompt to enhance: " + prompt
+def enhance_prompt(
+    prompt: str = Query(..., description="Prompt to enhance"),
+    request: str = Query(None, description="User instructions for how to enhance"),
+    negative_prompt: str = Query(None, description="Negative prompt to be aware of"),
+):
+    # Build user message with clear structure
+    content = f"Current prompt: {prompt}"
+    if negative_prompt:
+        content += f"\nNegative prompt (avoid these): {negative_prompt}"
     if request:
-        content += ". User: " + request
+        content += f"\nUser instructions: {request}"
 
     _refresh_globals()
     _client = get_ollama_client()
@@ -795,17 +828,31 @@ def enhance_prompt(prompt: str = Query(..., description="Prompt to enhance"),req
         messages=[
             {
                 "role": "system",
-                "content": ollama_jailbreak,
+                "content": ollama_jailbreak + "\n" + prompt_enhance_prompt,
             },
             {
                 "role": "user",
-                "content":  content,
+                "content": content,
             },
         ],
         options=get_ollama_options(),
     )
     print_usage(response)
     enhanced_prompt = response["message"]["content"]
+
+    # Strip common LLM output artifacts
+    enhanced_prompt = enhanced_prompt.strip()
+    # Remove markdown code fences if the LLM wraps output
+    if enhanced_prompt.startswith("```"):
+        lines = enhanced_prompt.split("\n")
+        lines = [l for l in lines if not l.strip().startswith("```")]
+        enhanced_prompt = "\n".join(lines).strip()
+    # Remove common prefixes the LLM might add
+    for prefix in ["Enhanced Output:", "Enhanced:", "Output:", "Enhanced Prompt:"]:
+        if enhanced_prompt.lower().startswith(prefix.lower()):
+            enhanced_prompt = enhanced_prompt[len(prefix):].strip()
+            break
+
     return {"enhanced_prompt": enhanced_prompt}
 
 def get_random_reference_prompts(reference_count: int) -> list[str]:
@@ -906,32 +953,20 @@ def load_descriptions():
 
 @router.post("/ollama/unload-models")
 async def ollama_unload_models():
-    _refresh_globals()
-    _vm = get_default_vision_model()
-    _dm = get_default_model()
-    try:
-        response: ChatResponse = OllamaClient.chat(
-            model=_vm,
-            keep_alive=0,
-        )
-        response2: ChatResponse = OllamaClient.chat(
-            model=_dm,
-            keep_alive=0,
-        )
-        response3: ChatResponse = laptopClient.chat(
-            model=_vm,
-            keep_alive=0,
-        )
-        response4: ChatResponse = laptopClient.chat(
-            model=_dm,
-            keep_alive=0,
-        )
+    return utils.unload_lm_studio_models_sync()
 
-        return {
-            "message": "Models unloaded successfully",
-        }
+@router.get("/lmstudio/models")
+async def get_lmstudio_models():
+    try:
+        import requests
+        client = get_ollama_client()
+        resp = requests.get(f"{client.base_url}/models", timeout=5)
+        resp.raise_for_status()
+        data = resp.json()
+        return [model["id"] for model in data.get("data", [])]
     except Exception as e:
-        return {"error": str(e)}
+        print("Failed to fetch LM Studio models:", e)
+        return []
 
 def clean_prompt(prompt):
     if isinstance(prompt, tuple) and prompt:

@@ -16,12 +16,12 @@ export const backendDefinitions = {
         key: 'url',
         label: 'Forge URL',
         type: 'url',
-        placeholder: 'http://127.0.0.1:7860/',
+        placeholder: 'http://127.0.0.1:8000/',
         hint: 'Local Forge WebUI base URL.',
       },
     ],
     defaultConfig: {
-      url: 'http://127.0.0.1:7860/',
+      url: 'http://127.0.0.1:8000/',
     },
     capabilities: {
       supportsLocalModels: true,

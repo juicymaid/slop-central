@@ -15,9 +15,8 @@
             <!-- Characters Section -->
             <div v-if="characters.length" class="sidebar-section">
                 <div class="section-label">Characters</div>
-                <router-link v-for="char in characters" :key="char.id"
-                    :to="{ name: 'chat', params: { id: char.id } }" class="chat-item"
-                    :class="{ active: route.params.id == char.id }">
+                <router-link v-for="char in characters" :key="char.id" :to="{ name: 'chat', params: { id: char.id } }"
+                    class="chat-item" :class="{ active: route.params.id == char.id }">
                     <div class="chat-avatar">
                         <img :src="char.avatar || `${apiUrl}/random-image-file?user=${char.id}`" />
                     </div>
@@ -35,11 +34,13 @@
                     :to="{ name: 'chat', params: { id: chat.chat_id } }" class="chat-item"
                     :class="{ active: route.params.id == chat.chat_id }">
                     <div class="chat-avatar">
-                        <img :src="chat.character?.avatar || (chat.is_character_chat ? `${apiUrl}/random-image-file?user=${chat.chat_id}` : apiUrl + '/image-file/' + chat.chat_id)" />
+                        <img
+                            :src="chat.character?.avatar || (chat.is_character_chat ? `${apiUrl}/random-image-file?user=${chat.chat_id}` : apiUrl + '/image-file/' + chat.chat_id)" />
                     </div>
                     <div class="chat-info">
                         <div class="chat-name">{{ chat.character?.character_name || 'Chat' }}</div>
-                        <div class="last-message">{{ chat.messages?.[chat.messages.length - 1]?.text || 'No messages yet' }}</div>
+                        <div class="last-message">{{ chat.messages?.[chat.messages.length - 1]?.text || 'No messages
+                            yet' }}</div>
                     </div>
                     <div class="chat-meta">
                         <div class="chat-time">{{ chat.time }}</div>
@@ -295,7 +296,7 @@ function selectChat(chat) {
 }
 
 const isTyping = ref(false);
-const url = ref('http://127.0.0.1:7860/')
+const url = ref('http://127.0.0.1:8000/')
 
 async function sendMessage() {
     if (!newMessage.value.trim() || !chat.value) return;
@@ -349,10 +350,10 @@ async function sendMessage() {
             body: JSON.stringify(_request)
         })
         const result = await txt2imgResponse.json()
-        chat.value.messages[chat.value.messages.length - 1].image =  "image/png;base64," + result.images[0];
+        chat.value.messages[chat.value.messages.length - 1].image = "image/png;base64," + result.images[0];
 
         //post to /chat/{chat_id}/{message_index}/image
-        const _url = apiUrl + '/chat/' + route.params.id + '/' + (chat.value.messages.length-1) + '/image';
+        const _url = apiUrl + '/chat/' + route.params.id + '/' + (chat.value.messages.length - 1) + '/image';
         const imageResponse = await fetch(_url, {
             method: 'POST',
         });

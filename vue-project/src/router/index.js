@@ -131,7 +131,18 @@ const router = createRouter({
       path: "/posts",
       name: "posts",
       component: () => import("../views/posts.vue")
-    }
+    },
+    {
+      path: "/hentai",
+      name: "hentai",
+      component: () => import("../views/hentaiView.vue")
+    },
+    {
+      path: "/hentai/:id",
+      name: "hentai-viewer",
+      component: () => import("../views/hentaiViewer.vue")
+    },
+
   ],
 })
 

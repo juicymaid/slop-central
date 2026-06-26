@@ -4,7 +4,7 @@ import random
 from fastapi import FastAPI, HTTPException, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
-from routes import images, rec, tags, boards, phashes, scan_images, scoring, tagger, models, comments, webui, chats, rate, comics, ai_search, stories, assistant, posts, ai_settings
+from routes import images, rec, tags, boards, phashes, scan_images, scoring, tagger, models, comments, webui, chats, rate, comics, ai_search, stories, assistant, posts, ai_settings, hentai, lmstudio, mcp
 from fastapi.staticfiles import StaticFiles
 from utils import (
     images_data, all_images, clicks_data, boards_data,
@@ -94,7 +94,11 @@ app.include_router(utils.router)
 app.include_router(assistant.router)
 app.include_router(posts.router)
 app.include_router(ai_settings.router)
+app.include_router(hentai.router)
+app.include_router(lmstudio.router)
+app.include_router(mcp.router)
 print("routes loaded")
+
 
 
 
@@ -179,10 +183,98 @@ async def _ensure_data_loaded(request: Request, call_next):
     return await call_next(request)
 
 @app.get("/proxy")
-def proxy(url: str = Query(..., description="URL to proxy")):
+def proxy(request: Request, url: str = Query(..., description="URL to proxy")):
+    import requests
+    import urllib.parse
+    import re
+    from fastapi.responses import StreamingResponse
+
+    # Forward headers
+    headers = {}
+    range_header = request.headers.get("Range")
+    if range_header:
+        headers["Range"] = range_header
+    
+    # Bypass referer protections
+    if "octopusmanifest.org" in url or "anpustream.com" in url or "hhaven" in url or "hentai" in url:
+        headers["Referer"] = "https://hentaihaven.xxx/"
+    headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
     try:
-        response = requests.get(url)
-        return Response(content=response.content, media_type=response.headers.get('Content-Type', 'application/octet-stream'))
-    except requests.RequestException as e:
+        # Check if it is an HLS playlist
+        if ".m3u8" in url or "application/vnd.apple.mpegurl" in request.headers.get("Accept", ""):
+            # Fetch the playlist
+            res = requests.get(url, headers=headers, timeout=10)
+            if res.status_code != 200:
+                return Response(content=res.content, status_code=res.status_code, media_type=res.headers.get("Content-Type"))
+            
+            # Rewrite paths in playlist
+            lines = res.text.split("\n")
+            rewritten_lines = []
+            
+            # Determine base URL of the playlist to resolve relative URLs
+            # res.url is the final URL after redirects
+            base_url = res.url.rsplit('/', 1)[0] + '/'
+            
+            for line in lines:
+                stripped = line.strip()
+                if not stripped:
+                    rewritten_lines.append(line)
+                    continue
+                
+                # Check if it contains URI="..."
+                if stripped.startswith("#"):
+                    def repl(match):
+                        uri_val = match.group(1)
+                        absolute_uri = urllib.parse.urljoin(base_url, uri_val)
+                        proxied_uri = f"{request.url.scheme}://{request.url.netloc}/proxy?url={urllib.parse.quote(absolute_uri)}"
+                        return f'URI="{proxied_uri}"'
+                    
+                    line_rewritten = re.sub(r'URI="([^"]+)"', repl, line)
+                    rewritten_lines.append(line_rewritten)
+                else:
+                    # It's a resource (sub-playlist or video segment)
+                    absolute_uri = urllib.parse.urljoin(base_url, stripped)
+                    proxied_uri = f"{request.url.scheme}://{request.url.netloc}/proxy?url={urllib.parse.quote(absolute_uri)}"
+                    rewritten_lines.append(proxied_uri)
+            
+            content = "\n".join(rewritten_lines)
+            return Response(
+                content=content, 
+                media_type="application/vnd.apple.mpegurl",
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Cache-Control": "no-cache"
+                }
+            )
+        else:
+            # Stream video segments or standard media files
+            # stream=True ensures we don't load the entire file into memory
+            r_stream = requests.get(url, headers=headers, stream=True, timeout=15)
+            
+            # Copy relevant headers from upstream response
+            resp_headers = {}
+            for h in ["Content-Range", "Accept-Ranges", "Content-Length", "Content-Type", "Cache-Control"]:
+                if h in r_stream.headers:
+                    resp_headers[h] = r_stream.headers[h]
+            
+            resp_headers["Access-Control-Allow-Origin"] = "*"
+            
+            def iter_content():
+                try:
+                    for chunk in r_stream.iter_content(chunk_size=65536):
+                        if chunk:
+                            yield chunk
+                finally:
+                    r_stream.close()
+            
+            return StreamingResponse(
+                iter_content(),
+                status_code=r_stream.status_code,
+                headers=resp_headers,
+                media_type=resp_headers.get("Content-Type", "application/octet-stream")
+            )
+            
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -1,2 +1,2 @@
 @echo off
-call antigravity -g "%~1:%~2"
+call "%LOCALAPPDATA%\Programs\Antigravity IDE\bin\antigravity-ide.cmd" -g "%~1:%~2"

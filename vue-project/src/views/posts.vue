@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, computed, reactive, watch } from 'vue'
 import { GetFromApi, PostToApi, apiUrl, formatRequest } from '../api'
+import ClearArt from '@/components/ClearArt.vue'
 
 
 
@@ -165,7 +166,7 @@ const filteredPosts = computed(() => {
     if (!selectedCharacterId.value) return allPosts.value
     return allPosts.value.filter(p => p.character?.id === selectedCharacterId.value)
 })
-const sdUrl = ref('http://127.0.0.1:7860/')
+const sdUrl = ref('http://127.0.0.1:8000/')
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
 // Track generation state per post by created_at key
@@ -276,7 +277,18 @@ async function generateImage(post) {
 </script>
 
 <template>
-    <div class="max-w-4xl mx-auto py-8 space-y-8">
+    <div class="max-w-4xl mx-auto py-8 space-y-8 relative">
+        <!-- Left Side "Ad" Mascot -->
+        <div class="fixed left-4 top-1/4 z-40 hidden xl:flex flex-col items-center gap-2 max-w-[200px]">
+            <ClearArt class=" object-contain select-none pointer-events-none" />
+            <ClearArt class=" object-contain select-none pointer-events-none" />
+        </div>
+
+        <!-- Right Side "Ad" Mascot -->
+        <div class="fixed right-4 top-1/4 z-40 hidden xl:flex flex-col items-center gap-2 max-w-[200px]">
+            <ClearArt class=" object-contain select-none pointer-events-none" />
+            <ClearArt class=" object-contain select-none pointer-events-none" />
+        </div>
         <!-- Top Bar / Cast List -->
         <div class="bg-[#14141A] rounded-2xl border border-[#2A2A35] p-5 shadow-lg w-full">
 

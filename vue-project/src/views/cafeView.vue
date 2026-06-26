@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { GetRandomCharacter } from "@/scripts/randomCharacter";
 import { formatRequest, webState } from "@/api";
 
-const webuiUrl = ref('http://127.0.0.1:7860/')
+const webuiUrl = ref('http://127.0.0.1:8000/')
 
 // --- Ingredients ---
 const ingredients = ref([

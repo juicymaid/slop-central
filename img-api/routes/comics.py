@@ -7,9 +7,7 @@ from pathlib import Path
 import json
 import io
 from routes import comments
-from ollama import chat
-from ollama import ChatResponse
-from ollama import Client
+from routes.comments import ChatResponse
 
 router = APIRouter()
 

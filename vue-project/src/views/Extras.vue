@@ -1,6 +1,14 @@
 <template>
-    <div class="p-6">
-        <h1 class="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-6">Extras</h1>
+    <div class="max-w-[1200px] mx-auto p-6 relative">
+        <!-- Header Section with Mascot -->
+        <div class="flex justify-between items-center mb-8 mt-6">
+            <div>
+                <h1 class="text-3xl font-serif font-bold italic text-[#FAF8F5] drop-shadow-md">Extras</h1>
+                <p class="text-xs text-[#FAF8F5]/60 font-mono mt-1 uppercase tracking-wider">Additional Features & Tools</p>
+            </div>
+            <ClearArt class="max-h-24 sm:max-h-32 select-none pointer-events-none" />
+        </div>
+
         <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
             <RouterLink v-for="page in pages" :key="page.path" :to="page.path"
                 class="group relative block rounded-xl overflow-hidden shadow-md hover:shadow-xl transition-shadow duration-300 bg-gray-100 dark:bg-gray-800 aspect-video cursor-pointer">
@@ -22,6 +30,8 @@
 </template>
 
 <script setup>
+import ClearArt from '@/components/ClearArt.vue'
+
 const pages = [
     { label: 'Civitai Images', path: '/civitai', img: '/covers/civitaipage.png' },
     { label: 'Ranbooru', path: '/ranbooru', img: '/covers/ranbooru.png' },
@@ -32,5 +42,6 @@ const pages = [
     { label: 'Chats', path: '/chat/45863', img: '/covers/chat.png' },
     { label: 'Rule34', path: '/rule34', img: '' },
     { label: 'Posts', path: '/posts', img: '' },
+    { label: "Hentai", path: "/hentai", img: "/" },
 ]
 </script>

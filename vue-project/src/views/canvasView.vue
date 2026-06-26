@@ -1,338 +1,511 @@
 <template>
     <div
-        class="flex h-screen w-full flex-col bg-zinc-950 text-zinc-200 overflow-hidden font-sans selection:bg-indigo-500/30 fixed inset-0 pt-16">
+        class="flex h-screen w-full flex-col bg-[#0D0D12] text-[#FAF8F5] overflow-hidden selection:bg-[#C9A84C]/30 fixed inset-0 pt-16 font-sans">
 
         <div class="flex flex-1 min-h-0 relative">
 
-            <main ref="viewportRef" class="relative flex-1 overflow-hidden bg-zinc-950" @wheel.prevent="onWheel">
-                <div class="absolute inset-0 pointer-events-none opacity-20"
-                    style="background-image: radial-gradient(#404040 1px, transparent 1px); background-size: 20px 20px;">
+            <!-- Main Canvas Viewport -->
+            <main ref="viewportRef" class="relative flex-1 overflow-hidden bg-[#07070A]" @wheel.prevent="onWheel">
+                <!-- Premium Gold Radial Grid Pattern -->
+                <div class="absolute inset-0 pointer-events-none opacity-10"
+                    style="background-image: radial-gradient(#C9A84C 1px, transparent 1px); background-size: 24px 24px;">
                 </div>
 
                 <div v-if="!hasImage"
-                    class="absolute inset-0 flex flex-col items-center justify-center text-zinc-500 pointer-events-none">
-                    <p class="text-sm">Upload an image to start</p>
+                    class="absolute inset-0 flex flex-col items-center justify-center text-zinc-500 pointer-events-none space-y-4">
+                    <div class="h-16 w-16 rounded-full border border-[#C9A84C]/20 flex items-center justify-center bg-[#C9A84C]/5 shadow-[0_0_20px_rgba(201,168,76,0.1)]">
+                        <svg class="w-8 h-8 text-[#C9A84C]/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                        </svg>
+                    </div>
+                    <p class="text-xs uppercase tracking-[0.2em] text-[#C9A84C]/70">Upload an image to start tailoring</p>
                 </div>
 
+                <!-- Floating Canvas Container -->
                 <div class="absolute inset-0 overflow-auto flex items-center justify-center p-12 outline-none mb-12"
                     ref="scrollContainerRef">
                     <div v-if="hasImage"
-                        class="relative transition-transform duration-75 ease-out origin-center shadow-2xl shadow-black"
+                        class="relative transition-transform duration-75 ease-out origin-center shadow-[0_20px_50px_rgba(0,0,0,0.8)] border border-[#C9A84C]/10"
                         :style="{
                             width: canvasWidth + 'px',
                             height: canvasHeight + 'px',
                             transform: `scale(${zoom})`
                         }" @pointerleave="onPointerUp">
-                        <canvas ref="baseCanvasRef" class="block bg-zinc-800 pointer-events-none" />
+                        
+                        <!-- Base canvas (contains uploaded image) -->
+                        <canvas ref="baseCanvasRef" class="block bg-zinc-900 pointer-events-none" />
 
+                        <!-- Preview of generated replacement -->
                         <img v-if="hasGeneratedPreview" :src="currentGeneratedImage"
                             class="absolute left-0 top-0 h-full w-full pointer-events-none object-contain" />
 
+                        <!-- Mask canvas (for painting / SAM overlay) -->
                         <canvas ref="maskCanvasRef" class="absolute left-0 top-0 touch-none"
                             :class="[cursorClass, hasGeneratedPreview ? 'opacity-0 pointer-events-none' : 'opacity-100']"
                             @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerUp"
                             @pointercancel="onPointerUp" @contextmenu.prevent />
 
-                        <div class="pointer-events-none absolute -inset-[1px] border border-zinc-500/50 z-50">
-                            <div class="absolute inset-0 border border-white/20"></div>
+                        <!-- Resize Handles with luxury theme -->
+                        <div class="pointer-events-none absolute -inset-[1px] border border-[#C9A84C]/35 z-50">
+                            <div class="absolute inset-0 border border-white/5"></div>
 
+                            <!-- Left handle -->
                             <div class="pointer-events-auto absolute left-0 top-0 h-full w-6 -translate-x-3 cursor-ew-resize group flex items-center justify-center"
                                 @pointerdown="(e) => onResizeHandleDown(e, 'l')">
                                 <div
-                                    class="h-8 w-1 rounded-full bg-indigo-500/0 transition-colors group-hover:bg-indigo-500">
+                                    class="h-10 w-1 rounded-full bg-transparent group-hover:bg-[#C9A84C] transition-all duration-300 shadow-[0_0_8px_rgba(201,168,76,0.8)]">
                                 </div>
                             </div>
 
+                            <!-- Right handle -->
                             <div class="pointer-events-auto absolute right-0 top-0 h-full w-6 translate-x-3 cursor-ew-resize group flex items-center justify-center"
                                 @pointerdown="(e) => onResizeHandleDown(e, 'r')">
                                 <div
-                                    class="h-8 w-1 rounded-full bg-indigo-500/0 transition-colors group-hover:bg-indigo-500">
+                                    class="h-10 w-1 rounded-full bg-transparent group-hover:bg-[#C9A84C] transition-all duration-300 shadow-[0_0_8px_rgba(201,168,76,0.8)]">
                                 </div>
                             </div>
 
+                            <!-- Top handle -->
                             <div class="pointer-events-auto absolute left-0 top-0 w-full h-6 -translate-y-3 cursor-ns-resize group flex items-center justify-center"
                                 @pointerdown="(e) => onResizeHandleDown(e, 't')">
                                 <div
-                                    class="w-8 h-1 rounded-full bg-indigo-500/0 transition-colors group-hover:bg-indigo-500">
+                                    class="w-10 h-1 rounded-full bg-transparent group-hover:bg-[#C9A84C] transition-all duration-300 shadow-[0_0_8px_rgba(201,168,76,0.8)]">
                                 </div>
                             </div>
 
+                            <!-- Bottom handle -->
                             <div class="pointer-events-auto absolute left-0 bottom-0 w-full h-6 translate-y-3 cursor-ns-resize group flex items-center justify-center"
                                 @pointerdown="(e) => onResizeHandleDown(e, 'b')">
                                 <div
-                                    class="w-8 h-1 rounded-full bg-indigo-500/0 transition-colors group-hover:bg-indigo-500">
+                                    class="w-10 h-1 rounded-full bg-transparent group-hover:bg-[#C9A84C] transition-all duration-300 shadow-[0_0_8px_rgba(201,168,76,0.8)]">
                                 </div>
                             </div>
                         </div>
+                    </div>
+                </div>
+
+                <!-- Floating Glassmorphic Viewport Zoom / Reset Controls -->
+                <div v-if="hasImage" 
+                    class="absolute bottom-6 right-6 z-20 flex items-center gap-2 bg-[#0D0D12]/80 backdrop-blur-md px-3 py-1.5 rounded-lg border border-[#2A2A35]/40 shadow-[0_10px_30px_rgba(0,0,0,0.5)]">
+                    <button @click="setZoom(zoom - 0.1)" class="text-zinc-400 hover:text-[#C9A84C] transition-colors p-1" title="Zoom Out">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"/></svg>
+                    </button>
+                    <span class="w-14 text-center tabular-nums text-[11px] font-mono font-medium text-zinc-300">{{ Math.round(zoom * 100) }}%</span>
+                    <button @click="setZoom(zoom + 0.1)" class="text-zinc-400 hover:text-[#C9A84C] transition-colors p-1" title="Zoom In">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                    </button>
+                    <div class="w-[1px] h-4 bg-[#2A2A35]/50 mx-1"></div>
+                    <button @click="fitView" class="text-zinc-400 hover:text-[#C9A84C] transition-colors text-[10px] font-semibold px-1 uppercase tracking-wider">
+                        Fit
+                    </button>
+                </div>
+
+                <!-- Premium Glassmorphic Loading Overlay for SAM Segmentation -->
+                <div v-if="isSegmenting"
+                    class="absolute inset-0 bg-[#0D0D12]/75 backdrop-blur-[4px] z-40 flex flex-col items-center justify-center transition-all duration-300">
+                    <div class="bg-[#0D0D12] border border-[#C9A84C]/20 p-8 rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.8)] flex flex-col items-center gap-4 max-w-sm text-center relative overflow-hidden">
+                        <div class="absolute -right-16 -top-16 w-32 h-32 bg-[#C9A84C]/5 rounded-full blur-2xl"></div>
+                        
+                        <!-- Luxury Golden Spinner -->
+                        <div class="relative w-16 h-16">
+                            <div class="absolute inset-0 rounded-full border-2 border-[#C9A84C]/10"></div>
+                            <div class="absolute inset-0 rounded-full border-2 border-t-[#C9A84C] animate-spin"></div>
+                            <div class="absolute inset-2 rounded-full border border-dashed border-[#C9A84C]/30 animate-[spin_10s_linear_infinite_reverse]"></div>
+                        </div>
+                        
+                        <div class="space-y-1 mt-2">
+                            <h3 class="text-xs uppercase font-bold tracking-[0.15em] text-[#FAF8F5]">AI Segmenting</h3>
+                            <p class="text-[10px] font-mono tracking-widest text-[#C9A84C] uppercase">{{ samProgressLabel }}</p>
+                        </div>
+                        
+                        <div class="w-48 h-1 bg-[#2A2A35]/30 rounded-full overflow-hidden mt-1">
+                            <div class="h-full bg-gradient-to-r from-[#C9A84C] to-[#E3C77D] transition-all duration-300"
+                                :style="{ width: `${Math.round(samProgressPct * 100)}%` }">
+                            </div>
+                        </div>
+                        
+                        <button @click="denyOrCancel"
+                            class="mt-4 px-4 py-1.5 rounded border border-[#2A2A35] text-[10px] uppercase tracking-wider text-zinc-400 hover:text-red-400 hover:border-red-500/30 transition-all duration-200">
+                            Cancel Process
+                        </button>
                     </div>
                 </div>
             </main>
 
+            <!-- Luxury Workspace Sidebar -->
             <aside
-                class="w-[320px] shrink-0 border-l border-zinc-800 bg-zinc-900 flex flex-col overflow-y-auto z-10 shadow-xl">
-                <div class="p-4 border-b border-zinc-800 space-y-4">
-                    <div class="flex items-center justify-between gap-3">
-                        <div class="flex items-center gap-2">
-                            <div class="h-6 w-6 rounded bg-gradient-to-br from-indigo-500 to-purple-600"></div>
-                            <span class="font-bold tracking-tight text-zinc-100">Inpaint Studio</span>
-                        </div>
-                        <div class="text-[11px] text-zinc-400" v-if="hasImage">
-                            {{ canvasWidth }} × {{ canvasHeight }}px
-                        </div>
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-2">
-                        <button
-                            class="rounded px-3 py-1.5 text-xs font-medium transition-colors hover:bg-zinc-800 disabled:opacity-50 text-zinc-300 hover:text-white"
-                            :disabled="!hasImage || isGenerating" @click="fitView">
-                            Fit Screen
-                        </button>
-
-                        <div class="space-y-2">
-                            <button
-                                class="w-full rounded bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-indigo-500 disabled:bg-zinc-800 disabled:text-zinc-500"
-                                :disabled="!hasImage || isGenerating" @click="generatePreview">
-                                {{ isGenerating ? 'Generating…' : 'Generate' }}
-                            </button>
-
-                            <div class="space-y-1">
-                                <div class="flex justify-between text-[11px] text-zinc-400">
-                                    <span>Image Count</span>
-                                    <span>{{ imageCount }}</span>
+                class="w-[340px] shrink-0 border-l border-[#2A2A35]/30 bg-[#0D0D12] flex flex-col z-10 shadow-[0_0_40px_rgba(0,0,0,0.8)] select-none">
+                
+                <!-- Sidebar Header -->
+                <div class="p-5 border-b border-[#2A2A35]/20 space-y-3 bg-[#09090D]">
+                    <div class="flex flex-col gap-1">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-2.5">
+                                <div class="h-5 w-5 rounded-full border border-[#C9A84C] flex items-center justify-center bg-[#C9A84C]/10 shadow-[0_0_8px_rgba(201,168,76,0.3)]">
+                                    <div class="h-1.5 w-1.5 rounded-full bg-[#C9A84C]"></div>
                                 </div>
-                                <input v-model.number="imageCount" type="range" min="1" max="8" step="1"
-                                    class="h-1 w-full appearance-none rounded bg-zinc-700 accent-indigo-500"
-                                    :disabled="isGenerating" />
+                                <span class="font-bold uppercase tracking-[0.12em] text-[#FAF8F5] text-xs font-sans">Inpaint Studio</span>
                             </div>
-
-
+                            <span class="text-[9px] uppercase tracking-[0.18em] text-[#C9A84C] font-mono">Atelier v1.1</span>
+                        </div>
+                        <div class="flex items-center justify-between text-[11px] text-[#2A2A35] border-t border-[#2A2A35]/20 pt-2 mt-1">
+                            <span class="italic text-zinc-500 font-serif">Fine Canvas Refining</span>
+                            <span class="font-mono text-zinc-400" v-if="hasImage">{{ canvasWidth }} × {{ canvasHeight }}px</span>
                         </div>
                     </div>
 
-                    <div class="flex items-center justify-between rounded bg-zinc-950 px-2 py-1 border border-zinc-800"
-                        v-if="hasImage">
-                        <button @click="setZoom(zoom - 0.1)"
-                            class="hover:text-white text-zinc-400 text-lg leading-none px-1">-</button>
-                        <span class="w-12 text-center tabular-nums text-xs">{{ Math.round(zoom * 100) }}%</span>
-                        <button @click="setZoom(zoom + 0.1)"
-                            class="hover:text-white text-zinc-400 text-lg leading-none px-1">+</button>
-                    </div>
-                    <div v-if="isGenerating" class="space-y-1">
-                        <div class="flex justify-between text-[11px] text-zinc-500">
-                            <span>{{ progressLabel }}</span>
-                            <span>{{ Math.round(progressPct * 100) }}%</span>
-                        </div>
-                        <div class="h-1 w-full rounded bg-zinc-800 overflow-hidden">
-                            <div class="h-full bg-indigo-600" :style="{ width: `${Math.round(progressPct * 100)}%` }">
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="p-4 border-b border-zinc-800">
-                    <h3 class="mb-3 text-xs font-bold uppercase tracking-wider text-zinc-500">Source</h3>
-                    <label
-                        class="flex w-full cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-zinc-700 bg-zinc-800/50 hover:bg-zinc-800 hover:border-zinc-500 transition h-20 group">
-                        <div class="flex items-center gap-2">
-                            <svg class="h-5 w-5 text-zinc-400 group-hover:text-zinc-200" fill="none"
-                                stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
-                            </svg>
-                            <span class="text-xs text-zinc-400 group-hover:text-zinc-200">Open Image</span>
-                        </div>
-                        <input type="file" class="hidden" accept="image/*" @change="onPickFile" />
-                    </label>
-                    <div v-if="imageError" class="mt-2 text-xs text-red-400">{{ imageError }}</div>
-                </div>
-
-                <div class="p-4 border-b border-zinc-800 space-y-5">
-                    <div>
-                        <h3 class="mb-2 text-xs font-bold uppercase tracking-wider text-zinc-500">Tools</h3>
-                        <div class="grid grid-cols-2 gap-1 rounded bg-zinc-950 p-1">
-                            <button @click="mode = 'paint'"
-                                class="flex items-center justify-center gap-2 rounded px-2 py-1.5 text-xs font-medium transition-all"
-                                :class="mode === 'paint' ? 'bg-zinc-700 text-white shadow-sm' : 'text-zinc-400 hover:text-zinc-200'">Paint</button>
-                            <button @click="mode = 'erase'"
-                                class="flex items-center justify-center gap-2 rounded px-2 py-1.5 text-xs font-medium transition-all"
-                                :class="mode === 'erase' ? 'bg-zinc-700 text-white shadow-sm' : 'text-zinc-400 hover:text-zinc-200'">Erase</button>
-                        </div>
-                    </div>
-
-                    <div class="space-y-2">
-                        <div class="flex justify-between text-xs text-zinc-400">
-                            <span>Brush Size</span>
-                            <span>{{ brushSize }}px</span>
-                        </div>
-                        <input v-model.number="brushSize" type="range" min="1" max="300"
-                            class="h-1 w-full appearance-none rounded bg-zinc-700 accent-zinc-200" />
-                    </div>
-
-                    <div>
-                        <h3 class="mb-2 text-xs font-bold uppercase tracking-wider text-zinc-500">Transform</h3>
-                        <div class="grid grid-cols-2 gap-2 text-xs">
-                            <div>
-                                <label class="text-zinc-500 block mb-1">Canvas W</label>
-                                <input v-model.number="canvasWidth" type="number"
-                                    class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-zinc-300">
-                            </div>
-                            <div>
-                                <label class="text-zinc-500 block mb-1">Canvas H</label>
-                                <input v-model.number="canvasHeight" type="number"
-                                    class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-zinc-300">
-                            </div>
-                            <div>
-                                <label class="text-zinc-500 block mb-1">Offset X</label>
-                                <input v-model.number="imageOffsetX" type="number"
-                                    class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-zinc-300">
-                            </div>
-                            <div>
-                                <label class="text-zinc-500 block mb-1">Offset Y</label>
-                                <input v-model.number="imageOffsetY" type="number"
-                                    class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-zinc-300">
-                            </div>
-                        </div>
-                    </div>
-
-                    <button @click="clearMask"
-                        class="w-full rounded border border-zinc-700 bg-transparent py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
-                        :disabled="!hasImage">Clear Mask</button>
-                </div>
-
-                <div class="p-4 border-b border-zinc-800 space-y-4 flex-1">
-                    <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-500">Generation</h3>
-                    <div class="space-y-2">
-                        <label class="text-xs text-zinc-300">Prompt</label>
-                        <textarea id="positive_prompt" v-model="prompt"
-                            class="positive_prompt w-full resize-none rounded bg-zinc-950 p-3 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 border border-zinc-800"
-                            rows="3" placeholder="Describe the change..."></textarea>
-                    </div>
-                    <div class="space-y-2">
-                        <div class="flex justify-between text-xs text-zinc-400">
-                            <span>Denoising Strength</span>
-                            <span>{{ denoise.toFixed(2) }}</span>
-                        </div>
-                        <input v-model.number="denoise" type="range" min="0" max="1" step="0.01"
-                            class="h-1 w-full appearance-none rounded bg-zinc-700 accent-indigo-500" />
-                    </div>
-                    <div class="space-y-2">
-                        <span class="text-xs text-zinc-300">Loras ({{ selectedLoras.length }}/{{ maxLoras }})</span>
+                    <div class="grid grid-cols-2 gap-2 pt-1">
                         <button
-                            class="w-full rounded border border-zinc-700 bg-transparent py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
-                            :disabled="isGenerating || selectedLoras.length >= maxLoras || !loras?.length"
-                            @click="selectedLoras.push({ name: loras[0].name, path: loras[0].path, weight: 1 })">
-                            Add Lora
+                            class="rounded border border-[#2A2A35] py-2 text-xs font-semibold uppercase tracking-wider text-zinc-300 hover:text-white hover:border-[#C9A84C]/40 bg-transparent transition-all duration-300 disabled:opacity-30"
+                            :disabled="!hasImage || isGenerating" @click="fitView">
+                            Fit Canvas
                         </button>
+                        
+                        <button
+                            class="w-full rounded bg-gradient-to-r from-[#C9A84C] to-[#E3C77D] py-2 text-xs font-bold uppercase tracking-wider text-[#0D0D12] hover:from-[#E3C77D] hover:to-[#C9A84C] transition-all duration-300 shadow-[0_4px_12px_rgba(201,168,76,0.15)] hover:shadow-[0_4px_16px_rgba(201,168,76,0.3)] disabled:opacity-30"
+                            :disabled="!hasImage || isGenerating || isSegmenting" @click="generatePreview">
+                            {{ isGenerating ? 'Refining…' : 'Generate' }}
+                        </button>
+                    </div>
 
-                        <div
-                            v-for="(lora, idx) in selectedLoras"
-                            :key="`${lora?.path || 'lora'}-${idx}`"
-                            class="rounded bg-zinc-800 px-3 py-2 text-xs border border-zinc-700">
-                            <div class="flex items-center gap-2">
-                                <select
-                                    class="flex-1 bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-zinc-300"
-                                    :disabled="isGenerating"
-                                    :value="lora?.path"
-                                    @change="(e) => {
-                                        const path = e.target.value
-                                        const opt = loras.find(o => o.path === path)
-                                        if (opt) {
-                                            lora.name = opt.name
-                                            lora.path = opt.path
-                                        } else {
-                                            lora.path = path
-                                        }
-                                    }">
-                                    <option v-for="option in loras" :key="option.path" :value="option.path">
-                                        {{ option.name }}
-                                    </option>
-                                </select>
+                    <!-- Progress bar for regular generation -->
+                    <div v-if="isGenerating" class="space-y-1.5 pt-1.5">
+                        <div class="flex justify-between text-[10px] font-mono uppercase tracking-wider text-zinc-400">
+                            <span>{{ progressLabel }}</span>
+                            <span class="text-[#C9A84C] font-semibold">{{ Math.round(progressPct * 100) }}%</span>
+                        </div>
+                        <div class="h-1 w-full rounded bg-[#2A2A35]/30 overflow-hidden">
+                            <div class="h-full bg-gradient-to-r from-[#C9A84C] to-[#E3C77D]" :style="{ width: `${Math.round(progressPct * 100)}%` }">
+                            </div>
+                        </div>
+                    </div>
+                </div>
 
+                <div class="flex-1 overflow-y-auto p-5 space-y-6">
+                    <!-- Source Selection -->
+                    <div class="space-y-2">
+                        <h3 class="text-[10px] font-bold uppercase tracking-[0.15em] text-[#C9A84C]">Canvas Source</h3>
+                        <label
+                            class="flex w-full cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-[#2A2A35] bg-[#0A0A0F]/50 hover:bg-[#C9A84C]/5 hover:border-[#C9A84C]/40 transition-all duration-300 h-20 group relative overflow-hidden">
+                            <div class="absolute inset-0 bg-gradient-to-br from-transparent to-[#C9A84C]/2 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                            <div class="flex items-center gap-2.5 z-10">
+                                <svg class="h-4.5 w-4.5 text-zinc-400 group-hover:text-[#C9A84C] transition-colors duration-300" fill="none"
+                                    stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                                        d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+                                </svg>
+                                <span class="text-xs uppercase tracking-wider text-zinc-400 group-hover:text-[#FAF8F5] transition-colors duration-300">Upload Canvas Image</span>
+                            </div>
+                            <input type="file" class="hidden" accept="image/*" @change="onPickFile" />
+                        </label>
+                        <div v-if="imageError" class="text-xs font-medium text-red-400 px-1">{{ imageError }}</div>
+                    </div>
+
+                    <!-- Tools Section: Paint vs SAM Segment -->
+                    <div class="space-y-4">
+                        <div class="flex justify-between items-center">
+                            <h3 class="text-[10px] font-bold uppercase tracking-[0.15em] text-[#C9A84C]">Mask Strategy</h3>
+                        </div>
+
+                        <!-- Elegant Tab Switcher -->
+                        <div class="grid grid-cols-2 gap-1 bg-[#050508] p-1 rounded-md border border-[#2A2A35]/30">
+                            <button @click="activeTab = 'manual'"
+                                class="flex items-center justify-center gap-2 rounded py-2 text-[10px] font-bold uppercase tracking-wider transition-all duration-300"
+                                :class="activeTab === 'manual' ? 'bg-[#C9A84C]/10 text-[#C9A84C] border border-[#C9A84C]/20 shadow-sm' : 'text-zinc-500 hover:text-zinc-300'">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+                                Brush Tool
+                            </button>
+                            <button @click="activeTab = 'sam'"
+                                class="flex items-center justify-center gap-2 rounded py-2 text-[10px] font-bold uppercase tracking-wider transition-all duration-300"
+                                :class="activeTab === 'sam' ? 'bg-[#C9A84C]/10 text-[#C9A84C] border border-[#C9A84C]/20 shadow-sm' : 'text-zinc-500 hover:text-zinc-300'">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                                AI SAM Tool
+                            </button>
+                        </div>
+
+                        <!-- Tab 1: Manual Brush Tools -->
+                        <div v-show="activeTab === 'manual'" class="space-y-4 pt-1">
+                            <div class="space-y-2">
+                                <span class="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Brush Mode</span>
+                                <div class="grid grid-cols-2 gap-1 rounded bg-[#050508] p-1 border border-[#2A2A35]/30">
+                                    <button @click="mode = 'paint'"
+                                        class="flex items-center justify-center rounded py-1.5 text-[10px] font-bold uppercase tracking-wider transition-all duration-300"
+                                        :class="mode === 'paint' ? 'bg-[#C9A84C]/15 text-[#C9A84C] border border-[#C9A84C]/20 shadow-sm' : 'text-zinc-500 hover:text-zinc-300'">Paint</button>
+                                    <button @click="mode = 'erase'"
+                                        class="flex items-center justify-center rounded py-1.5 text-[10px] font-bold uppercase tracking-wider transition-all duration-300"
+                                        :class="mode === 'erase' ? 'bg-[#C9A84C]/15 text-[#C9A84C] border border-[#C9A84C]/20 shadow-sm' : 'text-zinc-500 hover:text-zinc-300'">Erase</button>
+                                </div>
+                            </div>
+
+                            <div class="space-y-1.5 p-3 rounded-lg bg-[#07070A]/50 border border-[#2A2A35]/15">
+                                <div class="flex justify-between text-[11px]">
+                                    <span class="text-zinc-400 font-medium uppercase tracking-wider">Brush Size</span>
+                                    <span class="text-[#C9A84C] font-mono font-semibold">{{ brushSize }}px</span>
+                                </div>
+                                <input v-model.number="brushSize" type="range" min="1" max="300"
+                                    class="custom-slider w-full" />
+                            </div>
+
+                            <!-- Transform dimensions and offsets -->
+                            <div class="p-3 rounded-lg bg-[#07070A]/50 border border-[#2A2A35]/15 space-y-3">
+                                <span class="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Transform Canvas</span>
+                                <div class="grid grid-cols-2 gap-2 text-xs">
+                                    <div>
+                                        <label class="text-zinc-500 block mb-1 text-[9px] uppercase tracking-wider">Canvas W</label>
+                                        <input v-model.number="canvasWidth" type="number"
+                                            class="w-full bg-[#0D0D12] border border-[#2A2A35] rounded px-2.5 py-1 text-zinc-300 text-xs focus:outline-none focus:border-[#C9A84C]/40">
+                                    </div>
+                                    <div>
+                                        <label class="text-zinc-500 block mb-1 text-[9px] uppercase tracking-wider">Canvas H</label>
+                                        <input v-model.number="canvasHeight" type="number"
+                                            class="w-full bg-[#0D0D12] border border-[#2A2A35] rounded px-2.5 py-1 text-zinc-300 text-xs focus:outline-none focus:border-[#C9A84C]/40">
+                                    </div>
+                                    <div>
+                                        <label class="text-zinc-500 block mb-1 text-[9px] uppercase tracking-wider">Offset X</label>
+                                        <input v-model.number="imageOffsetX" type="number"
+                                            class="w-full bg-[#0D0D12] border border-[#2A2A35] rounded px-2.5 py-1 text-zinc-300 text-xs focus:outline-none focus:border-[#C9A84C]/40">
+                                    </div>
+                                    <div>
+                                        <label class="text-zinc-500 block mb-1 text-[9px] uppercase tracking-wider">Offset Y</label>
+                                        <input v-model.number="imageOffsetY" type="number"
+                                            class="w-full bg-[#0D0D12] border border-[#2A2A35] rounded px-2.5 py-1 text-zinc-300 text-xs focus:outline-none focus:border-[#C9A84C]/40">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Tab 2: AI SAM Segmenter Tools -->
+                        <div v-show="activeTab === 'sam'" class="space-y-4 pt-1">
+                            <div class="space-y-2">
+                                <span class="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Segment Prompt</span>
+                                <textarea v-model="samPrompt"
+                                    class="w-full resize-none rounded-lg bg-[#050508] p-3 text-xs text-[#FAF8F5] placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-[#C9A84C]/50 border border-[#2A2A35] transition-all duration-300"
+                                    rows="3" placeholder="Identify segment e.g. clothes, hair, skin..."></textarea>
+                                
+                                <!-- Premium Preset tags -->
+                                <div class="space-y-1">
+                                    <span class="text-[9px] font-semibold uppercase tracking-wider text-zinc-500">Quick Presets</span>
+                                    <div class="flex flex-wrap gap-1">
+                                        <button v-for="preset in samPresets" :key="preset.name"
+                                            @click="selectPreset(preset.prompt)"
+                                            :class="samPrompt.includes(preset.prompt) ? 'bg-[#C9A84C]/15 text-[#C9A84C] border-[#C9A84C]/40 shadow-[0_0_8px_rgba(201,168,76,0.15)]' : 'bg-transparent text-zinc-400 border-[#2A2A35] hover:border-[#C9A84C]/35 hover:text-zinc-200'"
+                                            class="text-[9px] px-2 py-0.5 rounded border transition-all duration-250 font-mono tracking-tight uppercase">
+                                            {{ preset.name }}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="p-3 rounded-lg bg-[#07070A]/50 border border-[#2A2A35]/15 space-y-4">
+                                <span class="text-[10px] font-bold uppercase tracking-wider text-zinc-500">SAM Parameters</span>
+                                
+                                <div class="space-y-1.5">
+                                    <div class="flex justify-between text-[10px]">
+                                        <span class="text-zinc-400">Threshold</span>
+                                        <span class="text-[#C9A84C] font-mono font-semibold">{{ samThreshold.toFixed(2) }}</span>
+                                    </div>
+                                    <input v-model.number="samThreshold" type="range" min="0.05" max="1" step="0.05"
+                                        class="custom-slider w-full" />
+                                </div>
+
+                                <div class="space-y-1.5">
+                                    <div class="flex justify-between text-[10px]">
+                                        <span class="text-zinc-400">Refine Iterations</span>
+                                        <span class="text-[#C9A84C] font-mono font-semibold">{{ samRefineIterations }}</span>
+                                    </div>
+                                    <input v-model.number="samRefineIterations" type="range" min="0" max="10" step="1"
+                                        class="custom-slider w-full" />
+                                </div>
+
+                                <div class="space-y-2">
+                                    <span class="text-[9px] uppercase tracking-wider text-zinc-500">Mask Insertion Mode</span>
+                                    <div class="grid grid-cols-2 gap-1 rounded bg-[#050508] p-1 border border-[#2A2A35]/30">
+                                        <button @click="samMaskMode = 'replace'"
+                                            class="flex items-center justify-center rounded py-1.5 text-[9px] font-bold uppercase tracking-wider transition-all duration-300"
+                                            :class="samMaskMode === 'replace' ? 'bg-[#C9A84C]/15 text-[#C9A84C] border border-[#C9A84C]/20 shadow-sm' : 'text-zinc-500 hover:text-zinc-300'">Replace</button>
+                                        <button @click="samMaskMode = 'add'"
+                                            class="flex items-center justify-center rounded py-1.5 text-[9px] font-bold uppercase tracking-wider transition-all duration-300"
+                                            :class="samMaskMode === 'add' ? 'bg-[#C9A84C]/15 text-[#C9A84C] border border-[#C9A84C]/20 shadow-sm' : 'text-zinc-500 hover:text-zinc-300'">Append</button>
+                                    </div>
+                                </div>
+
+                                <div class="flex items-center justify-between border-t border-[#2A2A35]/15 pt-2.5 mt-2">
+                                    <span class="text-[9px] uppercase tracking-wider text-zinc-400 font-semibold">Invert SAM Mask</span>
+                                    <label class="relative inline-flex items-center cursor-pointer">
+                                        <input type="checkbox" v-model="samInvertMask" class="sr-only peer">
+                                        <div class="w-8 h-4 bg-[#181822] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-[#FAF8F5] after:border-[#2A2A35] after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-[#C9A84C] border border-[#2A2A35]/50"></div>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <button @click="runSamSegmentation"
+                                class="w-full rounded border border-[#C9A84C]/35 bg-[#C9A84C]/5 py-2.5 text-xs font-bold uppercase tracking-[0.08em] text-[#C9A84C] hover:bg-[#C9A84C]/10 transition-all duration-300 disabled:opacity-30 flex items-center justify-center gap-2 shadow-[0_4px_16px_rgba(201,168,76,0.05)] hover:shadow-[0_4px_20px_rgba(201,168,76,0.15)]"
+                                :disabled="!hasImage || isSegmenting || isGenerating">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                                Extract Segment
+                            </button>
+                        </div>
+
+                        <button @click="clearMask"
+                            class="w-full rounded border border-[#2A2A35] bg-transparent py-2 text-xs font-semibold uppercase tracking-wider text-zinc-400 hover:bg-[#2A2A35]/15 hover:text-zinc-200 transition-colors disabled:opacity-30"
+                            :disabled="!hasImage">Clear Mask</button>
+                    </div>
+
+                    <!-- Generation Panel -->
+                    <div class="space-y-4 border-t border-[#2A2A35]/20 pt-6">
+                        <h3 class="text-[10px] font-bold uppercase tracking-[0.15em] text-[#C9A84C]">Generation Parameters</h3>
+                        
+                        <div class="space-y-2">
+                            <label class="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Inpainting Prompt</label>
+                            <textarea id="positive_prompt" v-model="prompt"
+                                class="positive_prompt w-full resize-none rounded-lg bg-[#050508] p-3 text-xs text-[#FAF8F5] placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-[#C9A84C]/50 border border-[#2A2A35] transition-all duration-300"
+                                rows="3" placeholder="Describe the replacement detail..."></textarea>
+                        </div>
+
+                        <div class="space-y-1.5 p-3 rounded-lg bg-[#07070A]/50 border border-[#2A2A35]/15">
+                            <div class="flex justify-between text-[11px]">
+                                <span class="text-zinc-400 font-medium uppercase tracking-wider">Denoising Strength</span>
+                                <span class="text-[#C9A84C] font-mono font-semibold">{{ denoise.toFixed(2) }}</span>
+                            </div>
+                            <input v-model.number="denoise" type="range" min="0" max="1" step="0.01"
+                                class="custom-slider w-full" />
+                        </div>
+
+                        <div class="space-y-1.5 p-3 rounded-lg bg-[#07070A]/50 border border-[#2A2A35]/15">
+                            <div class="flex justify-between text-[11px]">
+                                <span class="text-zinc-400 font-medium uppercase tracking-wider">Batch Size</span>
+                                <span class="text-[#C9A84C] font-mono font-semibold">{{ imageCount }}</span>
+                            </div>
+                            <input v-model.number="imageCount" type="range" min="1" max="8" step="1"
+                                class="custom-slider w-full" :disabled="isGenerating" />
+                        </div>
+
+                        <!-- Loras section -->
+                        <div class="space-y-2.5">
+                            <div class="flex justify-between items-center">
+                                <span class="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Loras ({{ selectedLoras.length }}/{{ maxLoras }})</span>
                                 <button
-                                    type="button"
-                                    class="text-zinc-400 hover:text-red-500 text-lg leading-none px-1"
-                                    :disabled="isGenerating"
-                                    @click="selectedLoras.splice(idx, 1)"
-                                    aria-label="Remove lora"
-                                    title="Remove">
-                                    &times;
+                                    class="rounded border border-[#C9A84C]/25 bg-transparent px-2.5 py-1 text-[9px] uppercase tracking-wider text-[#C9A84C] hover:bg-[#C9A84C]/5 transition-all duration-300 disabled:opacity-30 font-semibold"
+                                    :disabled="isGenerating || selectedLoras.length >= maxLoras || !loras?.length"
+                                    @click="selectedLoras.push({ name: loras[0].name, path: loras[0].path, weight: 1 })">
+                                    + Add Lora
                                 </button>
                             </div>
 
-                            <div class="mt-2 space-y-1">
-                                <div class="flex justify-between text-[11px] text-zinc-400">
-                                    <span>Strength</span>
-                                    <span class="tabular-nums">
-                                        {{ (typeof lora.weight === 'number' ? lora.weight : 1).toFixed(2) }}
-                                    </span>
+                            <div
+                                v-for="(lora, idx) in selectedLoras"
+                                :key="`${lora?.path || 'lora'}-${idx}`"
+                                class="rounded bg-[#050508] p-3 text-xs border border-[#2A2A35]/30 space-y-2.5 relative group">
+                                
+                                <div class="flex items-center gap-2">
+                                    <select
+                                        class="flex-1 bg-[#0D0D12] border border-[#2A2A35] rounded px-2 py-1 text-zinc-300 focus:outline-none focus:border-[#C9A84C]/50 text-xs transition-colors"
+                                        :disabled="isGenerating"
+                                        :value="lora?.path"
+                                        @change="(e) => {
+                                            const path = e.target.value
+                                            const opt = loras.find(o => o.path === path)
+                                            if (opt) {
+                                                lora.name = opt.name
+                                                lora.path = opt.path
+                                            } else {
+                                                lora.path = path
+                                            }
+                                        }">
+                                        <option v-for="option in loras" :key="option.path" :value="option.path">
+                                            {{ option.name }}
+                                        </option>
+                                    </select>
+
+                                    <button
+                                        type="button"
+                                        class="text-zinc-500 hover:text-red-400 transition-colors text-lg leading-none px-1"
+                                        :disabled="isGenerating"
+                                        @click="selectedLoras.splice(idx, 1)"
+                                        aria-label="Remove lora"
+                                        title="Remove">
+                                        &times;
+                                    </button>
                                 </div>
 
-                                <input
-                                    type="range"
-                                    min="0"
-                                    max="5"
-                                    step="0.01"
-                                    class="h-1 w-full appearance-none rounded bg-zinc-700 accent-indigo-500"
-                                    :disabled="isGenerating"
-                                    :value="typeof lora.weight === 'number' ? lora.weight : 1"
-                                    @input="(e) => { lora.weight = e.target.valueAsNumber }" />
+                                <div class="space-y-1">
+                                    <div class="flex justify-between text-[10px]">
+                                        <span class="text-zinc-500">STRENGTH</span>
+                                        <span class="font-mono text-[#C9A84C]">{{ (typeof lora.weight === 'number' ? lora.weight : 1).toFixed(2) }}</span>
+                                    </div>
+
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="5"
+                                        step="0.01"
+                                        class="custom-slider w-full"
+                                        :disabled="isGenerating"
+                                        :value="typeof lora.weight === 'number' ? lora.weight : 1"
+                                        @input="(e) => { lora.weight = e.target.valueAsNumber }" />
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <div v-if="previewUrl" class="p-4 border-t border-zinc-800 bg-zinc-950">
-                    <div class="mb-2 text-xs font-semibold text-zinc-400">Mask</div>
+                <!-- Preview Mask section -->
+                <div v-if="previewUrl" class="p-4 border-t border-[#2A2A35]/35 bg-[#07070A]">
+                    <div class="mb-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500">Active Mask Snapshot</div>
                     <img :src="previewUrl"
-                        class="w-full rounded border border-zinc-800 bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxwYXRoIGQ9Ik0wIDBoNHY0SDB6TTQgNGg0djhINFoiIGZpbGw9IiMzMzMiIGZpbGwtb3BhY2l0eT0iMC40Ii8+PC9zdmc+')] object-contain" />
+                        class="w-full rounded border border-[#2A2A35]/30 bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxwYXRoIGQ9Ik0wIDBoNHY0SDB6TTQgNGg0djhINFoiIGZpbGw9IiMzMzMiIGZpbGwtb3BhY2l0eT0iMC40Ii8+PC9zdmc+')] object-contain h-24" />
                 </div>
             </aside>
         </div>
+
+        <!-- Floating Glassmorphic Generation Navigation Pill -->
         <div v-if="isGenerating || generatedImages.length > 0"
-            class="absolute bottom-16 left-0  z-30 border-t border-zinc-800 bg-zinc-900/95 backdrop-blur ">
-            <div class="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-2">
-                <div class="flex items-center gap-2 text-xs text-zinc-400">
-                    <span v-if="isGenerating">Generating…</span>
-                    <span v-else>Done</span>
-                    <span v-if="generatedImages.length">({{ currentGeneratedIndex + 1 }}/{{ generatedImages.length
-                        }})</span>
-                </div>
+            class="fixed bottom-8 left-1/2 -translate-x-1/2 z-30 border border-[#C9A84C]/25 bg-[#0D0D12]/90 backdrop-blur-md rounded-xl shadow-[0_12px_45px_rgba(0,0,0,0.85)] max-w-2xl px-6 py-4 flex items-center justify-between gap-6 transition-all duration-300 border-l-[4px] border-l-[#C9A84C]">
+            
+            <div class="flex items-center gap-3 text-xs">
+                <span class="relative flex h-2 w-2">
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#C9A84C] opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-2 w-2 bg-[#C9A84C]"></span>
+                </span>
+                <span class="text-zinc-300 font-medium font-sans uppercase tracking-wider" v-if="isGenerating">Refining Canvas…</span>
+                <span class="text-zinc-300 font-medium font-sans uppercase tracking-wider" v-else>Batch Complete</span>
+                <span class="text-[#C9A84C] font-mono font-bold" v-if="generatedImages.length">({{ currentGeneratedIndex + 1 }}/{{ generatedImages.length }})</span>
+            </div>
 
-                <div class="flex items-center gap-2">
-                    <button
-                        class="rounded border border-zinc-700 bg-transparent px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
-                        :disabled="generatedImages.length <= 1" @click="prevGenerated">
-                        Prev
-                    </button>
-                    <button
-                        class="rounded border border-zinc-700 bg-transparent px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
-                        :disabled="generatedImages.length <= 1" @click="nextGenerated">
-                        Next
-                    </button>
-                    <button
-                        class="rounded border border-zinc-700 bg-transparent px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
-                        :disabled="!generatedImages.length" @click="toggleGeneratedPreview">
-                        {{ showGeneratedPreview ? 'Hide Preview' : 'Show Preview' }}
-                    </button>
-                </div>
+            <div class="flex items-center gap-2 border-l border-[#2A2A35]/40 pl-6 border-r pr-6 mr-1">
+                <button
+                    class="rounded border border-[#2A2A35] bg-transparent px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-300 hover:text-[#FAF8F5] hover:border-[#C9A84C]/40 transition-all duration-200 disabled:opacity-20"
+                    :disabled="generatedImages.length <= 1" @click="prevGenerated">
+                    Prev
+                </button>
+                <button
+                    class="rounded border border-[#2A2A35] bg-transparent px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-300 hover:text-[#FAF8F5] hover:border-[#C9A84C]/40 transition-all duration-200 disabled:opacity-20"
+                    :disabled="generatedImages.length <= 1" @click="nextGenerated">
+                    Next
+                </button>
+                <button
+                    class="rounded border border-[#2A2A35] bg-transparent px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-300 hover:text-[#FAF8F5] hover:border-[#C9A84C]/40 transition-all duration-200 disabled:opacity-20"
+                    :disabled="!generatedImages.length" @click="toggleGeneratedPreview">
+                    {{ showGeneratedPreview ? 'Hide Output' : 'Show Output' }}
+                </button>
+            </div>
 
-                <div class="flex items-center gap-2">
-                    <button
-                        class="rounded border border-zinc-700 bg-transparent px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
-                        :disabled="isGenerating" @click="retryGeneration">
-                        Retry
-                    </button>
-                    <button
-                        class="rounded border border-zinc-700 bg-transparent px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-800"
-                        @click="denyOrCancel">
-                        {{ isGenerating ? 'Cancel' : 'Deny' }}
-                    </button>
-                    <button
-                        class="rounded bg-indigo-600 px-2 py-1 text-xs font-semibold text-white hover:bg-indigo-500 disabled:bg-zinc-800 disabled:text-zinc-500"
-                        :disabled="!generatedImages.length" @click="acceptGenerated">
-                        Accept
-                    </button>
-                </div>
+            <div class="flex items-center gap-2">
+                <button
+                    class="rounded border border-[#2A2A35] bg-transparent px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-400 hover:text-red-400 hover:border-red-500/20 transition-all duration-200"
+                    @click="denyOrCancel">
+                    {{ isGenerating ? 'Cancel' : 'Deny' }}
+                </button>
+                <button
+                    class="rounded border border-[#C9A84C]/35 bg-[#C9A84C]/5 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-[#C9A84C] hover:bg-[#C9A84C]/10 transition-all duration-200 disabled:opacity-30"
+                    :disabled="isGenerating" @click="retryGeneration">
+                    Retry
+                </button>
+                <button
+                    class="rounded bg-gradient-to-r from-[#C9A84C] to-[#E3C77D] px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider text-[#0D0D12] hover:from-[#E3C77D] hover:to-[#C9A84C] transition-all duration-200 disabled:opacity-30"
+                    :disabled="!generatedImages.length" @click="acceptGenerated">
+                    Accept
+                </button>
             </div>
         </div>
     </div>
@@ -379,7 +552,56 @@ const imageOffsetX = ref(0)
 const imageOffsetY = ref(0)
 const imageScale = ref(1)
 
+// --- Strategy Selection ---
+const activeTab = ref('manual') // 'manual' or 'sam'
 
+// --- AI SAM State ---
+const samPrompt = ref('clothes,')
+const samThreshold = ref(0.5)
+const samRefineIterations = ref(2)
+const samMaskMode = ref('replace') // 'replace' or 'add'
+const samInvertMask = ref(false)
+const samModel = ref('sam3.1_multiplex_fp16.safetensors')
+const isSegmenting = ref(false)
+const samProgressPct = ref(0)
+const samProgressLabel = ref('')
+
+// --- SAM Presets ---
+const samPresets = [
+    { name: 'Clothes', prompt: 'clothes,' },
+    { name: 'Hair', prompt: 'hair,' },
+    { name: 'Face', prompt: 'face,' },
+    { name: 'Skin', prompt: 'skin,' },
+    { name: 'Underwear', prompt: 'underwear, bikini, lingerie,' },
+    { name: 'Background', prompt: 'background,' },
+    { name: 'Shoes', prompt: 'shoes, boots, footwear,' },
+    { name: 'Accessories', prompt: 'glasses, necklace, jewelry, watch, hat,' }
+]
+
+function selectPreset(promptText) {
+    if (!samPrompt.value) {
+        samPrompt.value = promptText
+    } else {
+        if (samPrompt.value.includes(promptText)) {
+            // Remove preset and clean up commas
+            samPrompt.value = samPrompt.value
+                .replace(promptText, '')
+                .replace(/,\s*,/g, ',')
+                .replace(/^,|,$/g, '')
+                .trim()
+            if (!samPrompt.value.endsWith(',') && samPrompt.value.length > 0) {
+                samPrompt.value += ','
+            }
+        } else {
+            // Append preset safely
+            samPrompt.value = (samPrompt.value.trim().endsWith(',') 
+                ? samPrompt.value.trim() 
+                : samPrompt.value.trim() + ',') + ' ' + promptText
+        }
+    }
+}
+
+// --- Loras ---
 const loras = ref([
     {
         name: "Breast Size Slider",
@@ -664,7 +886,6 @@ function onResizeHandleMove(evt) {
     const rawDy = evt.clientY - s.startClientY
 
     // 2. Adjust for ZOOM level to get canvas pixels
-    // If zoom is 0.5, moving mouse 100px means we moved 200 canvas pixels.
     const dx = Math.round(rawDx / zoom.value)
     const dy = Math.round(rawDy / zoom.value)
 
@@ -692,7 +913,7 @@ function onResizeHandleMove(evt) {
         newH = Math.max(1, s.startH + dy)
     }
 
-    // 4. Update state (this triggers the canvas redraw via watchers/apply)
+    // 4. Update state
     imageOffsetX.value = newOffsetX
     imageOffsetY.value = newOffsetY
     applyCanvasResizeWithMaskPreserved({ newW, newH, shiftX, shiftY })
@@ -858,12 +1079,14 @@ async function retryGeneration() {
 }
 
 async function denyOrCancel() {
-    if (isGenerating.value) {
+    if (isGenerating.value || isSegmenting.value) {
         activeGenerationToken++
         await interruptComfyUi()
         closeComfyWs()
         isGenerating.value = false
+        isSegmenting.value = false
         progressLabel.value = 'Canceled'
+        samProgressLabel.value = 'Canceled'
         return
     }
     resetGenerationState()
@@ -1156,7 +1379,7 @@ function generatePreview() {
                 const uploadedPath = await uploadImageToComfyUi(previewUrl.value)
                 if (thisToken !== activeGenerationToken) return
 
-                const workflow = { ...inpaintWorkflow }
+                const workflow = JSON.parse(JSON.stringify(inpaintWorkflow))
                 workflow["9"].inputs.text = workflow["9"].inputs.text.replace('prompt', prompt.value)
                 workflow["40"].inputs.denoise = denoise.value
                 workflow["54"].inputs.amount = imageCount.value
@@ -1164,18 +1387,16 @@ function generatePreview() {
                 workflow["33"].inputs.image = uploadedPath
 
                 workflow["53"].inputs.lora_01 = selectedLoras.value[0]?.path || 'None'
-                workflow["53"].inputs.strength_01 = selectedLoras.value[0]?.weight ||0
+                workflow["53"].inputs.strength_01 = selectedLoras.value[0]?.weight || 0
 
                 workflow["53"].inputs.lora_02 = selectedLoras.value[1]?.path || 'None'
-                workflow["53"].inputs.strength_02 = selectedLoras.value[1]?.weight ||0
+                workflow["53"].inputs.strength_02 = selectedLoras.value[1]?.weight || 0
 
                 workflow["53"].inputs.lora_03 = selectedLoras.value[2]?.path || 'None'
-                workflow["53"].inputs.strength_03 = selectedLoras.value[2]?.weight ||0
+                workflow["53"].inputs.strength_03 = selectedLoras.value[2]?.weight || 0
                 
                 workflow["53"].inputs.lora_04 = selectedLoras.value[3]?.path || 'None'
-                workflow["53"].inputs.strength_04 = selectedLoras.value[3]?.weight ||0
-
-
+                workflow["53"].inputs.strength_04 = selectedLoras.value[3]?.weight || 0
 
                 workflow["save_image_websocket_node"] = {
                     class_type: 'SaveImageWebsocket',
@@ -1261,6 +1482,293 @@ function generatePreview() {
         })()
 }
 
+// --- AI SAM Segmenter ---
+async function runSamSegmentation() {
+    const img = imageEl.value
+    const base = baseCanvasRef.value
+    if (!img || !base) return
+
+    if (isSegmenting.value || isGenerating.value) return
+
+    // 1. Snapshot the current canvas base image representation
+    const out = document.createElement('canvas')
+    out.width = canvasWidth.value
+    out.height = canvasHeight.value
+    const outCtx = out.getContext('2d')
+    if (!outCtx) return
+
+    outCtx.drawImage(
+        img,
+        imageOffsetX.value,
+        imageOffsetY.value,
+        img.naturalWidth * imageScale.value,
+        img.naturalHeight * imageScale.value
+    )
+    const dataUrl = out.toDataURL('image/png')
+
+    const thisToken = ++activeGenerationToken
+    isSegmenting.value = true
+    imageError.value = ''
+    samProgressPct.value = 0
+    samProgressLabel.value = 'Uploading image'
+
+    try {
+        const uploadedPath = await uploadImageToComfyUi(dataUrl)
+        if (thisToken !== activeGenerationToken) return
+
+        // 2. Build the workflow using the user's ComfyUI flow mapping
+        const workflow = {
+            "143": {
+                "inputs": {
+                    "upscale_method": "nearest-exact",
+                    "megapixels": 1.1,
+                    "resolution_steps": 1,
+                    "image": [
+                        "144",
+                        0
+                    ]
+                },
+                "class_type": "ImageScaleToTotalPixels",
+                "_meta": {
+                    "title": "ImageScaleToTotalPixels"
+                }
+            },
+            "144": {
+                "inputs": {
+                    "image": uploadedPath
+                },
+                "class_type": "LoadImage",
+                "_meta": {
+                    "title": "Load Image"
+                }
+            },
+            "146": {
+                "inputs": {
+                    "images": [
+                        "147",
+                        0
+                    ]
+                },
+                "class_type": "PreviewImage",
+                "_meta": {
+                    "title": "Preview Image"
+                }
+            },
+            "147": {
+                "inputs": {
+                    "image": [
+                        "143",
+                        0
+                    ],
+                    "alpha": [
+                        "142:75",
+                        0
+                    ]
+                },
+                "class_type": "JoinImageWithAlpha",
+                "_meta": {
+                    "title": "Join Image with Alpha"
+                }
+            },
+            "142:75": {
+                "inputs": {
+                    "threshold": samThreshold.value,
+                    "refine_iterations": samRefineIterations.value,
+                    "individual_masks": false,
+                    "model": [
+                        "142:77",
+                        0
+                    ],
+                    "image": [
+                        "143",
+                        0
+                    ],
+                    "conditioning": [
+                        "142:78",
+                        0
+                    ]
+                },
+                "class_type": "SAM3_Detect",
+                "_meta": {
+                    "title": "SAM3 Detect"
+                }
+            },
+            "142:78": {
+                "inputs": {
+                    "text": samPrompt.value,
+                    "clip": [
+                        "142:77",
+                        1
+                    ]
+                },
+                "class_type": "CLIPTextEncode",
+                "_meta": {
+                    "title": "CLIP Text Encode (Prompt)"
+                }
+            },
+            "142:77": {
+                "inputs": {
+                    "ckpt_name": samModel.value
+                },
+                "class_type": "CheckpointLoaderSimple",
+                "_meta": {
+                    "title": "Load Checkpoint"
+                }
+            }
+        }
+
+        samProgressLabel.value = 'Connecting WS'
+        comfyWs = await connectComfyWs()
+        if (thisToken !== activeGenerationToken) return
+
+        samProgressLabel.value = 'Queueing SAM'
+        const queued = await queueComfyPrompt(workflow)
+        const promptId = queued?.prompt_id
+        if (!promptId) throw new Error('ComfyUI did not return a prompt_id for SAM')
+        activePromptId = promptId
+        samProgressLabel.value = 'Segmenting'
+
+        let currentNode = ''
+        let receivedMaskUrl = null
+
+        await new Promise((resolve, reject) => {
+            if (!comfyWs) return reject(new Error('WebSocket not connected'))
+
+            comfyWs.onmessage = async (evt) => {
+                if (thisToken !== activeGenerationToken) return
+
+                if (typeof evt.data === 'string') {
+                    let message
+                    try { message = JSON.parse(evt.data) } catch { return }
+
+                    if (message?.type === 'progress') {
+                        const v = Number(message?.data?.value)
+                        const m = Number(message?.data?.max)
+                        if (m > 0) samProgressPct.value = Math.max(0, Math.min(1, v / m))
+                        return
+                    }
+
+                    if (message?.type === 'executing') {
+                        const data = message?.data
+                        if (data?.prompt_id !== activePromptId) return
+                        if (data?.node == null) {
+                            // If execution is complete and we got the mask URL, finish
+                            if (receivedMaskUrl) {
+                                resolve()
+                            }
+                            return
+                        }
+                        currentNode = String(data?.node)
+                        return
+                    }
+
+                    if (message?.type === 'executed') {
+                        const data = message?.data
+                        if (data?.prompt_id !== activePromptId) return
+                        
+                        // Node "146" is the PreviewImage node
+                        if (String(data?.node) === '146') {
+                            const images = data?.output?.images || []
+                            if (images.length > 0) {
+                                const imgInfo = images[0]
+                                const filename = imgInfo.filename
+                                const type = imgInfo.type || 'temp'
+                                const subfolder = imgInfo.subfolder || ''
+                                receivedMaskUrl = `http://${comfyServerAddress}/view?filename=${encodeURIComponent(filename)}&type=${encodeURIComponent(type)}&subfolder=${encodeURIComponent(subfolder)}`
+                                resolve()
+                            }
+                        }
+                        return
+                    }
+
+                    return
+                }
+
+                // Fallback: If we receive the image as binary bytes while executing PreviewImage node 146
+                if (currentNode === '146') {
+                    try {
+                        const buf = evt.data instanceof ArrayBuffer ? evt.data : await evt.data.arrayBuffer()
+                        const imageBytes = buf.slice(8)
+                        const blob = new Blob([imageBytes])
+                        receivedMaskUrl = await new Promise((r) => {
+                            const reader = new FileReader()
+                            reader.onload = () => r(String(reader.result))
+                            reader.readAsDataURL(blob)
+                        })
+                        resolve()
+                    } catch (e) {
+                        console.error('Error reading SAM binary bytes:', e)
+                    }
+                }
+            }
+            comfyWs.onclose = () => resolve()
+            comfyWs.onerror = (e) => reject(e)
+        })
+
+        if (thisToken !== activeGenerationToken) return
+
+        if (!receivedMaskUrl) {
+            throw new Error('Did not receive segmented mask from ComfyUI WebSocket')
+        }
+
+        samProgressLabel.value = 'Drawing mask'
+        await applyAlphaMaskToCanvas(receivedMaskUrl, samMaskMode.value, samInvertMask.value)
+
+        samProgressPct.value = 1
+        samProgressLabel.value = 'Success'
+    } catch (err) {
+        if (thisToken !== activeGenerationToken) return
+        imageError.value = String(err?.message || err || 'SAM segmentation failed')
+        samProgressLabel.value = 'Error'
+    } finally {
+        if (thisToken !== activeGenerationToken) return
+        isSegmenting.value = false
+        closeComfyWs()
+        activePromptId = null
+    }
+}
+
+// --- Draw SAM Alpha Mask onto base Canvas Mask ---
+async function applyAlphaMaskToCanvas(imgUrl, mode = 'replace', invert = false) {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    await new Promise((resolve, reject) => {
+        img.onload = resolve
+        img.onerror = reject
+        img.src = imgUrl
+    })
+
+    const mask = maskCanvasRef.value
+    if (!mask) return
+    const ctx = mask.getContext('2d')
+    if (!ctx) return
+
+    // 1. Create temporary canvas to format the incoming image
+    const tmp = document.createElement('canvas')
+    tmp.width = mask.width
+    tmp.height = mask.height
+    const tmpCtx = tmp.getContext('2d')
+    if (!tmpCtx) return
+
+    // 2. Draw incoming image (which has mask in alpha)
+    tmpCtx.drawImage(img, 0, 0, mask.width, mask.height)
+
+    // 3. Color either opaque or transparent pixels red (using native compositing)
+    // If invert is true, color the transparent parts (source-out)
+    // If invert is false, color the opaque parts (source-in)
+    tmpCtx.globalCompositeOperation = invert ? 'source-out' : 'source-in'
+    tmpCtx.fillStyle = 'rgba(239, 68, 68, 0.7)'
+    tmpCtx.fillRect(0, 0, tmp.width, tmp.height)
+
+    // 4. Draw formatted red mask onto the main mask canvas
+    if (mode === 'replace') {
+        ctx.clearRect(0, 0, mask.width, mask.height)
+    }
+    
+    ctx.globalCompositeOperation = 'source-over'
+    ctx.drawImage(tmp, 0, 0)
+}
+
 onMounted(async () => {
     resizeCanvases()
     window.addEventListener('resize', fitView)
@@ -1285,3 +1793,93 @@ onBeforeUnmount(() => {
 watch([canvasWidth, canvasHeight], resizeCanvases)
 watch([imageOffsetX, imageOffsetY, imageScale], drawBase)
 </script>
+
+<style scoped>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Playfair+Display:ital,wght@1,400;1,600&display=swap');
+
+/* Luxury Dark Premium Midnight Luxe aesthetics */
+.font-sans {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.font-serif {
+    font-family: 'Playfair Display', Georgia, Cambria, "Times New Roman", Times, serif;
+}
+
+.font-mono {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+}
+::-webkit-scrollbar-track {
+    background: #0D0D12;
+}
+::-webkit-scrollbar-thumb {
+    background: #2A2A35;
+    border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #C9A84C;
+}
+
+/* Luxury Range Slider CSS Overrides */
+.custom-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 4px;
+    background: #181822;
+    border-radius: 2px;
+    outline: none;
+    transition: background 0.3s;
+}
+
+.custom-slider::-webkit-slider-runnable-track {
+    width: 100%;
+    height: 4px;
+    cursor: pointer;
+    background: #1C1C26;
+    border-radius: 2px;
+}
+
+.custom-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #C9A84C;
+    border: 1.5px solid #FAF8F5;
+    cursor: pointer;
+    margin-top: -4px;
+    box-shadow: 0 0 8px rgba(201, 168, 76, 0.4);
+    transition: transform 0.15s, background-color 0.15s;
+}
+
+.custom-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+    background: #FAF8F5;
+    border-color: #C9A84C;
+}
+
+.custom-slider::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #C9A84C;
+    border: 1.5px solid #FAF8F5;
+    cursor: pointer;
+    box-shadow: 0 0 8px rgba(201, 168, 76, 0.4);
+    transition: transform 0.15s, background-color 0.15s;
+}
+
+.custom-slider::-moz-range-thumb:hover {
+    transform: scale(1.2);
+    background: #FAF8F5;
+    border-color: #C9A84C;
+}
+</style>

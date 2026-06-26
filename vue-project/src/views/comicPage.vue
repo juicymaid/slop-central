@@ -395,7 +395,7 @@ function dataURLtoFile(dataurl, filename) {
     return new File([u8arr], filename, {type:mime});
 }
 
-const url = ref('http://127.0.0.1:7860/')
+const url = ref('http://127.0.0.1:8000/')
 // Helper to build absolute URL from API base + relative path
 function toAbsoluteImageUrl(path) {
 	if (!path) return '';

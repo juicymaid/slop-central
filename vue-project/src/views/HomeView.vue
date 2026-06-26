@@ -9,6 +9,7 @@ import Image from '../components/Image.vue'
 import { useRoute, useRouter } from 'vue-router'
 import ImageMasonry from '@/components/ImageMasonry.vue'
 import Stories from '@/components/Stories.vue'
+import ClearArt from '@/components/ClearArt.vue'
 
 const windowWidth = ref(window.innerWidth)
 
@@ -65,12 +66,12 @@ const updateSort = (sortValue) => {
 const updateUrlParams = () => {
   // Set the flag to prevent double fetching
   isUpdatingFromWatcher.value = true
-  router.push({ 
-    query: { 
-      ...route.query, 
+  router.push({
+    query: {
+      ...route.query,
       sort: currentSort.value,
       page: page
-    } 
+    }
   }).finally(() => {
     // Reset the flag after navigation completes
     setTimeout(() => {
@@ -107,7 +108,7 @@ const handleScroll = () => {
 // Function to fetch current page data
 const fetchCurrentPage = async () => {
   if (isLoading.value) return
-  
+
   isLoading.value = true
   try {
     const data = await GetFromApi(`all-images?sort=${currentSort.value}&per_page=60&page=${page}`)
@@ -140,7 +141,7 @@ watch(() => route.query, (newQuery) => {
     currentSort.value = newSort
     shouldFetch = true
   }
-  
+
   if (newPage !== page) {
     page = newPage
     shouldFetch = true
@@ -156,44 +157,36 @@ watch(() => route.query, (newQuery) => {
 
 <template>
 
-  <Stories/>
+  <Stories />
 
   <div>
     <!-- Enhanced button-based sorting controls -->
     <div class="sort-container mb-6 mt-8">
       <div class="flex flex-wrap justify-center sm:justify-start gap-4 px-6 max-w-[1200px] mx-auto">
-        <button 
-          v-for="option in sortOptions" 
-          :key="option.value"
-          @click="updateSort(option.value)"
-          :class="[
-            'magnetic-button px-5 py-2.5 rounded-full transition-all duration-300 font-sans text-sm font-semibold border',
-            currentSort === option.value 
-              ? 'bg-[#2A2A35] text-[#C9A84C] border-[#C9A84C]/30 shadow-[0_0_15px_rgba(201,168,76,0.1)]' 
-              : 'bg-[#14141A] text-[#FAF8F5]/60 border-[#2A2A35]/50 hover:bg-[#1A1A24] hover:text-[#FAF8F5] hover:border-[#2A2A35]'
-          ]"
-        >
+        <button v-for="option in sortOptions" :key="option.value" @click="updateSort(option.value)" :class="[
+          'magnetic-button px-5 py-2.5 rounded-full transition-all duration-300 font-sans text-sm font-semibold border',
+          currentSort === option.value
+            ? 'bg-[#2A2A35] text-[#C9A84C] border-[#C9A84C]/30 shadow-[0_0_15px_rgba(201,168,76,0.1)]'
+            : 'bg-[#14141A] text-[#FAF8F5]/60 border-[#2A2A35]/50 hover:bg-[#1A1A24] hover:text-[#FAF8F5] hover:border-[#2A2A35]'
+        ]">
           <span class="relative z-10">{{ option.label }}</span>
         </button>
       </div>
     </div>
-    
+
     <div class="px-6  mx-auto">
-      <ImageMasonry :pins="pins"/>
+      <ImageMasonry :pins="pins" />
     </div>
-    
+
     <!-- Enhanced Loading Indicator -->
     <div v-if="isLoading" class="flex flex-col items-center justify-center my-12" aria-live="polite"
       aria-label="Loading">
-      <div class="relative w-12 h-12 mb-4">
-        <div class="absolute inset-0 rounded-full border-t-2 border-[#C9A84C] border-opacity-20"></div>
-        <div class="absolute inset-0 rounded-full border-t-2 border-[#C9A84C] animate-spin"></div>
-      </div>
+      <ClearArt class="max-h-[50vh] object-contain select-none pointer-events-none" />
       <span class="text-[#FAF8F5]/60 font-mono text-sm tracking-widest uppercase">
-        Loading Sequence
+        Loading
       </span>
     </div>
-    
+
     <!-- Page indicator -->
     <div class="text-center text-[#FAF8F5]/40 font-mono text-xs mt-8 mb-12">
       [ Page {{ String(page).padStart(3, '0') }} ]
@@ -230,11 +223,10 @@ button:focus:not(:active)::after {
     transform: scale(0, 0);
     opacity: 0.7;
   }
+
   100% {
     transform: scale(20, 20);
     opacity: 0;
   }
 }
-
-
 </style>

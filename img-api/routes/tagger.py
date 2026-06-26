@@ -12,8 +12,7 @@ from tagger.interrogator.interrogator import AbsInterrogator
 from tagger.interrogators import interrogators
 
 
-from ollama import chat
-from ollama import ChatResponse
+from routes.comments import ChatResponse
 
 router = APIRouter()
 _tag_all_cancel = threading.Event()

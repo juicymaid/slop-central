@@ -348,7 +348,7 @@ async def assistant_ws(websocket: WebSocket):
             while True:
                 from routes.ai_settings import load_ai_settings
                 _ai = load_ai_settings()
-                _client = comments.laptopClient if _ai.use_laptop else comments.OllamaClient
+                _client = comments.laptopClient
 
                 options = {}
                 if _ai.override_temperature:

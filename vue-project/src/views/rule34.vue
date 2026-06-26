@@ -1,6 +1,7 @@
 <script setup>
 import { webState } from '@/api'
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import ClearArt from '@/components/ClearArt.vue'
 
 const api_access = "&api_key=1eee46ec7bc85a93e10cd74310ebab08db0ac7a45baba8f1173286902286676889c783342bc3a0a467d18e24a74e6f56e9d078225c717e1055c2ee3192f44ddf&user_id=1696472"
 const blacklist_tags = ' -furry -furry_focus -futa_only -futanari -gay -male/male -male_only -male_penetrating_male -penis_focus -penis_size_difference -tentacle_on_male -1futa -femboy -bara_tits -bara -anthro -canine_genitalia -male_masturbation -reptile -ai_generated'
@@ -215,6 +216,7 @@ onBeforeUnmount(() => {
         <div class="absolute inset-0 rounded-full border-t-2 border-[#C9A84C] border-opacity-20"></div>
         <div class="absolute inset-0 rounded-full border-t-2 border-[#C9A84C] animate-spin"></div>
       </div>
+      <ClearArt class="max-w-xs max-h-60 rounded-lg mb-4 shadow-[0_0_25px_rgba(201,168,76,0.15)]" />
       <span class="text-[#FAF8F5]/60 font-mono text-sm tracking-widest uppercase">
         Loading Sequence
       </span>

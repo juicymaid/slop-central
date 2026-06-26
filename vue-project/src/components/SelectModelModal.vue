@@ -64,9 +64,10 @@
           <div v-for="model in filteredModels" :key="model.id"
             class="relative bg-[#0D0D12] border border-[#2A2A35] rounded-2xl shadow-xl hover:shadow-2xl hover:scale-[1.02] transition-transform overflow-hidden ">
             <div class="w-full h-72 rounded-t-2xl relative overflow-hidden">
-              <img v-if="!model._imgError" :src="getModelImage(model, 0)" :alt="model.name" class="w-full h-72 object-cover rounded-t-2xl"
-                @error="handleImageError($event, model)" />
-              <div v-else class="w-full h-72 flex items-center justify-center text-[#FAF8F5] text-lg font-semibold relative"
+              <img v-if="!model._imgError" :src="getModelImage(model, 0)" :alt="model.name"
+                class="w-full h-72 object-cover rounded-t-2xl" @error="handleImageError($event, model)" />
+              <div v-else
+                class="w-full h-72 flex items-center justify-center text-[#FAF8F5] text-lg font-semibold relative"
                 :style="{ backgroundImage: `url(${apiUrl + '/random-image-file?model=' + (model.filename || model.name)})`, backgroundSize: 'cover', backgroundPosition: 'center' }">
                 <div class="absolute inset-0 bg-black/95  flex items-center justify-center">
                   No Image
@@ -90,7 +91,9 @@
                 <h3 class="text-xl font-bold mb-4 break-all">
                   {{ model?.civitai?.model?.name || getModelName(model.filename ?? model.name) }}
                 </h3>
-                <a v-if="model?.civitai?.modelId" class="cursor-pointer flex items-center gap-2 text-blue-400" :href="'https://civitai.com/models/' + model?.civitai?.modelId + '?modelVersionId=' + model?.civitai?.id" target="_blank">
+                <a v-if="model?.civitai?.modelId" class="cursor-pointer flex items-center gap-2 text-blue-400"
+                  :href="'https://civitai.com/models/' + model?.civitai?.modelId + '?modelVersionId=' + model?.civitai?.id"
+                  target="_blank">
                   <svg class="w-4 h-4 " fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                       d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14">
@@ -142,7 +145,7 @@ const props = defineProps({
   isVisible: { type: Boolean, default: true },
   modelType: { type: String, default: 'checkpoint' },
   current_loras: { type: Array, default: () => [] },
-  url: { type: String, default: 'http://127.0.0.1:7860/' }
+  url: { type: String, default: 'http://127.0.0.1:8000/' }
 });
 
 const emit = defineEmits(['close', 'select']);
@@ -222,7 +225,7 @@ const getModelImage = (model, attempt = 0) => {
   let baseUrl = props.url + 'sd_extra_networks/thumb?filename=';
 
   if (attempt === 0) {
-    return   apiUrl + '/webui/model-image?model_path=' + encodeURIComponent(model.path || model.filename) 
+    return apiUrl + '/webui/model-image?model_path=' + encodeURIComponent(model.path || model.filename)
   } else {
     return null;
   }
@@ -247,7 +250,7 @@ const handleImageError = (event, model) => {
 async function refreshModels() {
   let full_url = props.url;
   const isAiHorde = props.url.includes('aihorde');
-  
+
   if (isAiHorde) {
     await fetchModels();
     buildFolderStructure();

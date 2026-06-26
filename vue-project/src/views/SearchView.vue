@@ -3,29 +3,24 @@
     <!-- Enhanced button-based sorting controls -->
     <div class="sort-container mb-6 mt-4">
       <div class="flex flex-wrap justify-center sm:justify-start gap-4 px-6 max-w-[1200px] mx-auto">
-        <button 
-          v-for="sort in sortOptions" 
-          :key="sort.value"
-          @click="changeSort(sort.value)"
-          :class="[
-            'magnetic-button px-5 py-2.5 rounded-full transition-all duration-300 font-sans text-sm font-semibold border',
-            currentSort === sort.value 
-              ? 'bg-[#2A2A35] text-[#C9A84C] border-[#C9A84C]/30 shadow-[0_0_15px_rgba(201,168,76,0.1)]' 
-              : 'bg-[#14141A] text-[#FAF8F5]/60 border-[#2A2A35]/50 hover:bg-[#1A1A24] hover:text-[#FAF8F5] hover:border-[#2A2A35]'
-          ]"
-        >
+        <button v-for="sort in sortOptions" :key="sort.value" @click="changeSort(sort.value)" :class="[
+          'magnetic-button px-5 py-2.5 rounded-full transition-all duration-300 font-sans text-sm font-semibold border',
+          currentSort === sort.value
+            ? 'bg-[#2A2A35] text-[#C9A84C] border-[#C9A84C]/30 shadow-[0_0_15px_rgba(201,168,76,0.1)]'
+            : 'bg-[#14141A] text-[#FAF8F5]/60 border-[#2A2A35]/50 hover:bg-[#1A1A24] hover:text-[#FAF8F5] hover:border-[#2A2A35]'
+        ]">
           <span class="relative z-10">{{ sort.label }}</span>
         </button>
       </div>
     </div>
 
     <div class="px-6  mx-auto">
-      <ImageMasonry :pins="pins"/>
+      <ImageMasonry :pins="pins" />
     </div>
-    
+
     <!--Error message display-->
     <div v-if="errorMessage" class="text-red-500 text-center my-8 font-mono tracking-wide">
-      <img :src="randomErrorImage()" alt="Error Image" class="mx-auto mb-4 h-64">
+
       {{ errorMessage }}
     </div>
 
@@ -36,11 +31,12 @@
         <div class="absolute inset-0 rounded-full border-t-2 border-[#C9A84C] border-opacity-20"></div>
         <div class="absolute inset-0 rounded-full border-t-2 border-[#C9A84C] animate-spin"></div>
       </div>
+      <ClearArt />
       <span class="text-[#FAF8F5]/60 font-mono text-sm tracking-widest uppercase">
         Loading Sequence
       </span>
     </div>
-    
+
     <!-- Page indicator -->
     <div class="text-center text-[#FAF8F5]/40 font-mono text-xs mt-8 mb-12">
       [ Page {{ String(page).padStart(3, '0') }} ]
@@ -51,9 +47,10 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, watch, inject } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { GetFromApi } from '../api'
+import { GetFromApi, apiUrl } from '../api'
 import Image from '../components/Image.vue'
 import ImageMasonry from '@/components/ImageMasonry.vue'
+import ClearArt from '@/components/ClearArt.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -67,7 +64,7 @@ let page = parseInt(route.query.page) || 1
 
 function randomErrorImage() {
 
-  const base = "http://localhost:8000/files/comfyui/"
+  const base = apiUrl + "/files/comfyui/"
 
   const errorImages = [
     'cafe_sprite_00048_.png',
@@ -131,7 +128,7 @@ const loadMore = async () => {
     page++
     updateUrlParams()
     const newData = await GetFromApi(`search?query=${route.query.q}&sort=${currentSort.value}&per_page=20&page=${page}`)
-    const uniqueNewData = newData.filter(newPin => 
+    const uniqueNewData = newData.filter(newPin =>
       !pins.value.some(existingPin => existingPin.Id === newPin.Id)
     )
     pins.value = [...pins.value, ...uniqueNewData]
@@ -153,7 +150,7 @@ const fetchSearchResults = async () => {
   try {
     const data = await GetFromApi(`search?query=${route.query.q}&sort=${currentSort.value}&per_page=50&page=${page}`)
 
-    
+
     //handle {"detail":"No images match date filter"} 404 error
     if (data.detail) {
       errorMessage.value = data.detail
@@ -162,7 +159,7 @@ const fetchSearchResults = async () => {
     } else {
       errorMessage.value = ''
     }
-   
+
 
     pins.value = data
   } finally {
@@ -188,18 +185,18 @@ watch(() => route.query.q, () => {
 // Watch for external URL changes (browser back/forward)
 watch(() => route.query, (newQuery) => {
   let shouldFetch = false
-  
+
   if (newQuery.sort && newQuery.sort !== currentSort.value) {
     currentSort.value = newQuery.sort
     shouldFetch = true
   }
-  
+
   const newPage = parseInt(newQuery.page) || 1
   if (newPage !== page) {
     page = newPage
     shouldFetch = true
   }
-  
+
   if (shouldFetch) {
     fetchSearchResults()
   }
@@ -212,6 +209,4 @@ watch(currentSort, () => {
 })
 </script>
 
-<style scoped>
-
-</style>
+<style scoped></style>
