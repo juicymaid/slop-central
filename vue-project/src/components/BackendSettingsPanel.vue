@@ -118,6 +118,7 @@ const availableModels = ref([])
 const showCustomDefaultModel = ref(false)
 const showCustomVisionModel = ref(false)
 const showCustomAssistantModel = ref(false)
+const showCustomAutocompleteModel = ref(false)
 
 async function loadAvailableModels() {
   try {
@@ -258,7 +259,8 @@ watch(backendState, scheduleSave, { deep: true })
         <div class="space-y-1.5">
           <div class="flex justify-between items-center">
             <label class="text-[10px] uppercase tracking-[0.2em] text-gray-500 block">Default Model</label>
-            <button v-if="availableModels.length > 0" type="button" @click="showCustomDefaultModel = !showCustomDefaultModel"
+            <button v-if="availableModels.length > 0" type="button"
+              @click="showCustomDefaultModel = !showCustomDefaultModel"
               class="text-[10px] text-[#C9A84C] hover:underline bg-none border-none cursor-pointer">
               {{ showCustomDefaultModel ? 'Use Dropdown' : 'Type Manually' }}
             </button>
@@ -267,9 +269,11 @@ watch(backendState, scheduleSave, { deep: true })
             <select v-if="availableModels.length > 0 && !showCustomDefaultModel" v-model="aiSettings.default_model"
               class="w-full rounded-xl border border-[#2A2A35] bg-[#0A0A10] px-3 py-2.5 text-sm text-[#FAF8F5] focus:border-[#C9A84C]/60 focus:ring-1 focus:ring-[#C9A84C]/20 focus:outline-none transition-all font-mono">
               <option v-for="m in availableModels" :key="m" :value="m">{{ m }}</option>
-              <option v-if="!availableModels.includes(aiSettings.default_model) && aiSettings.default_model" :value="aiSettings.default_model">{{ aiSettings.default_model }} (custom)</option>
+              <option v-if="!availableModels.includes(aiSettings.default_model) && aiSettings.default_model"
+                :value="aiSettings.default_model">{{ aiSettings.default_model }} (custom)</option>
             </select>
-            <input v-if="availableModels.length === 0 || showCustomDefaultModel" v-model="aiSettings.default_model" type="text" placeholder="hf.co/org/model-name:Q8_0"
+            <input v-if="availableModels.length === 0 || showCustomDefaultModel" v-model="aiSettings.default_model"
+              type="text" placeholder="hf.co/org/model-name:Q8_0"
               class="w-full rounded-xl border border-[#2A2A35] bg-[#0A0A10] px-3 py-2.5 text-sm text-[#FAF8F5] placeholder-gray-600 focus:border-[#C9A84C]/60 focus:ring-1 focus:ring-[#C9A84C]/20 focus:outline-none transition-all font-mono" />
           </div>
           <p class="text-[11px] text-gray-600 leading-relaxed">LM Studio model for comments, posts, and chat.</p>
@@ -279,18 +283,23 @@ watch(backendState, scheduleSave, { deep: true })
         <div class="space-y-1.5">
           <div class="flex justify-between items-center">
             <label class="text-[10px] uppercase tracking-[0.2em] text-gray-500 block">Default Vision Model</label>
-            <button v-if="availableModels.length > 0" type="button" @click="showCustomVisionModel = !showCustomVisionModel"
+            <button v-if="availableModels.length > 0" type="button"
+              @click="showCustomVisionModel = !showCustomVisionModel"
               class="text-[10px] text-[#C9A84C] hover:underline bg-none border-none cursor-pointer">
               {{ showCustomVisionModel ? 'Use Dropdown' : 'Type Manually' }}
             </button>
           </div>
           <div class="space-y-2">
-            <select v-if="availableModels.length > 0 && !showCustomVisionModel" v-model="aiSettings.default_vision_model"
+            <select v-if="availableModels.length > 0 && !showCustomVisionModel"
+              v-model="aiSettings.default_vision_model"
               class="w-full rounded-xl border border-[#2A2A35] bg-[#0A0A10] px-3 py-2.5 text-sm text-[#FAF8F5] focus:border-[#C9A84C]/60 focus:ring-1 focus:ring-[#C9A84C]/20 focus:outline-none transition-all font-mono">
               <option v-for="m in availableModels" :key="m" :value="m">{{ m }}</option>
-              <option v-if="!availableModels.includes(aiSettings.default_vision_model) && aiSettings.default_vision_model" :value="aiSettings.default_vision_model">{{ aiSettings.default_vision_model }} (custom)</option>
+              <option
+                v-if="!availableModels.includes(aiSettings.default_vision_model) && aiSettings.default_vision_model"
+                :value="aiSettings.default_vision_model">{{ aiSettings.default_vision_model }} (custom)</option>
             </select>
-            <input v-if="availableModels.length === 0 || showCustomVisionModel" v-model="aiSettings.default_vision_model" type="text" placeholder="model-name:tag"
+            <input v-if="availableModels.length === 0 || showCustomVisionModel"
+              v-model="aiSettings.default_vision_model" type="text" placeholder="model-name:tag"
               class="w-full rounded-xl border border-[#2A2A35] bg-[#0A0A10] px-3 py-2.5 text-sm text-[#FAF8F5] placeholder-gray-600 focus:border-[#C9A84C]/60 focus:ring-1 focus:ring-[#C9A84C]/20 focus:outline-none transition-all font-mono" />
           </div>
           <p class="text-[11px] text-gray-600 leading-relaxed">Model used for image descriptions and vision tasks.</p>
@@ -300,18 +309,23 @@ watch(backendState, scheduleSave, { deep: true })
         <div class="space-y-1.5">
           <div class="flex justify-between items-center">
             <label class="text-[10px] uppercase tracking-[0.2em] text-gray-500 block">Default Assistant Model</label>
-            <button v-if="availableModels.length > 0" type="button" @click="showCustomAssistantModel = !showCustomAssistantModel"
+            <button v-if="availableModels.length > 0" type="button"
+              @click="showCustomAssistantModel = !showCustomAssistantModel"
               class="text-[10px] text-[#C9A84C] hover:underline bg-none border-none cursor-pointer">
               {{ showCustomAssistantModel ? 'Use Dropdown' : 'Type Manually' }}
             </button>
           </div>
           <div class="space-y-2">
-            <select v-if="availableModels.length > 0 && !showCustomAssistantModel" v-model="aiSettings.default_assistant_model"
+            <select v-if="availableModels.length > 0 && !showCustomAssistantModel"
+              v-model="aiSettings.default_assistant_model"
               class="w-full rounded-xl border border-[#2A2A35] bg-[#0A0A10] px-3 py-2.5 text-sm text-[#FAF8F5] focus:border-[#C9A84C]/60 focus:ring-1 focus:ring-[#C9A84C]/20 focus:outline-none transition-all font-mono">
               <option v-for="m in availableModels" :key="m" :value="m">{{ m }}</option>
-              <option v-if="!availableModels.includes(aiSettings.default_assistant_model) && aiSettings.default_assistant_model" :value="aiSettings.default_assistant_model">{{ aiSettings.default_assistant_model }} (custom)</option>
+              <option
+                v-if="!availableModels.includes(aiSettings.default_assistant_model) && aiSettings.default_assistant_model"
+                :value="aiSettings.default_assistant_model">{{ aiSettings.default_assistant_model }} (custom)</option>
             </select>
-            <input v-if="availableModels.length === 0 || showCustomAssistantModel" v-model="aiSettings.default_assistant_model" type="text" placeholder="model-name:tag"
+            <input v-if="availableModels.length === 0 || showCustomAssistantModel"
+              v-model="aiSettings.default_assistant_model" type="text" placeholder="model-name:tag"
               class="w-full rounded-xl border border-[#2A2A35] bg-[#0A0A10] px-3 py-2.5 text-sm text-[#FAF8F5] placeholder-gray-600 focus:border-[#C9A84C]/60 focus:ring-1 focus:ring-[#C9A84C]/20 focus:outline-none transition-all font-mono" />
           </div>
           <p class="text-[11px] text-gray-600 leading-relaxed">Model used for the AI assistant chat.</p>
@@ -320,44 +334,37 @@ watch(backendState, scheduleSave, { deep: true })
         <!-- Toggles Row -->
         <div class="grid grid-cols-3 gap-3">
           <button type="button" @click="aiSettings.manage_vram = !aiSettings.manage_vram"
-            class="rounded-xl border px-3 py-3 text-center transition-all duration-200 cursor-pointer"
-            :class="aiSettings.manage_vram
+            class="rounded-xl border px-3 py-3 text-center transition-all duration-200 cursor-pointer" :class="aiSettings.manage_vram
               ? 'border-[#C9A84C]/50 bg-[#C9A84C]/8 ring-1 ring-[#C9A84C]/30'
               : 'border-[#232836] bg-[#111118]/60 hover:border-[#3A3A48]'">
             <div class="text-[10px] uppercase tracking-widest mb-1"
               :class="aiSettings.manage_vram ? 'text-[#C9A84C]' : 'text-gray-600'">Manage VRAM</div>
-            <div class="text-xs font-semibold"
-              :class="aiSettings.manage_vram ? 'text-[#FAF8F5]' : 'text-gray-500'">
+            <div class="text-xs font-semibold" :class="aiSettings.manage_vram ? 'text-[#FAF8F5]' : 'text-gray-500'">
               {{ aiSettings.manage_vram ? 'ON' : 'OFF' }}
             </div>
           </button>
           <button type="button" @click="aiSettings.use_thinking = !aiSettings.use_thinking"
-            class="rounded-xl border px-3 py-3 text-center transition-all duration-200 cursor-pointer"
-            :class="aiSettings.use_thinking
+            class="rounded-xl border px-3 py-3 text-center transition-all duration-200 cursor-pointer" :class="aiSettings.use_thinking
               ? 'border-[#C9A84C]/50 bg-[#C9A84C]/8 ring-1 ring-[#C9A84C]/30'
               : 'border-[#232836] bg-[#111118]/60 hover:border-[#3A3A48]'">
             <div class="text-[10px] uppercase tracking-widest mb-1"
               :class="aiSettings.use_thinking ? 'text-[#C9A84C]' : 'text-gray-600'">Thinking</div>
-            <div class="text-xs font-semibold"
-              :class="aiSettings.use_thinking ? 'text-[#FAF8F5]' : 'text-gray-500'">
+            <div class="text-xs font-semibold" :class="aiSettings.use_thinking ? 'text-[#FAF8F5]' : 'text-gray-500'">
               {{ aiSettings.use_thinking ? 'ON' : 'OFF' }}
             </div>
           </button>
           <button type="button" @click="aiSettings.model_is_vision = !aiSettings.model_is_vision"
-            class="rounded-xl border px-3 py-3 text-center transition-all duration-200 cursor-pointer"
-            :class="aiSettings.model_is_vision
+            class="rounded-xl border px-3 py-3 text-center transition-all duration-200 cursor-pointer" :class="aiSettings.model_is_vision
               ? 'border-[#C9A84C]/50 bg-[#C9A84C]/8 ring-1 ring-[#C9A84C]/30'
               : 'border-[#232836] bg-[#111118]/60 hover:border-[#3A3A48]'">
             <div class="text-[10px] uppercase tracking-widest mb-1"
               :class="aiSettings.model_is_vision ? 'text-[#C9A84C]' : 'text-gray-600'">Vision</div>
-            <div class="text-xs font-semibold"
-              :class="aiSettings.model_is_vision ? 'text-[#FAF8F5]' : 'text-gray-500'">
+            <div class="text-xs font-semibold" :class="aiSettings.model_is_vision ? 'text-[#FAF8F5]' : 'text-gray-500'">
               {{ aiSettings.model_is_vision ? 'ON' : 'OFF' }}
             </div>
           </button>
           <button type="button" @click="aiSettings.override_temperature = !aiSettings.override_temperature"
-            class="rounded-xl border px-3 py-3 text-center transition-all duration-200 cursor-pointer"
-            :class="aiSettings.override_temperature
+            class="rounded-xl border px-3 py-3 text-center transition-all duration-200 cursor-pointer" :class="aiSettings.override_temperature
               ? 'border-[#C9A84C]/50 bg-[#C9A84C]/8 ring-1 ring-[#C9A84C]/30'
               : 'border-[#232836] bg-[#111118]/60 hover:border-[#3A3A48]'">
             <div class="text-[10px] uppercase tracking-widest mb-1"
@@ -387,7 +394,46 @@ watch(backendState, scheduleSave, { deep: true })
 
     <div class="space-y-1.5">
       <div class="text-[10px] uppercase tracking-[0.25em] text-gray-600 px-0.5">AutoComplete</div>
-      <div class="flex flex-col gap-2">
+      <div class="rounded-2xl border border-[#232836] bg-[#0F0F16] overflow-hidden p-4 space-y-4">
+        <!-- Toggle -->
+        <div class="flex items-center justify-between">
+          <div>
+            <label class="text-sm font-medium text-gray-300 block">Autocomplete</label>
+            <p class="text-xs text-gray-500 mt-0.5">Use DanTagGen models to suggest tags as you type.</p>
+          </div>
+          <button type="button" @click="aiSettings.autocomplete_enabled = !aiSettings.autocomplete_enabled"
+            :class="aiSettings.autocomplete_enabled ? 'bg-[#C9A84C] border-[#C9A84C]/50 bg-[#C9A84C]/8 ring-1 ring-[#C9A84C]/30' : 'bg-gray-700'"
+            class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none cursor-pointer">
+            <span :class="aiSettings.autocomplete_enabled ? 'translate-x-6' : 'translate-x-1'"
+              class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform" />
+          </button>
+        </div>
+
+        <!-- Model Selection -->
+        <div v-if="aiSettings.autocomplete_enabled" class="space-y-2 border-t border-[#232836] pt-3">
+          <div class="flex justify-between items-center">
+            <label class="text-[10px] uppercase tracking-[0.2em] text-gray-500 block">Autocomplete Model</label>
+            <button v-if="availableModels.length > 0" type="button"
+              @click="showCustomAutocompleteModel = !showCustomAutocompleteModel"
+              class="text-[10px] text-[#C9A84C] hover:underline bg-none border-none cursor-pointer">
+              {{ showCustomAutocompleteModel ? 'Use Dropdown' : 'Type Manually' }}
+            </button>
+          </div>
+          <div class="space-y-2">
+            <select v-if="availableModels.length > 0 && !showCustomAutocompleteModel"
+              v-model="aiSettings.autocomplete_model"
+              class="w-full rounded-xl border border-[#2A2A35] bg-[#0A0A10] px-3 py-2.5 text-sm text-[#FAF8F5] focus:border-[#C9A84C]/60 focus:ring-1 focus:ring-[#C9A84C]/20 focus:outline-none transition-all font-mono">
+              <option value="">Select a model...</option>
+              <option v-for="m in availableModels" :key="m" :value="m">{{ m }}</option>
+              <option v-if="!availableModels.includes(aiSettings.autocomplete_model) && aiSettings.autocomplete_model"
+                :value="aiSettings.autocomplete_model">{{ aiSettings.autocomplete_model }} (custom)</option>
+            </select>
+            <input v-if="availableModels.length === 0 || showCustomAutocompleteModel"
+              v-model="aiSettings.autocomplete_model" type="text" placeholder="e.g. KBlueLeaf/DanTagGen-delta-rev2"
+              class="w-full rounded-xl border border-[#2A2A35] bg-[#0A0A10] px-3 py-2.5 text-sm text-[#FAF8F5] placeholder-gray-600 focus:border-[#C9A84C]/60 focus:ring-1 focus:ring-[#C9A84C]/20 focus:outline-none transition-all font-mono" />
+          </div>
+          <p class="text-[11px] text-gray-600 leading-relaxed">LM Studio model for tag completions.</p>
+        </div>
       </div>
     </div>
 

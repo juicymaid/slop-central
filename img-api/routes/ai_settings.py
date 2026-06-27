@@ -24,6 +24,8 @@ class AISettings(BaseModel):
     manage_vram: bool = False
     override_temperature: bool = False
     temperature: float = 0.7
+    autocomplete_enabled: bool = False
+    autocomplete_model: str = ""
 
     # ── backwards-compat: accept old `use_laptop` from saved JSON ───────────
     @classmethod

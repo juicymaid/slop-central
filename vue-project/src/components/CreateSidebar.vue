@@ -2323,6 +2323,136 @@ async function unloadLLM() {
     if (response.ok) console.log('LLM unloaded')
 }
 
+// --- COPILOT AUTOCOMPLETE INTEGRATION ---
+const aiSettings = ref({
+    autocomplete_enabled: false,
+    autocomplete_model: ''
+})
+const ghostText = ref('')
+const isFetchingAutocomplete = ref(false)
+let autocompleteTimeout = null
+let isAcceptingSuggestion = false
+
+async function loadAiSettings() {
+    try {
+        const res = await fetch(apiUrl + '/ai-settings')
+        if (res.ok) {
+            aiSettings.value = await res.json()
+        }
+    } catch (e) {
+        console.warn('Failed to load AI settings in sidebar:', e)
+    }
+}
+
+function togglePromptAutocomplete() {
+    aiSettings.value.autocomplete_enabled = !aiSettings.value.autocomplete_enabled
+    // Save to backend immediately
+    fetch(apiUrl + '/ai-settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(aiSettings.value)
+    }).catch(e => console.error('Failed to save autocomplete toggle:', e))
+}
+
+function handleAutocompleteKeydown(e) {
+    if (ghostText.value && (e.key === 'Tab' || e.key === 'ArrowRight')) {
+        if (e.key === 'ArrowRight') {
+            const cursor = e.target.selectionStart
+            if (cursor < request.prompt.length) return
+        }
+        e.preventDefault()
+
+        let textToAccept = ''
+        let remainingGhost = ''
+
+        let temp = ghostText.value
+        let prefix = ''
+
+        // Handle leading spacers/commas safely
+        if (temp.startsWith(', ')) {
+            prefix = ', '
+            temp = temp.slice(2)
+        } else if (temp.startsWith(',')) {
+            prefix = ','
+            temp = temp.slice(1)
+        } else if (temp.startsWith(' ')) {
+            prefix = ' '
+            temp = temp.slice(1)
+        }
+
+        const commaIndex = temp.indexOf(',')
+        if (commaIndex !== -1) {
+            textToAccept = prefix + temp.slice(0, commaIndex)
+            remainingGhost = temp.slice(commaIndex)
+        } else {
+            textToAccept = ghostText.value
+            remainingGhost = ''
+        }
+
+        isAcceptingSuggestion = true
+        request.prompt += textToAccept
+        ghostText.value = remainingGhost
+        autoResizePositivePrompt()
+    }
+}
+
+// Watch prompt to fetch autocomplete suggestions
+watch(() => request.prompt, (newVal) => {
+    if (isAcceptingSuggestion) {
+        isAcceptingSuggestion = false
+        return
+    }
+
+    ghostText.value = ''
+    if (!aiSettings.value.autocomplete_enabled || !newVal) return
+
+    if (autocompleteTimeout) clearTimeout(autocompleteTimeout)
+
+    const trimmed = newVal.trim()
+    if (trimmed.length < 3) return
+
+    autocompleteTimeout = setTimeout(async () => {
+        isFetchingAutocomplete.value = true
+        try {
+            const response = await fetch(apiUrl + '/dantaggen-autocomplete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    prompt: newVal,
+                    model: aiSettings.value.autocomplete_model
+                })
+            })
+            if (response.ok) {
+                const data = await response.json()
+                if (data.completion && request.prompt === newVal) {
+                    let comp = data.completion.trim()
+                    const endsWithComma = newVal.trim().endsWith(',')
+                    if (!endsWithComma && !comp.startsWith(',')) {
+                        ghostText.value = ', ' + comp
+                    } else {
+                        ghostText.value = (endsWithComma ? ' ' : '') + comp
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('Autocomplete error:', e)
+        } finally {
+            isFetchingAutocomplete.value = false
+        }
+    }, 600)
+})
+
+// Fetch settings on mount and when returning to generate tab
+onMounted(async () => {
+    await loadAiSettings()
+})
+
+watch(activeTab, (newTab) => {
+    if (newTab === 'generate' || newTab === 'settings') {
+        loadAiSettings()
+    }
+})
+
 </script>
 
 <template>
@@ -3148,20 +3278,60 @@ async function unloadLLM() {
                                 </div>
                             </div>
 
-                            <div class="sidebar-card p-4 space-y-2">
-                                <div class="relative rounded-lg" @dragenter.prevent="(e) => { showDragOverlay = true; }"
-                                    @dragover.prevent @dragleave="(e) => { showDragOverlay = false; }"
-                                    @drop.prevent="handlePromptDrop">
+                            <div
+                                class="sidebar-card p-4 space-y-2 focus-within:border-[#C9A84C]/40 transition-colors duration-200">
+                                <div class="relative rounded-lg min-h-[72px]"
+                                    @dragenter.prevent="(e) => { showDragOverlay = true; }" @dragover.prevent
+                                    @dragleave="(e) => { showDragOverlay = false; }" @drop.prevent="handlePromptDrop">
+
+                                    <!-- Ghost Text / Inline Autocomplete Overlay (matches font and sizing of textarea) -->
+                                    <div v-if="aiSettings.autocomplete_enabled && ghostText"
+                                        class="absolute inset-0 pointer-events-none text-sm leading-relaxed whitespace-pre-wrap break-words text-transparent select-none"
+                                        style="font-family: inherit; font-size: inherit; line-height: inherit; padding: 0px; margin: 0px;">
+                                        <span class="text-transparent">{{ request.prompt }}</span><span
+                                            class="text-gray-500/60 font-medium bg-[#C9A84C]/10 rounded px-0.5 border-b border-[#C9A84C]/20">{{
+                                                ghostText }}</span>
+                                    </div>
+
                                     <textarea id="positive_prompt" v-model="request.prompt"
                                         placeholder="Your prompt goes here..."
-                                        class="positive_prompt w-full text-sm bg-transparent text-[#E7E9F2] placeholder-gray-500 leading-relaxed resize-none focus:outline-none"
-                                        rows="3" ref="positivePrompt" @input="autoResizeTextArea($event.target)" />
+                                        class="positive_prompt w-full text-sm bg-transparent text-[#E7E9F2] placeholder-gray-500 leading-relaxed resize-none focus:outline-none relative z-10"
+                                        rows="3" ref="positivePrompt" @input="autoResizeTextArea($event.target)"
+                                        @keydown="handleAutocompleteKeydown" />
 
                                     <AutoComplete v-model:input="request.prompt" :textareaRef="positivePrompt" />
                                     <div v-if="showDragOverlay"
                                         class="drop-overlay absolute inset-0 z-10 rounded-lg border-2 border-dashed border-blue-400 bg-black/60 backdrop-blur-sm flex items-center justify-center px-4 text-center text-[#FAF8F5] text-sm font-semibold pointer-events-none">
                                         Drop here to Interrogate
                                     </div>
+                                </div>
+
+                                <!-- Copilot Status Indicator Footer -->
+                                <div
+                                    class="flex items-center justify-between border-t border-[#232834]/50 pt-2 text-[10px] text-gray-500 select-none">
+                                    <div class="flex items-center gap-1.5">
+                                        <span class="text-gray-600">Prompt:</span>
+                                        <span class="font-mono text-gray-400">{{ request.prompt ? request.prompt.length
+                                            : 0 }}
+                                            chars</span>
+                                    </div>
+
+
+                                    <div class="flex items-center gap-1.5 cursor-pointer hover:text-gray-300 transition-colors"
+                                        @click="togglePromptAutocomplete"
+                                        :title="aiSettings.autocomplete_enabled ? 'Click to turn off autocomplete' : 'Click to turn on autocomplete'">
+                                        <template v-if="aiSettings.autocomplete_enabled">
+                                            <span class="w-1.5 h-1.5 rounded-full bg-[#C9A84C]"
+                                                :class="{ 'animate-pulse bg-amber-400': isFetchingAutocomplete }"></span>
+                                            <span
+                                                class="text-[9px] bg-[#2A2F3B] text-gray-400 px-1 py-0.2 rounded border border-[#353B48]">TAB</span>
+                                        </template>
+                                        <template v-else>
+                                            <span class="w-1.5 h-1.5 rounded-full bg-gray-600"></span>
+                                            <span>copilot off</span>
+                                        </template>
+                                    </div>
+
                                 </div>
 
                                 <!-- Trigger Words -->
@@ -3440,7 +3610,7 @@ async function unloadLLM() {
                                             class="w-full bg-[#1a1a1a] border border-[#2A2A35] text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
                                             <option v-for="sampler in samplers" :key="sampler.name"
                                                 :value="sampler.name">{{
-                                                sampler.name }}
+                                                    sampler.name }}
                                             </option>
                                         </select>
                                     </div>
@@ -3775,26 +3945,26 @@ async function unloadLLM() {
                                                 <span>Quantity</span>
                                                 <span class="font-mono text-gray-200">{{ request.batch_size *
                                                     request.n_iter
-                                                }}x</span>
+                                                    }}x</span>
                                             </div>
                                             <div
                                                 class="flex justify-between items-center px-4 py-3 border-b border-[#2A2A35]">
                                                 <span>Size</span>
                                                 <span class="font-mono text-gray-200">{{ formatSizeMultiplier(request)
-                                                }}x</span>
+                                                    }}x</span>
                                             </div>
                                             <div
                                                 class="flex justify-between items-center px-4 py-3 border-b border-[#2A2A35]">
                                                 <span>Steps</span>
                                                 <span class="font-mono text-gray-200">{{ formatStepsPercentage(request)
-                                                }}</span>
+                                                    }}</span>
                                             </div>
                                             <div v-if="formatSamplerPercentage(request) != '0%'"
                                                 class="flex justify-between items-center px-4 py-3 border-b border-[#2A2A35]">
                                                 <span>Sampler</span>
                                                 <span class="font-mono text-gray-200">{{
                                                     formatSamplerPercentage(request)
-                                                }}</span>
+                                                    }}</span>
                                             </div>
                                             <!-- Base Cost -->
                                             <div
@@ -4178,7 +4348,7 @@ async function unloadLLM() {
                                         generationState.sampling_steps || 0 }}</span>
                                 </div>
                                 <span class="font-semibold tabular-nums">{{ Math.round(generationProgress * 100)
-                                }}%</span>
+                                    }}%</span>
                             </div>
                             <div class="bg-white/20 rounded-full h-1 overflow-hidden">
                                 <div class="bg-blue-400 h-full transition-all duration-300 ease-out"
@@ -4420,6 +4590,7 @@ async function unloadLLM() {
 
 .positive_prompt {
     min-height: 96px;
+    font-style: normal !important;
 }
 
 @keyframes sidebar-enter {

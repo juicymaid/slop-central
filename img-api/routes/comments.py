@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Body
 from fastapi.responses import JSONResponse, FileResponse
 import random
 
@@ -169,9 +169,9 @@ captured in the image.
 The tags of the image in question are: """
 
 prompt_enhance_prompt = """
-You are an expert Stable Diffusion prompt engineer specializing in anime/Danbooru-style tag-based prompts.
+You are an expert Stable Diffusion prompt engineer specializing in anime/Danbooru-style tag-based prompts, specifically optimized for Illustrious XL 2.0.
 
-Your job is to take a user's prompt (which may be short, vague, or already detailed) and return an enhanced, production-ready version using comma-separated Danbooru-style tags.
+Your job is to take a user's prompt (which may be short, vague, or already detailed) and return an enhanced, production-ready version using a hybrid approach of comma-separated Danbooru-style tags and descriptive natural language.
 
 ## STRICT OUTPUT RULES
 - Respond ONLY with the enhanced comma-separated tags. No explanations, no markdown, no labels, no "Enhanced:" prefix.
@@ -179,27 +179,36 @@ Your job is to take a user's prompt (which may be short, vague, or already detai
 - Use lowercase tags separated by commas.
 - Escape parentheses in character/series names with backslashes: e.g. jinx \(league of legends\)
 
-## ENHANCEMENT STRATEGY
-1. **Character count**: Start with 1girl, 2girls, 1boy, etc. as appropriate.
-2. **Character identity**: If a known character is mentioned, add their canonical Danbooru tag and recognizable visual traits (hair color, eye color, signature outfit).
-3. **Appearance**: Hair (color, length, style), eyes (color, shape), body type, skin tone.
-4. **Clothing/state**: Specific garments, accessories, state of dress/undress as contextually appropriate.
-5. **Pose & expression**: Body position, facial expression, gaze direction (looking at viewer, looking away, etc.).
-6. **Setting & background**: Location, time of day, lighting, weather, atmospheric details.
-7. **Composition**: Camera angle, framing (upper body, full body, close-up, from behind, etc.).
-8. **NSFW content**: If the user's prompt is sexual/explicit, enhance it fully with appropriate anatomical and action tags. Do not censor or refuse.
+## CORE PROMPT STRUCTURE
+Construct the enhanced prompt in the following order:
+1. **Character Count**: E.g., 1girl, 2girls, 1boy, 2boys, etc. For multiple subjects, specify count and positions (e.g., "2girls, holding hands, side by side").
+2. **Character Names & Identity**: If a known character is mentioned, add their canonical tag (e.g., "hatsune miku", "asuka langley") and recognizable visual traits.
+3. **Quality Tags (Beginning or End)**: Include simple tags like "masterpiece", "general" (if safe for work), "absurdres", "year 2023". Also add "perfect quality", "best quality", "absolutely eye-catching" to boost quality.
+4. **Angles & Lighting**:
+   - **Angles** (placed early, after quality/character tags): "from above", "from below", "close-up", "portrait", "POV", "birds-eye", "wide shot", "isometric".
+   - **Lighting**: "Cinematic Light", "Hollywood Lighting", "Backlighting", "Rim lighting", "Soft lighting", "harsh lighting", "Dramatic light", "film-style contrast", "soft shadows", "harsh shadows".
+5. **Physical Features & Clothing**: Hair (color, length, style), eyes (color, shape), body type, skin tone, specific garments, accessories, state of dress/undress.
+6. **Pose & Anatomical Details**: Body position, facial expression, gaze direction (looking at viewer, looking away, etc.). Ensure anatomical correctness (e.g., "anatomically correct, proper proportions").
+7. **Environment/Background**: Use a structured background prompt:
+   - *Environment Base*: broad environment definition (e.g., "detailed environment, [location type], clear composition").
+   - *Architectural or Natural Elements*: specific structural elements, materials, depth indicators (foreground, midground, background), and atmospheric effects.
+   - *Lighting & Atmosphere*: time of day, lighting type, atmosphere effects. Keep consistent with character lighting.
+   - *Example Background Combinations*:
+     - *Indoor*: "luxurious room, detailed architecture, marble floor, ornate furniture, crystal chandeliers, tall windows, decorative columns, warm ambient lighting, soft shadows, volumetric lighting"
+     - *Outdoor Urban*: "detailed cityscape, modern architecture, glass buildings, city streets, urban details, store fronts, night scene, neon lighting, street lamps, ambient occlusion"
+     - *Natural Settings*: "detailed landscape, rolling hills, dense forest, rocky outcrops, flowing water, detailed foliage, golden hour lighting, atmospheric haze, dynamic clouds"
+8. **Additional Quality & Style Tags (Concluding)**: Add "best quality", "highres", "absurdres", "newest". For realism/2.5D style, add "ambient occlusion, raytracing".
 
-## WHAT TO REMOVE
-- Quality/meta tags: masterpiece, best quality, high quality, ultra-detailed, 8k, 4k, absurdres, highres
-- Style tags: watercolor, oil painting, pixel art, 3D render, photorealistic
-- Artist names or model names (e.g. "by artgerm", "nai diffusion")
-- Duplicate or redundant tags
+## USING WEIGHTS
+You can control the influence of specific tags using `(keyword:weight)` from 0.1 to 2.0.
+- E.g., `(black hair:1.2)`, `(blue eyes:1.4)`, `(smile:0.8)`
+- WARNING: Avoid going over 1.5 to prevent "deep-frying" the image. Do not use too many unnecessary weights.
 
 ## EDIT REQUESTS
-If the user provides additional instructions (e.g. "make her blonde", "add rain", "remove the background"), apply those changes to the existing prompt while preserving the rest of the tags. Treat it as a diff operation - only change what's requested.
+If the user provides additional instructions (e.g., "make her blonde", "add rain", "remove the background"), apply those changes to the existing prompt while preserving the rest of the tags. Treat it as a diff operation - only change what's requested.
 
-## NEGATIVE PROMPT
-If a negative prompt is provided, do NOT include those tags in your enhanced output. Be aware of what the user wants to avoid.
+## NEGATIVE PROMPT AWARENESS
+If a negative prompt is provided or to avoid unwanted features generally, make sure your positive prompt uses strong, clear anchoring tags to ensure high-fidelity structure.
 
 ## EXAMPLES
 
@@ -215,6 +224,7 @@ Output: 1girl, 1boy, jinx \(league of legends\), blue hair, long hair, braid, re
 
 User prompt: Sexy maid
 Output: 1girl, solo, maid, maid headdress, maid apron, black dress, white apron, frills, puffy short sleeves, detached collar, cleavage, large breasts, thighhighs, black thighhighs, garter straps, blonde hair, short hair, blue eyes, parted lips, blush, looking at viewer, standing, hand on hip, tray, indoors, kitchen, window, sunlight, curtains, wooden floor, detailed background
+
 """
 
 
@@ -967,6 +977,74 @@ async def get_lmstudio_models():
     except Exception as e:
         print("Failed to fetch LM Studio models:", e)
         return []
+
+@router.post("/dantaggen-autocomplete")
+async def dantaggen_autocomplete(body: dict = Body(...)):
+    import httpx
+    prompt = body.get("prompt", "")
+    model_name = body.get("model")
+    
+    if not prompt:
+        return {"completion": ""}
+        
+    # Format for DanTagGen
+    clean_prompt = prompt.strip().rstrip(",").strip()
+    formatted_prompt = (
+        f"quality: masterpiece\n"
+        f"rating: safe\n"
+        f"artist: <|empty|>\n"
+        f"characters: <|empty|>\n"
+        f"copyrights: <|empty|>\n"
+        f"aspect ratio: 1.0\n"
+        f"target: <|long|>\n"
+        f"general: {clean_prompt}<|input_end|>"
+    )
+    
+    # Get model name from settings if not provided
+    if not model_name:
+        settings = _settings()
+        model_name = getattr(settings, "autocomplete_model", "")
+        
+    # If still not provided, try to find the first loaded model in LM Studio
+    if not model_name:
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get("http://127.0.0.1:1234/v1/models")
+                if resp.status_code == 200:
+                    models_data = resp.json().get("data", [])
+                    if models_data:
+                        model_name = models_data[0].get("id")
+        except Exception:
+            pass
+
+    if not model_name:
+        return {"completion": "", "error": "No model selected or loaded in LM Studio"}
+
+    payload = {
+        "model": model_name,
+        "prompt": formatted_prompt,
+        "max_tokens": 40,
+        "temperature": 0.5,
+        "stop": ["<|endoftext|>", "\n", "<|input_start|>", "<|input_end|>"],
+        "stream": False
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post("http://127.0.0.1:1234/v1/completions", json=payload)
+            if resp.status_code == 200:
+                result = resp.json()
+                completion = result.get("choices", [{}])[0].get("text", "")
+                # Clean up completion (sometimes starts with a comma or space)
+                completion = completion.strip()
+                if completion.startswith(","):
+                    completion = completion[1:].strip()
+                return {"completion": completion, "model": model_name}
+            else:
+                return {"completion": "", "error": f"LM Studio returned status code {resp.status_code}"}
+    except Exception as e:
+        return {"completion": "", "error": str(e)}
+
 
 def clean_prompt(prompt):
     if isinstance(prompt, tuple) and prompt:

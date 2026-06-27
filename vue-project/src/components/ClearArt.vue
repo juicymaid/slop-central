@@ -23,6 +23,31 @@ const isVideo = computed(() => {
 })
 
 const urls = [
+
+
+    "/files/comfyui/RMBGVID/vid_00001.webm",
+    "/files/comfyui/RMBGVID/vid_00002.webm",
+    "/files/comfyui/RMBGVID/vid_00003.webm",
+    "/files/comfyui/RMBGVID/vid_00004.webm",
+    "/files/comfyui/RMBGVID/vid_00005.webm",
+    "/files/comfyui/RMBGVID/vid_00006.webm",
+    "/files/comfyui/RMBGVID/vid_00006.webm",
+    "/files/comfyui/RMBGVID/vid_00007.webm",
+    "/files/comfyui/RMBGVID/vid_00008.webm",
+    "/files/comfyui/RMBGVID/vid_00009.webm",
+    "/files/comfyui/RMBGVID/vid_00010.webm",
+    "/files/comfyui/RMBGVID/vid_00011.webm",
+    "/files/comfyui/RMBGVID/vid_00012.webm",
+    "/files/comfyui/RMBGVID/vid_00013.webm",
+    "/files/comfyui/RMBGVID/vid_00014.webm",
+    "/files/comfyui/RMBGVID/vid_00015.webm",
+    "/files/comfyui/RMBGVID/vid_00016.webm",
+    "/files/comfyui/RMBGVID/vid_00017.webm",
+    "/files/comfyui/RMBGVID/vid_00018.webm",
+    "/files/comfyui/RMBGVID/vid_00019.webm",
+    "/files/comfyui/RMBGVID/vid_00020.webm",
+
+
     "https://cdn.donmai.us/original/27/3b/__toutetsu_yuuma_touhou_drawn_by_chups__273bfc163bb1321438cef17f0a88ae6c.png",
     "https://cdn.donmai.us/original/e3/81/__suzakunomiya_karin_taimashi_ayano_drawn_by_kongeraatio__e3812a63bd65aba49d52467347ccea5d.png",
     "https://cdn.donmai.us/original/23/4f/__katsuragi_marina_and_exs_tia_kouyoku_senki_exs_tia_drawn_by_inoino__234f45138b6c40feb2707b63d2793d24.png",
@@ -137,6 +162,9 @@ const urls = [
     "https://wimg.rule34.xxx//images/920/729a779b3a0efffee7f91a699b558dbb66a8e234.gif",
     "https://wimg.rule34.xxx//images/2470/f196a8a3b2f5f11189132f59029d8640.gif",
     "https://wimg.rule34.xxx//images/1023/583677c5d5b2b1f9d16321b33b0c39f9.gif",
+    "https://wimg.rule34.xxx//images/2735/3c50885ca392f5d03a4467f575cd3ba7.gif",
+    "https://wimg.rule34.xxx//images/585/005df4eab3591fe436aca4b6ba1d64c0.gif",
+
 ]
 
 function isAnimatedUrl(targetUrl) {
