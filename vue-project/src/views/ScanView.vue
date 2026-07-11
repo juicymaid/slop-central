@@ -66,6 +66,50 @@
                 <span class="relative z-10">Trash</span>
             </RouterLink>
         </div>
+
+        <!-- SigLIP 2 Embeddings Panel -->
+        <div class="mb-12 p-6 rounded-[2rem] bg-[#14141A] border border-[#2A2A35]">
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+                <div>
+                    <h2 class="text-xl font-sans font-semibold text-[#FAF8F5]">Neural Search & Recommendations (SigLIP 2)</h2>
+                    <p class="text-sm text-[#FAF8F5]/60 mt-1">Generates 768-dimensional deep visual embeddings to power similarity search and recommendations.</p>
+                </div>
+                <div class="flex gap-3">
+                    <button @click="startSiglipIndexing(false)"
+                        class="magnetic-button bg-[#2A2A35] hover:bg-[#1A1A24] text-[#FAF8F5] py-2 px-6 rounded-full text-xs font-sans font-semibold border border-[#2A2A35] flex items-center gap-2 transition-all cursor-pointer"
+                        :disabled="siglipStatus.status === 'running'">
+                        {{ siglipStatus.status === 'running' ? 'Indexing...' : 'Update Embeddings' }}
+                    </button>
+                    <button @click="startSiglipIndexing(true)"
+                        class="magnetic-button bg-[#1A1A24] hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/30 text-[#FAF8F5]/60 py-2 px-6 rounded-full text-xs font-sans font-semibold border border-[#2A2A35] flex items-center gap-2 transition-all cursor-pointer"
+                        :disabled="siglipStatus.status === 'running'">
+                        Force Rebuild All
+                    </button>
+                </div>
+            </div>
+
+            <!-- Status info -->
+            <div class="flex flex-col gap-2 font-mono text-xs uppercase tracking-widest text-[#FAF8F5]/60">
+                <div class="flex justify-between">
+                    <span>Status:</span>
+                    <span :class="siglipStatus.status === 'running' ? 'text-[#C9A84C]' : 'text-green-500'">{{ siglipStatus.status }}</span>
+                </div>
+                <div v-if="siglipStatus.status === 'running'" class="w-full mt-2">
+                    <div class="h-1 w-full bg-[#0D0D12] overflow-hidden mb-2">
+                        <div class="h-full bg-[#C9A84C] transition-all duration-300 ease-out"
+                            :style="{ width: `${siglipProgress}%` }"></div>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>Progress:</span>
+                        <span>{{ siglipStatus.processed }} / {{ siglipStatus.total }} ({{ siglipProgress }}%)</span>
+                    </div>
+                </div>
+                <div class="flex justify-between mt-1">
+                    <span>Message:</span>
+                    <span class="normal-case text-right text-gray-400 max-w-[70%] truncate">{{ siglipStatus.message || 'No active task.' }}</span>
+                </div>
+            </div>
+        </div>
         <p v-if="error" class="text-red-500 font-mono tracking-wide text-sm mt-4">{{ errorMessage }}</p>
 
         <!-- Loading Progress Bar -->
@@ -146,7 +190,7 @@
 <script setup>
 import { GetFromApi, PostToApi, apiUrl, wsUrl } from '@/api';
 import ClearArt from '@/components/ClearArt.vue';
-import { ref, onMounted, onBeforeUnmount, inject } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, inject } from 'vue';
 
 // State for scan
 const isScanning = ref(false);
@@ -170,6 +214,54 @@ const completedStats = ref({
 const phasInProgress = ref(false);
 const isPruning = ref(false);
 const isDarkMode = inject('isDarkMode', ref(false));
+
+// State for SigLIP embeddings builder
+const siglipStatus = ref({ status: 'idle', processed: 0, total: 0, message: '' });
+const siglipInterval = ref(null);
+const siglipProgress = computed(() => {
+    if (siglipStatus.value.total > 0) {
+        return Math.round((siglipStatus.value.processed / siglipStatus.value.total) * 100);
+    }
+    return 0;
+});
+
+const fetchSiglipStatus = async () => {
+    try {
+        const res = await GetFromApi("ai-search/siglip-status");
+        if (res) {
+            siglipStatus.value = res;
+        }
+    } catch (e) {
+        console.error("Error fetching SigLIP status:", e);
+    }
+};
+
+const startSiglipIndexing = async (force = false) => {
+    try {
+        await PostToApi(`ai-search/rebuild-siglip?force=${force}`);
+        await fetchSiglipStatus();
+        startSiglipPolling();
+    } catch (e) {
+        console.error("Error starting SigLIP indexing:", e);
+    }
+};
+
+const startSiglipPolling = () => {
+    if (siglipInterval.value) return;
+    siglipInterval.value = setInterval(async () => {
+        await fetchSiglipStatus();
+        if (siglipStatus.value.status !== 'running') {
+            stopSiglipPolling();
+        }
+    }, 1000);
+};
+
+const stopSiglipPolling = () => {
+    if (siglipInterval.value) {
+        clearInterval(siglipInterval.value);
+        siglipInterval.value = null;
+    }
+};
 
 // WebSocket connection for scan
 const connectWebSocket = () => {
@@ -349,11 +441,16 @@ const pruneImages = async () => {
     }
 };
 
-onMounted(() => {
-    // Nothing to fetch on mount - images will be discovered during scan
+onMounted(async () => {
+    // Load current SigLIP status
+    await fetchSiglipStatus();
+    if (siglipStatus.value.status === 'running') {
+        startSiglipPolling();
+    }
 });
 
 onBeforeUnmount(() => {
+    stopSiglipPolling();
     // Close WebSocket connection when component is unmounted
     if (websocket.value && websocket.value.readyState !== WebSocket.CLOSED) {
         websocket.value.close();

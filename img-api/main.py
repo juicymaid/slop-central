@@ -149,6 +149,13 @@ async def _startup_init():
     except Exception as e:
         print(f"Failed to start background data load: {e}")
 
+    # Load SigLIP embeddings in memory
+    try:
+        import siglip_utils
+        siglip_utils.load_siglip_embeddings()
+    except Exception as e:
+        print(f"Failed to load SigLIP embeddings: {e}")
+
     # Start RAG background indexing (after a small delay to let image DB load first)
     def _delayed_rag_index():
         import time as _time

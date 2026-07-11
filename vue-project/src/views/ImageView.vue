@@ -497,10 +497,11 @@
     <div class="flex justify-between items-center mb-6">
       <h2 class="text-xl font-bold text-gray-900 dark:text-white">More like this</h2>
       <select v-model="similarityMode" @change="RefreshRecommendations"
-        class="bg-[#1A1A24] border border-[#2A2A35] text-[#FAF8F5] rounded-lg px-3 py-1.5 focus:outline-none focus:border-[#C9A84C] text-sm">
+        class="bg-[#1A1A24] border border-[#2A2A35] text-[#FAF8F5] rounded-lg px-3 py-1.5 focus:outline-none focus:border-[#C9A84C] text-sm cursor-pointer">
         <option value="full">Full Similarity</option>
         <option value="prompt">Prompt Only</option>
         <option value="hash">Visual Only</option>
+        <option value="embedding">Neural (SigLIP)</option>
       </select>
     </div>
     <!-- Rec Error -->

@@ -370,6 +370,56 @@ def get_recommended_images():
     W_NEG_NEIGHBOR_PROMPT = 0.15
     W_PHASH_POS_NN = 0.15
     W_PHASH_NEG_NN = 0.10
+    W_SIGLIP = 0.40
+
+    # SigLIP visual recommendation contributions
+    import siglip_utils
+    siglip_score = np.zeros(unrated_indices.size, dtype=np.float32)
+    
+    if siglip_utils.siglip_vectors is not None and len(siglip_utils.siglip_ids) > 0:
+        siglip_matrix = siglip_utils.get_aligned_siglip_matrix(images)
+        
+        pos_profile_siglip = None
+        if np.any(high_rated_mask):
+            if ts_rated_vals.size >= 2:
+                ts_min = ts_rated_vals.min()
+                ts_max = ts_rated_vals.max()
+                denom = (ts_max - ts_min) if (ts_max - ts_min) > 1e-8 else 1.0
+                ts_norm = np.zeros_like(ts_crs, dtype=np.float32)
+                ts_norm[rated_by_ts_mask] = (ts_crs[rated_by_ts_mask] - ts_min) / denom
+                w = ts_norm[high_rated_mask]
+            else:
+                w = (ratings[high_rated_mask] - 3.0) / 2.0
+                
+            if w.size > 0 and np.sum(w) > 0:
+                pos_profile_siglip = siglip_matrix[high_rated_mask].T.dot(w.astype(np.float32)).astype(np.float32)
+                norm = np.linalg.norm(pos_profile_siglip)
+                if norm > 1e-8:
+                    pos_profile_siglip /= norm
+
+        neg_profile_siglip = None
+        if np.any(low_rated_mask):
+            if ts_rated_vals.size >= 2:
+                ts_min = ts_rated_vals.min()
+                ts_max = ts_rated_vals.max()
+                denom = (ts_max - ts_min) if (ts_max - ts_min) > 1e-8 else 1.0
+                ts_norm = np.zeros_like(ts_crs, dtype=np.float32)
+                ts_norm[rated_by_ts_mask] = (ts_crs[rated_by_ts_mask] - ts_min) / denom
+                w = (1.0 - ts_norm[low_rated_mask])
+            else:
+                w = (3.0 - ratings[low_rated_mask]) / 2.0
+                
+            if w.size > 0 and np.sum(w) > 0:
+                neg_profile_siglip = siglip_matrix[low_rated_mask].T.dot(w.astype(np.float32)).astype(np.float32)
+                norm = np.linalg.norm(neg_profile_siglip)
+                if norm > 1e-8:
+                    neg_profile_siglip /= norm
+                    
+        unrated_vectors_siglip = siglip_matrix[unrated_mask]
+        if pos_profile_siglip is not None:
+            siglip_score += unrated_vectors_siglip @ pos_profile_siglip
+        if neg_profile_siglip is not None:
+            siglip_score -= unrated_vectors_siglip @ neg_profile_siglip
 
     # Final base score (only for unrated)
     recommendation_score = (
@@ -387,6 +437,7 @@ def get_recommended_images():
         - W_PHASH_NEG_NN * phash_neg_nn
         + W_RECENCY * recency_score
         + W_JITTER * random_jitter
+        + W_SIGLIP * siglip_score
     )
 
     # Apply MMR reranking on unrated to favor diversity and novelty

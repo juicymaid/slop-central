@@ -247,6 +247,40 @@ def get_image_file(image_id: str):
 
     return FileResponse(file_path)
 
+
+@router.get("/image-thumbnail/{image_id}")
+def get_image_thumbnail(image_id: int, size: int = Query(128)):
+    image = utils.images_data.get(image_id)
+    if not image:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    file_path = image.get("Path")
+    if not file_path:
+        raise HTTPException(status_code=404, detail="Path not specified")
+        
+    file_path = file_path.replace("/files", utils.api_file_root)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Original file not found")
+
+    # Setup cache directory
+    cache_dir = os.path.join(utils.api_file_root, "thumbnails_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_path = os.path.join(cache_dir, f"{image_id}_{size}.jpg")
+
+    if os.path.exists(cache_path):
+        return FileResponse(cache_path, media_type="image/jpeg")
+
+    # Generate thumbnail
+    try:
+        from PIL import Image as PILImage
+        img = PILImage.open(file_path)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        img.thumbnail((size, size))
+        img.save(cache_path, "JPEG", quality=85)
+        return FileResponse(cache_path, media_type="image/jpeg")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate thumbnail: {str(e)}")
 @router.get("/all-images")
 def get_all_images(
     page: int = 1,
@@ -303,10 +337,27 @@ def get_all_images(
     return result
 
 @router.get("/similar-images/{image_id}")
-def get_similar_images(image_id: int, page: int = 1, per_page: int = 5, mode: str = Query("full", description="Similarity mode: full, prompt, hash")):
+def get_similar_images(image_id: int, page: int = 1, per_page: int = 5, mode: str = Query("full", description="Similarity mode: full, prompt, hash, embedding, clip")):
     target = utils.images_data.get(image_id)
     if not target:
         raise HTTPException(status_code=404, detail="Target image not found")
+
+    if mode in ("embedding", "clip"):
+        import siglip_utils
+        similar_pairs = siglip_utils.get_similar_images_by_siglip(image_id, top_k=page * per_page)
+        
+        start = (page - 1) * per_page
+        result = []
+        for iid, score in similar_pairs[start:]:
+            img = utils.images_data.get(iid)
+            if not img:
+                continue
+            copy_img = img.copy()
+            copy_img.pop("tags_set", None)
+            copy_img["similarity_score"] = round(score, 3)
+            copy_img = add_boards_info(copy_img)
+            result.append(_sanitize_image_dict(copy_img))
+        return result
 
     candidates = []
     for img in utils.all_images:
@@ -473,7 +524,7 @@ def search_images(
     query: str = Query(..., description="Search query"),
     page: int = 1,
     per_page: int = 10,
-    sort: str = Query("new", description="Sort order: old, new, top, random, relevance, predict, nsfw, sfw"),
+    sort: str = Query("new", description="Sort order: old, new, top, random, relevance, predict, nsfw, sfw, ai"),
     can_return_empty: bool = Query(False, description="Allow empty results")
 ):
     _ensure_index()
@@ -627,6 +678,29 @@ def search_images(
         ids_list.sort(key=lambda i: _nsfw_sort_key(utils.images_data.get(i)), reverse=True)
     elif sort == "sfw":
         ids_list.sort(key=lambda i: _sfw_sort_key(utils.images_data.get(i)), reverse=True)
+    elif sort == "ai":
+        import siglip_utils
+        if siglip_utils.siglip_vectors is None or len(siglip_utils.siglip_ids) == 0:
+            raise HTTPException(status_code=400, detail="SigLIP embeddings not built yet. Please rebuild embeddings in the Scanner page.")
+        try:
+            from .ai_search import get_siglip_cpu
+            import torch
+            model, processor = get_siglip_cpu()
+            inputs = processor(text=[query], return_tensors="pt", padding=True)
+            with torch.no_grad():
+                text_features = model.get_text_features(**inputs)
+                text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+                q_vec = text_features.cpu().numpy().astype(np.float32)[0]
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to embed search query: {str(e)}")
+            
+        def get_siglip_similarity(cid):
+            idx = siglip_utils.siglip_id_to_index.get(cid)
+            if idx is not None:
+                return float(siglip_utils.siglip_vectors[idx] @ q_vec)
+            return 0.0
+            
+        ids_list.sort(key=get_siglip_similarity, reverse=True)
     else:
         btok_set = set(basic_tokens)
         def rel(i):

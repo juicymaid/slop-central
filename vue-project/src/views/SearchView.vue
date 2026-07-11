@@ -100,7 +100,8 @@ const sortOptions = [
   { label: 'Old', value: 'old' },
   { label: 'Random', value: 'random' },
   { label: 'Top', value: 'top' },
-  { label: 'Relevance ', value: 'relevance' }
+  { label: 'Relevance ', value: 'relevance' },
+  { label: 'AI Search', value: 'ai' }
 ]
 
 // Update URL parameters

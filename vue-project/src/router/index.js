@@ -142,7 +142,11 @@ const router = createRouter({
       name: "hentai-viewer",
       component: () => import("../views/hentaiViewer.vue")
     },
-
+    {
+      path: "/map",
+      name: "map",
+      component: () => import("../views/EmbeddingMapView.vue")
+    },
   ],
 })
 

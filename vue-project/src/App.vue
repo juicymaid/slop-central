@@ -342,12 +342,20 @@ async function GetSuggestions() {
           <!-- Posts link -->
           <RouterLink to="/posts">
             <button
-              class="magnetic-button px-4 py-2.5 rounded-full text-sm font-sans font-medium text-[#FAF8F5]/80 hover:text-[#FAF8F5] transition-colors"
+              class="magnetic-button px-4 py-2.5 rounded-full text-sm font-sans font-medium text-[#FAF8F5]/80 hover:text-[#FAF8F5] transition-colors cursor-pointer"
               aria-label="Posts">
               <span class="relative z-10">Posts</span>
             </button>
           </RouterLink>
 
+          <!-- Map link -->
+          <RouterLink to="/map">
+            <button
+              class="magnetic-button px-4 py-2.5 rounded-full text-sm font-sans font-medium text-[#FAF8F5]/80 hover:text-[#FAF8F5] transition-colors cursor-pointer"
+              aria-label="Map">
+              <span class="relative z-10">Map</span>
+            </button>
+          </RouterLink>
 
 
           <!-- Scan -->
