@@ -15,6 +15,7 @@ router = APIRouter()
 IMAGES_FILE = "images.json"
 LIKES_FILE = "likes.json"
 CLICKS_FILE = "clicks.json"
+SHOWS_FILE = "shows.json"
 BOARDS_FILE = "boards.json"
 TRASH_FILE = "trash.json"
 
@@ -23,6 +24,7 @@ images_data = {}
 all_images = []  # used as a list to support append
 raw_all_images = []  # used to store original images without modifications
 clicks_data = {}
+shows_data = {}
 boards_data = {}  # { board_id: { "id": int, "name": str, "images": [int, ...] } }
 trash_data = {}  # { image_id: { "TrashedAt": unix_timestamp } }
 
@@ -170,12 +172,13 @@ def load_images():
         tags_set = {tag.strip().lower() for tag in prompt.split(",") if tag.strip()}
         image["tags_set"] = tags_set
 
-        # Initialize vote counts if they don't exist.
+        # Initialize vote counts, clicks, and shows.
         if "Likes" not in image:
             image["Likes"] = 0
         if "Dislikes" not in image:
             image["Dislikes"] = 0
-
+        image["Clicks"] = 0
+        image["Shows"] = 0
         images_data[image["Id"]] = image
         # Exclude trashed images from the active list
         if image["Id"] not in trash_data:
@@ -192,13 +195,14 @@ def load_images():
 
     load_votes()
     load_clicks()
+    load_shows()
 
 def save_images():
 
     if not raw_all_images:
         raise ValueError("No images to save.")
 
-    _runtime_fields = {"tags_set", "pHash", "Likes", "Dislikes", "Rating", "Clicks"}
+    _runtime_fields = {"tags_set", "pHash", "Likes", "Dislikes", "Rating", "Clicks", "Shows"}
     clean = [{k: v for k, v in img.items() if k not in _runtime_fields} for img in raw_all_images]
 
     with open(IMAGES_FILE, "w", encoding="utf-8") as f:
@@ -237,6 +241,30 @@ def save_clicks():
         clicks[str(img_id)] = img.get("Clicks", 0)
     with open(CLICKS_FILE, "w", encoding="utf-8") as f:
         json.dump(clicks, f, indent=2)
+
+def load_shows():
+    global shows_data
+    if os.path.exists(SHOWS_FILE):
+        try:
+            with open(SHOWS_FILE, "r", encoding="utf-8") as f:
+                shows_data = json.load(f)
+        except Exception as e:
+            print(f"Error loading {SHOWS_FILE}: {e}")
+            shows_data = {}
+        for img_id, show in shows_data.items():
+            img = images_data.get(int(img_id))
+            if img:
+                img["Shows"] = show
+
+def save_shows():
+    shows = {}
+    for img_id, img in images_data.items():
+        shows[str(img_id)] = img.get("Shows", 0)
+    try:
+        with open(SHOWS_FILE, "w", encoding="utf-8") as f:
+            json.dump(shows, f, indent=2)
+    except Exception as e:
+        print(f"Error saving {SHOWS_FILE}: {e}")
 
 def load_boards():
     global boards_data
@@ -755,4 +783,4 @@ def unload_lm_studio_models_sync(base_url="http://127.0.0.1:1234"):
             return False
     except Exception as e:
         print(f"[VRAM] Error unloading LM Studio models: {e}")
-        return False
+        return False

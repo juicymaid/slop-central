@@ -39,9 +39,15 @@
                         </button>
                     </div>
                     <div
-                        class="absolute bottom-0 left-0 p-4 bg-[#0D0D12]/40 backdrop-blur-md rounded-tr-[2rem] flex items-center border-t border-r border-[#FAF8F5]/10">
-                        <Eye class="w-4 h-4 text-[#C9A84C]" />
-                        <p class="ml-2 text-[#FAF8F5] font-mono text-sm">{{ pin.Clicks }}</p>
+                        class="absolute bottom-0 left-0 p-4 bg-[#0D0D12]/40 backdrop-blur-md rounded-tr-[2rem] flex items-center border-t border-r border-[#FAF8F5]/10 gap-3">
+                        <div class="flex items-center gap-1" title="Views">
+                            <Eye class="w-4 h-4 text-[#C9A84C]" />
+                            <p class="text-[#FAF8F5] font-mono text-sm">{{ pin.Clicks }}</p>
+                        </div>
+                        <div class="flex items-center gap-1" title="Feed Displays">
+                            <Tv class="w-4 h-4 text-[#C9A84C]/80" />
+                            <p class="text-[#FAF8F5] font-mono text-sm">{{ pin.Shows || 0 }}</p>
+                        </div>
                     </div>
                     <div v-if="pin.recommended_boards && !board"
                         class="absolute top-0 left-0 right-0 p-4 flex items-center justify-between cursor-pointer">
@@ -91,7 +97,7 @@
 <script setup>
 import { RouterLink } from 'vue-router'
 import { ImageSrc, PostToApi } from '../api'
-import { Star, Pin, ChevronDown, Eye, Trash } from 'lucide-vue-next'
+import { Star, Pin, ChevronDown, Eye, Trash, Tv } from 'lucide-vue-next'
 import { ref, defineProps, defineEmits, onMounted, onBeforeUnmount } from 'vue'
 import BoardDropDown from './BoardDropDown.vue'
 

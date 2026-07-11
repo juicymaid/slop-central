@@ -25,16 +25,23 @@ const handleKeyDown = (e) => {
   if (e.key === 'Control') {
     document.body.classList.add('ctrl-pressed')
   }
+  if (e.key === 'Shift') {
+    document.body.classList.add('shift-pressed')
+  }
 }
 
 const handleKeyUp = (e) => {
   if (e.key === 'Control') {
     document.body.classList.remove('ctrl-pressed')
   }
+  if (e.key === 'Shift') {
+    document.body.classList.remove('shift-pressed')
+  }
 }
 
 const handleDevBlurFocusLoss = () => {
   document.body.classList.remove('ctrl-pressed')
+  document.body.classList.remove('shift-pressed')
 }
 
 onMounted(() => {

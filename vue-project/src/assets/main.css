@@ -206,3 +206,7 @@ body.dev-blur-enabled.ctrl-pressed *:hover > img,
 body.dev-blur-enabled.ctrl-pressed a:hover img {
   filter: none;
 }
+
+body.dev-blur-enabled.shift-pressed img {
+  filter: none !important;
+}

@@ -125,10 +125,9 @@ def get_recommended_images():
 
     prompts = [(img.get("Prompt") or img.get("prompt") or "") for img in images]
     clicks = np.array([img.get("Clicks", 0) for img in images], dtype=np.float32)
-    # Sanitize legacy 1–5 ratings: None/'' -> 0.0
+    shows = np.array([img.get("Shows", 0) for img in images], dtype=np.float32)
     ratings = np.array([float(img.get("Rating", 0) or 0) for img in images], dtype=np.float32)
 
-    # ---- TrueSkill conservative ratings integration ----
     def _img_id(img):
         for k in ("Id", "id", "image_id", "imageId", "ID"):
             if k in img and img[k] is not None:
@@ -138,65 +137,82 @@ def get_recommended_images():
                     return None
         return None
 
-    ts_crs_list = []
-    for img in images:
+    # Gather saved image IDs from all boards
+    saved_image_ids = set()
+    try:
+        for board_id, board in utils.boards_data.items():
+            for iid in board.get("images", []):
+                try:
+                    saved_image_ids.add(int(iid))
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"Error gathering boards_data: {e}")
+
+    # Compute preference scores based on star ratings and board saves:
+    # 5 stars -> 1.0 (amazing)
+    # 4 stars -> 0.5 (good)
+    # 3 stars -> 0.0 (ok/mediocre)
+    # 2 stars -> -0.5 (bad)
+    # 1 star  -> -1.0 (hated)
+    # Board save -> strong positive (1.0)
+    pref_scores = np.zeros(len(images), dtype=np.float32)
+    for i, img in enumerate(images):
         iid = _img_id(img)
-        if iid is None:
-            ts_crs_list.append(0.0)
-        else:
-            try:
-                ts_crs_list.append(float(rate.get_conservative_rating(iid)))
-            except Exception:
-                ts_crs_list.append(0.0)
-    ts_crs = np.array(ts_crs_list, dtype=np.float32)
+        rating = ratings[i]
+        score = 0.0
+        if rating == 5:
+            score = 1.0
+        elif rating == 4:
+            score = 0.5
+        elif rating == 3:
+            score = 0.0
+        elif rating == 2:
+            score = -0.5
+        elif rating == 1:
+            score = -1.0
+            
+        if iid is not None and iid in saved_image_ids:
+            score = max(score, 1.0)
+        pref_scores[i] = score
 
-    rated_by_ts_mask = ts_crs > 0.01  # matches routes.rate.is_unrated
-    ts_rated_vals = ts_crs[rated_by_ts_mask]
-    
-    # Exclude ALL images with legacy 1-5 star ratings from candidates
-    has_star_rating_mask = ratings > 0  # any star rating (1-5)
+    # Profile masks
+    high_rated_mask = pref_scores > 0.01
+    low_rated_mask = pref_scores < -0.01
 
-    # Use TrueSkill for profile building, but exclude star-rated images from candidates
-    if ts_rated_vals.size >= 5:
-        p25 = float(np.percentile(ts_rated_vals, 25))
-        p75 = float(np.percentile(ts_rated_vals, 75))
-        high_rated_mask = rated_by_ts_mask & (ts_crs >= p75)
-        low_rated_mask = rated_by_ts_mask & (ts_crs <= p25)
-        # Candidates: TrueSkill unrated AND no star rating
-        unrated_mask = ~rated_by_ts_mask & ~has_star_rating_mask
-        seen_mask = (clicks > 0) | rated_by_ts_mask | has_star_rating_mask
-    else:
-        # Fallback: use star ratings for profiles but still exclude star-rated from candidates
-        high_rated_mask = ratings >= 4
-        low_rated_mask = ratings <= 2
-        # Candidates: no star rating at all
-        unrated_mask = ~has_star_rating_mask
-        seen_mask = (clicks > 0) | has_star_rating_mask
+    # Candidates (must have no star rating and not saved in a board)
+    is_candidate = (ratings == 0)
+    if saved_image_ids:
+        is_candidate &= np.array([(_img_id(img) not in saved_image_ids) for img in images], dtype=bool)
+
+    # Limit by clicks (views) and feed shows
+    max_clicks_allowed = 3
+    max_shows_allowed = 5
+
+    unrated_mask = is_candidate & (clicks < max_clicks_allowed) & (shows < max_shows_allowed)
+
+    # Dynamic relaxation fallback if candidate pool is too small
+    total_candidates = np.sum(unrated_mask)
+    if total_candidates < 50:
+        unrated_mask = is_candidate & (clicks < max_clicks_allowed * 2) & (shows < max_shows_allowed * 2)
+        total_candidates = np.sum(unrated_mask)
+        if total_candidates < 50:
+            unrated_mask = is_candidate
+
+    # Seen mask includes clicked, shown, rated, or board-saved images
+    seen_mask = (clicks > 0) | (shows > 0) | (ratings > 0) | (pref_scores != 0)
 
     # Fast TF-IDF (with basic tuning)
     vectorizer = TfidfVectorizer(max_features=5000, stop_words="english", sublinear_tf=True, norm="l2")
     try:
         tag_matrix = vectorizer.fit_transform(prompts)  # csr, l2-normalized
     except ValueError:
-        # empty vocabulary (e.g., all prompts missing) -> zero matrix fallback
         tag_matrix = csr_matrix((len(prompts), 1), dtype=np.float32)
 
-    # Profiles (weighted)
+    # Profiles (weighted by preference score magnitude)
     pos_profile = None
     if np.any(high_rated_mask):
-        # TS-based weights if available
-        if ts_rated_vals.size >= 2:
-            # normalize across TS-rated to [0,1]
-            ts_min = ts_rated_vals.min()
-            ts_max = ts_rated_vals.max()
-            denom = (ts_max - ts_min) if (ts_max - ts_min) > 1e-8 else 1.0
-            ts_norm = np.zeros_like(ts_crs, dtype=np.float32)
-            ts_norm[rated_by_ts_mask] = (ts_crs[rated_by_ts_mask] - ts_min) / denom
-            w = ts_norm[high_rated_mask]
-        else:
-            # fallback to star ratings as before
-            w = (ratings[high_rated_mask] - 3.0) / 2.0  # 4->0.5, 5->1.0
-
+        w = pref_scores[high_rated_mask]
         if w.size > 0 and np.sum(w) > 0:
             pos_profile = tag_matrix[high_rated_mask].T.dot(w.astype(np.float32)).astype(np.float32)
             norm = np.linalg.norm(pos_profile)
@@ -205,32 +221,20 @@ def get_recommended_images():
 
     neg_profile = None
     if np.any(low_rated_mask):
-        if ts_rated_vals.size >= 2:
-            ts_min = ts_rated_vals.min()
-            ts_max = ts_rated_vals.max()
-            denom = (ts_max - ts_min) if (ts_max - ts_min) > 1e-8 else 1.0
-            ts_norm = np.zeros_like(ts_crs, dtype=np.float32)
-            ts_norm[rated_by_ts_mask] = (ts_crs[rated_by_ts_mask] - ts_min) / denom
-            # stronger weight for lower TS ratings
-            w = (1.0 - ts_norm[low_rated_mask])
-        else:
-            w = (3.0 - ratings[low_rated_mask]) / 2.0  # 2->0.5, 1->1.0
-
+        w = -pref_scores[low_rated_mask]
         if w.size > 0 and np.sum(w) > 0:
             neg_profile = tag_matrix[low_rated_mask].T.dot(w.astype(np.float32)).astype(np.float32)
             norm = np.linalg.norm(neg_profile)
             if norm > 1e-8:
                 neg_profile /= norm
 
-    # Candidate vectors - these are the items we want to recommend (no star ratings)
+    # Candidate vectors
     unrated_indices = np.where(unrated_mask)[0]
     unrated_vectors = tag_matrix[unrated_mask]
     seen_vectors = tag_matrix[seen_mask]
 
-    # If no unrated candidates exist, return empty (don't recommend already-rated items)
     if unrated_indices.size == 0:
         return []
-
     # Tag-based relevance
     tag_score = np.zeros(unrated_vectors.shape[0], dtype=np.float32)
     if pos_profile is not None:
@@ -361,16 +365,17 @@ def get_recommended_images():
     W_PHASH_POS = 0.25
     W_PHASH_NEG = 0.20
     W_PHASH_SEEN = 0.20
-    W_CLICK_SEEN = 0.30
     W_RECENCY = 0.20
-    W_JITTER = 0.05
-    W_OLD_RATING = 0.20
+    W_JITTER = 0.15  # Increased jitter for more randomness
     # New neighbor-sim weights (promote similarity to likes, demote similarity to dislikes)
     W_POS_NEIGHBOR_PROMPT = 0.25
     W_NEG_NEIGHBOR_PROMPT = 0.15
     W_PHASH_POS_NN = 0.15
     W_PHASH_NEG_NN = 0.10
     W_SIGLIP = 0.40
+    # Penalties for clicks (views) and shows in the feed
+    W_CLICK_PENALTY = 0.40
+    W_SHOW_PENALTY = 0.20
 
     # SigLIP visual recommendation contributions
     import siglip_utils
@@ -381,16 +386,7 @@ def get_recommended_images():
         
         pos_profile_siglip = None
         if np.any(high_rated_mask):
-            if ts_rated_vals.size >= 2:
-                ts_min = ts_rated_vals.min()
-                ts_max = ts_rated_vals.max()
-                denom = (ts_max - ts_min) if (ts_max - ts_min) > 1e-8 else 1.0
-                ts_norm = np.zeros_like(ts_crs, dtype=np.float32)
-                ts_norm[rated_by_ts_mask] = (ts_crs[rated_by_ts_mask] - ts_min) / denom
-                w = ts_norm[high_rated_mask]
-            else:
-                w = (ratings[high_rated_mask] - 3.0) / 2.0
-                
+            w = pref_scores[high_rated_mask]
             if w.size > 0 and np.sum(w) > 0:
                 pos_profile_siglip = siglip_matrix[high_rated_mask].T.dot(w.astype(np.float32)).astype(np.float32)
                 norm = np.linalg.norm(pos_profile_siglip)
@@ -399,16 +395,7 @@ def get_recommended_images():
 
         neg_profile_siglip = None
         if np.any(low_rated_mask):
-            if ts_rated_vals.size >= 2:
-                ts_min = ts_rated_vals.min()
-                ts_max = ts_rated_vals.max()
-                denom = (ts_max - ts_min) if (ts_max - ts_min) > 1e-8 else 1.0
-                ts_norm = np.zeros_like(ts_crs, dtype=np.float32)
-                ts_norm[rated_by_ts_mask] = (ts_crs[rated_by_ts_mask] - ts_min) / denom
-                w = (1.0 - ts_norm[low_rated_mask])
-            else:
-                w = (3.0 - ratings[low_rated_mask]) / 2.0
-                
+            w = -pref_scores[low_rated_mask]
             if w.size > 0 and np.sum(w) > 0:
                 neg_profile_siglip = siglip_matrix[low_rated_mask].T.dot(w.astype(np.float32)).astype(np.float32)
                 norm = np.linalg.norm(neg_profile_siglip)
@@ -421,6 +408,10 @@ def get_recommended_images():
         if neg_profile_siglip is not None:
             siglip_score -= unrated_vectors_siglip @ neg_profile_siglip
 
+    # Extract penalties for unrated candidates
+    click_penalty = clicks[unrated_mask]
+    show_penalty = shows[unrated_mask]
+
     # Final base score (only for unrated)
     recommendation_score = (
         W_TAG_POS * tag_score
@@ -429,8 +420,8 @@ def get_recommended_images():
         + W_PHASH_POS * phash_pos
         - W_PHASH_NEG * phash_neg
         - W_PHASH_SEEN * phash_seen_penalty
-        - W_CLICK_SEEN * clicked_unrated
-        + W_OLD_RATING * star_norm
+        - W_CLICK_PENALTY * click_penalty
+        - W_SHOW_PENALTY * show_penalty
         + W_POS_NEIGHBOR_PROMPT * pos_tag_neighbor_sim
         - W_NEG_NEIGHBOR_PROMPT * neg_tag_neighbor_sim
         + W_PHASH_POS_NN * phash_pos_nn
@@ -446,8 +437,13 @@ def get_recommended_images():
         base_scores = np.zeros(len(images), dtype=np.float32)
         base_scores[unrated_indices] = recommendation_score
 
-        reranked_unrated = mmr_rerank(unrated_indices.tolist(), base_scores, tag_matrix, top_pool=300, mmr_lambda=0.75)
+        # Use SigLIP matrix for MMR if available to ensure visual diversity
+        if siglip_utils.siglip_vectors is not None and len(siglip_utils.siglip_ids) > 0:
+            mmr_matrix = siglip_matrix
+        else:
+            mmr_matrix = tag_matrix
 
+        reranked_unrated = mmr_rerank(unrated_indices.tolist(), base_scores, mmr_matrix, top_pool=300, mmr_lambda=0.60)
         # Small rank-based boost to enforce reranked order while preserving magnitude
         n = len(reranked_unrated)
         rank_boost = np.linspace(1.0, 0.0, num=n, dtype=np.float32) * 0.02  # up to +0.02

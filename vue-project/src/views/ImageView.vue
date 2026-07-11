@@ -1,5 +1,5 @@
 <template>
-  <div class="max-w-[1400px] mx-auto px-6 transition-colors duration-200 mb-12">
+  <div class="w-full px-6 transition-colors duration-200 mb-12">
     <!-- Main Image Error -->
     <div v-if="loadError"
       class="mb-12 bg-[#1A1A24] border border-[#2A2A35] rounded-[2rem] shadow-lg p-10 transition-colors duration-200 text-center">
@@ -11,7 +11,7 @@
       <h2 class="text-2xl font-serif font-bold italic text-[#FAF8F5] mb-2">Failed to load image</h2>
       <p class="text-[#FAF8F5]/60 font-sans mb-8">{{ loadError }}</p>
       <button @click="Refresh()"
-        class="magnetic-button px-6 py-3 bg-[#2A2A35] hover:bg-[#1A1A24] text-[#C9A84C] border border-[#C9A84C]/30 rounded-full font-sans font-semibold transition-colors shadow-[0_0_15px_rgba(201,168,76,0.1)]">Try
+        class="magnetic-button px-6 py-3 bg-[#2A2A35] hover:bg-[#1A1A24] text-[#C9A84C] border border-[#C9A84C]/30 rounded-full font-sans font-semibold transition-colors shadow-[0_0_15px_rgba(201,168,76,0.1)] cursor-pointer">Try
         again</button>
     </div>
 
@@ -50,353 +50,455 @@
       </div>
     </div>
 
-    <!-- Main Image Section -->
-    <div v-else-if="currentPin"
-      class="main-image-section mb-12 bg-[#1A1A24] border border-[#2A2A35] rounded-[3rem] shadow-[0_4px_25px_rgba(0,0,0,0.5)] p-8 transition-colors duration-200">
-      <div class="flex flex-col md:flex-row gap-10">
-        <div class="w-full md:w-1/2 relative">
-          <img @click="showFullscreen" :src="ImageSrc(currentPin.Path)" :alt="currentPin.Title"
-            class="rounded-[2rem] w-full shadow-lg hover:shadow-xl transition-shadow border border-[#2A2A35]">
-          <!-- Rank Badge -->
-          <RouterLink :to="'/rate?id=' + currentPin.Id">
-            <div class="mb-2 flex justify-center mt-2">
-              <span :class="[
-                'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold shadow-sm',
-                rank.unrated
-                  ? 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 ring-1 ring-gray-300 dark:ring-gray-600 border border-dotted border-gray-400 dark:border-gray-500'
-                  : 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 ring-1 ring-blue-300 dark:ring-blue-600'
-              ]">
-                <img :src="rankBadgeSrc(rank.tier)" :alt="(rank.label || 'Unranked') + ' badge'"
-                  class="h-6 w-6 object-contain" />
-                <span>{{ rank.label || 'Unranked' }}</span>
-              </span>
-            </div>
-          </RouterLink>
-          <!-- Rank Badge -->
-          <div class="absolute top-0 right-0 p-3 flex gap-2">
-            <div class="p-2 bg-black/20 hover:bg-black/30 rounded-full flex items-center gap-1 transition-colors">
-              <div class="flex" @click.prevent.stop="">
-                <Star v-for="star in 5" :key="star"
-                  class="w-5 h-5 text-white cursor-pointer transition-colors duration-150" :class="{
-                    'fill-yellow-400 text-yellow-400': star <= (currentPin.Rating || 0),
-                    'hover:fill-yellow-200 hover:text-yellow-200': star <= hoverRating
-                  }" @click.prevent.stop="rateImage(star)" @mouseenter="hoverRating = star"
-                  @mouseleave="hoverRating = 0" />
-              </div>
-              <p v-if="currentPin.Rating > 0" class="text-white ml-1 font-medium text-sm">{{
-                currentPin.Rating.toFixed(1) }}</p>
-            </div>
-          </div>
-        </div>
-        <div class="w-full md:w-1/2 relative">
-          <div class="flex justify-between gap-0">
-            <div class="flex gap-2 items-center text-[#FAF8F5]/60">
-              <Eye class="w-5 h-5" />
-              <p class="font-mono text-sm uppercase tracking-widest">{{ currentPin.Clicks }}</p>
-            </div>
-            <div v-if="currentPin.in_boards.length == 0" class="flex items-center gap-3">
-              <div
-                class="magnetic-button rounded-full px-4 py-2 hover:bg-[#2A2A35] cursor-pointer font-sans font-semibold text-[#FAF8F5] flex items-center transition-colors border border-transparent hover:border-[#2A2A35]"
-                @click="showBoardDropdown = !showBoardDropdown">
-                <span class="relative z-10 flex">
-                  {{ currentPin.recommended_boards[selectedBoard]?.name || '' }}
-                  <ChevronDown class="w-5 h-5 ml-1 mt-0.5" />
-                </span>
-              </div>
-              <button
-                class="magnetic-button px-6 py-2.5 bg-[#C9A84C] hover:bg-[#B89A45] text-[#0D0D12] rounded-full font-sans font-semibold transition-colors shadow-lg"
-                @click="saveToBoard(currentPin.recommended_boards[selectedBoard].id)">
-                <span class="relative z-10">Save</span>
-              </button>
-            </div>
-            <div v-else class="flex items-center gap-3">
-              <RouterLink :to="'/board/' + currentPin.in_boards[0].id">
-                <div
-                  class="magnetic-button rounded-full px-4 py-2 hover:bg-[#2A2A35] cursor-pointer font-sans font-semibold text-[#C9A84C] flex items-center underline-offset-4 hover:underline transition-colors">
-                  <span class="relative z-10">{{ currentPin.in_boards[0].name || '' }}</span>
-                </div>
-              </RouterLink>
-              <button
-                class="magnetic-button px-6 py-2.5 bg-[#2A2A35] hover:bg-[#1A1A24] text-[#FAF8F5] border border-[#2A2A35] hover:border-[#C9A84C]/30 rounded-full cursor-pointer transition-colors shadow-sm"
-                @click="removeFromBoard(currentPin.in_boards[0].id)">
-                <span class="relative z-10">Saved</span>
-              </button>
-            </div>
-            <div v-if="showBoardDropdown" class="absolute right-8 top-8 mt-2 z-20">
-              <BoardDropDown :pin="currentPin" @save-to="(id) => saveToBoard(id)" />
-            </div>
-          </div>
+    <!-- Unified Split View -->
+    <div v-else-if="currentPin" class="flex flex-row gap-6 w-full mt-6 items-start">
 
-          <div class="flex mt-6 mb-6 border-b border-[#2A2A35]">
-            <button v-if="!currentPin.GeneratedPrompt && currentPin.Prompt" @click="activeTab = 'original'" :class="[
-              'px-6 py-3 text-sm font-sans font-semibold transition-colors duration-300',
-              activeTab === 'original'
-                ? 'text-[#C9A84C] border-b-2 border-[#C9A84C]'
-                : 'text-[#FAF8F5]/60 hover:text-[#FAF8F5] hover:bg-[#2A2A35]/30'
-            ]">
-              Original Prompt
-            </button>
-            <button @click="activeTab = 'generated'" :class="[
-              'px-6 py-3 text-sm font-sans font-semibold transition-colors duration-300',
-              activeTab === 'generated' || currentPin.GeneratedPrompt
-                ? 'text-[#C9A84C] border-b-2 border-[#C9A84C]'
-                : 'text-[#FAF8F5]/60 hover:text-[#FAF8F5] hover:bg-[#2A2A35]/30'
-            ]">
-              Generated Prompt
-            </button>
-          </div>
+      <!-- LEFT COLUMN: Sticky Pin Card + Pins flowing under it -->
+      <div :class="[isDesktop ? 'flex-shrink-0' : 'w-full']" :style="isDesktop ? { flex: `${leftColCount} 0 0%` } : {}"
+        class="flex flex-col gap-6">
 
-          <h1 v-if="activeTab === 'generated' || currentPin.GeneratedPrompt"
-            class="text-2xl font-serif leading-relaxed mb-6 text-[#FAF8F5]/90"
-            v-html="formatPromptText(displayPromptText)" @click="showTaggerTags = !showTaggerTags"></h1>
-          <h1 v-else class="text-2xl font-serif leading-relaxed mb-6 text-[#FAF8F5]/90"
-            v-html="formatPromptText(displayPromptText)"></h1>
+        <!-- Details Card -->
+        <div
+          class="bg-[#14141A] border border-[#2A2A35] rounded-[2.5rem] shadow-[0_8px_30px_rgba(0,0,0,0.6)] flex flex-col md:flex-row w-full overflow-hidden">
 
-          <div v-if="displayLoras.length" class="mb-6">
-            <div class="flex items-center justify-between mb-2">
-              <p class="text-[#FAF8F5]/60 font-mono text-xs uppercase tracking-widest">Loras</p>
-              <button @click="copyLoras"
-                class="text-[11px] px-2.5 py-1 bg-[#2A2A35]/60 hover:bg-[#2A2A35] border border-[#2A2A35] text-[#FAF8F5]/70 hover:text-[#FAF8F5] rounded-full transition-all">
-                {{ lorasCopied ? 'Copied' : 'Copy' }}
-              </button>
-            </div>
-            <div class="flex flex-wrap gap-2">
-              <RouterLink v-for="(lora, index) in displayLoras" :key="`${lora.name}-${lora.weight}-${index}`"
-                :to="{ path: `/models/lora:${lora.name}` }"
-                class="magnetic-button text-xs px-3 py-1.5 bg-[#2A2A35]/50 hover:bg-[#2A2A35] border border-[#2A2A35] text-[#FAF8F5]/80 hover:text-[#FAF8F5] rounded-full flex items-center transition-all">
-                <span class="relative z-10">{{ lora.name }}</span>
-                <span v-if="lora.weight" class="relative z-10 ml-2 text-[#C9A84C]">{{ lora.weight }}</span>
-              </RouterLink>
-            </div>
-          </div>
-
-
-          <div v-if="promptGenerating"
-            class="flex items-center mt-6 mb-6 bg-[#C9A84C]/10 p-4 rounded-[1rem] border border-[#C9A84C]/20 transition-colors">
-            <div class="animate-spin mr-4 h-5 w-5 text-[#C9A84C]">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle>
-                <path class="opacity-75" fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
-                </path>
-              </svg>
-            </div>
-            <span class="text-[#C9A84C] font-mono tracking-widest uppercase text-sm">Generating Prompt</span>
-          </div>
-
-          <div v-if="activeTab === 'generated' && currentPin.TaggerTags" class="mb-4 mt-2">
-
-
-            <div v-if="showTaggerTags" class="space-y-1.5 mt-2">
-              <div v-for="(value, tag) in Object.entries(currentPin.TaggerTags)
-                .sort(([, a], [, b]) => b - a)
-                .slice(0, 15)
-                .reduce((obj, [key, val]) => ({ ...obj, [key]: val }), {})" :key="tag" class="flex items-center">
-                <span class="w-24 text-sm truncate text-gray-600 dark:text-gray-400">{{ tag }}</span>
-                <div class="flex-1 bg-gray-200 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
-                  <div class="h-full rounded-full bg-blue-500 dark:bg-blue-400"
-                    :style="{ width: `${Math.round(value * 100)}%` }"></div>
-                </div>
-                <span class="ml-2 text-xs text-gray-500 dark:text-gray-400 w-12 text-right">
-                  {{ Math.round(value * 100) }}%
-                </span>
-              </div>
-              <button v-if="Object.keys(currentPin.TaggerTags).length > 15"
-                class="text-xs text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 mt-1"
-                @click.stop="showAllTags = !showAllTags">
-                {{ showAllTags ? 'Show less' : `Show ${Object.keys(currentPin.TaggerTags).length - 15} more tags` }}
-              </button>
-              <div v-if="showAllTags" class="space-y-1.5 mt-1">
-                <div v-for="(value, tag) in Object.entries(currentPin.TaggerTags)
-                  .sort(([, a], [, b]) => b - a)
-                  .slice(15)
-                  .reduce((obj, [key, val]) => ({ ...obj, [key]: val }), {})" :key="tag" class="flex items-center">
-                  <span class="w-24 text-sm truncate text-gray-600 dark:text-gray-400">{{ tag }}</span>
-                  <div class="flex-1 bg-gray-200 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
-                    <div class="h-full rounded-full bg-blue-500 dark:bg-blue-400"
-                      :style="{ width: `${Math.round(value * 100)}%` }"></div>
-                  </div>
-                  <span class="ml-2 text-xs text-gray-500 dark:text-gray-400 w-12 text-right">
-                    {{ Math.round(value * 100) }}%
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-
-
-
-
+          <!-- Image Section (Flush Left) -->
           <div
-            v-if="(activeTab == 'original' && currentPin.Prompt) || (activeTab == 'generated' && currentPin.taggerPrompt)"
-            class="flex flex-wrap items-center mt-8 mb-6 gap-3">
-            <button @click="copyPrompt(false)"
-              class="magnetic-button text-sm px-5 py-2.5 bg-[#2A2A35]/50 hover:bg-[#2A2A35] border border-[#2A2A35] text-[#FAF8F5]/80 hover:text-[#FAF8F5] rounded-full flex items-center transition-all">
-              <span class="relative z-10 flex">
-                <span>Copy prompt</span>
-                <span v-if="copied" class="ml-2 text-green-400">✓</span>
-              </span>
-            </button>
-            <button @click="remixImage"
-              class="magnetic-button text-sm px-5 py-2.5 bg-[#C9A84C]/10 hover:bg-[#C9A84C]/20 border border-[#C9A84C]/30 text-[#C9A84C] hover:text-[#C9A84C] rounded-full flex items-center transition-all shadow-[0_0_10px_rgba(201,168,76,0.1)]">
-              <span class="relative z-10 flex">
-                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                  xmlns="http://www.w3.org/2000/svg">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
-                  </path>
-                </svg>
-                <span>Remix</span>
-              </span>
-            </button>
-
-            <RouterLink :to="{ path: '/canvas', query: { image: currentPin.Id } }"
-              class="magnetic-button text-sm px-5 py-2.5 bg-[#2A2A35]/50 hover:bg-[#2A2A35] border border-[#2A2A35] text-[#FAF8F5]/80 hover:text-[#FAF8F5] rounded-full flex items-center transition-all">
-              <span class="relative z-10">Edit in Canvas</span>
-            </RouterLink>
-
-            <button @click="PostToApi(`open-image-location/${currentPin.Id}`)"
-              class="magnetic-button text-sm px-5 py-2.5 bg-[#2A2A35]/50 hover:bg-[#2A2A35] border border-[#2A2A35] text-[#FAF8F5]/80 hover:text-[#FAF8F5] rounded-full flex items-center transition-all">
-              <span class="relative z-10">Open File Location</span>
-            </button>
+            class="flex-grow relative bg-[#09090C] flex flex-col justify-center select-none overflow-hidden min-h-[300px] md:min-h-[400px]">
+            <img @click="showFullscreen" :src="ImageSrc(currentPin.Path)" :alt="currentPin.Title"
+              class="w-full h-auto object-contain cursor-zoom-in">
           </div>
 
-          <div class="flex items-center gap-6 mt-8 mb-4 border-b border-[#2A2A35] pb-6">
-            <RouterLink :to="'/models/' + currentPin.ModelHash">
-              <div class="group">
-                <p class="text-[#FAF8F5]/60 font-mono text-xs uppercase tracking-widest mb-1">Model</p>
-                <p class="text-[#FAF8F5] font-sans font-semibold group-hover:text-[#C9A84C] transition-colors">
-                  {{ currentPin.Model ?? currentPin.ModelHash }}
-                </p>
+          <!-- Details Section (Right half of card) -->
+          <div class="w-full md:w-[380px] md:flex-shrink-0 p-8 flex flex-col gap-6 bg-[#14141A]">
+            <div class="flex justify-between items-center mb-6 w-full">
+              <div class="flex items-center gap-4 text-[#FAF8F5]/60">
+                <div class="flex gap-2 items-center" title="Views">
+                  <Eye class="w-4 h-4" />
+                  <p class="font-mono text-xs uppercase tracking-widest">{{ currentPin.Clicks }}</p>
+                </div>
+                <div class="flex gap-2 items-center" title="Feed Displays">
+                  <Tv class="w-4 h-4" />
+                  <p class="font-mono text-xs uppercase tracking-widest">{{ currentPin.Shows || 0 }}</p>
+                </div>
               </div>
-            </RouterLink>
 
-            <RouterLink :to="'/chat/' + currentPin.Id">
-              <div class="group">
-                <p class="text-[#FAF8F5]/60 font-mono text-xs uppercase tracking-widest mb-1">Actions</p>
-                <p class="text-[#FAF8F5] font-sans font-semibold group-hover:text-[#C9A84C] transition-colors">
-                  Chat with character
-                </p>
-              </div>
-            </RouterLink>
-          </div>
-
-          <div v-if="currentPin.NegativePrompt" class="mb-4">
-            <p class="text-[#FAF8F5]/40 font-mono text-xs uppercase tracking-widest mb-2">Negative Prompt</p>
-            <p class="text-[#FAF8F5]/60 font-serif text-sm leading-relaxed mb-6">{{ currentPin.NegativePrompt }}</p>
-          </div>
-
-          <div v-if="currentPin.variations.length > 0" class="mt-8">
-            <h2 class="text-2xl font-serif font-bold italic mb-6 text-[#FAF8F5]">Variations</h2>
-            <div class="columns-2 md:columns-3 lg:columns-4 gap-4 space-y-4">
-              <Image v-for="pin in currentPin.variations" :key="pin.Id" :pin="pin" />
-            </div>
-          </div>
-          <div v-if="currentPin.identical_images.length > 0" class="mt-8">
-            <h2 class="text-2xl font-serif font-bold italic mb-6 text-[#FAF8F5]">Identical Images</h2>
-            <div class="columns-2 md:columns-3 lg:columns-4 gap-4 space-y-4">
-              <Image v-for="pin in currentPin.identical_images" :key="pin.Id" :pin="pin" />
-            </div>
-          </div>
-
-          <!-- Comments Expand Accordion (Pinterest-style) -->
-          <div class="flex justify-between items-center mt-6" @click="showComments = !showComments; GetComments()">
-            <div class="flex items-center">
-              <h2 class="text-xl font-bold mb-4 text-gray-900 dark:text-white">Comments</h2>
-              <button v-if="showComments"
-                class="ml-3 mb-3 p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                @click.stop="GetComments(true)">
-                <svg class="w-4 h-4 text-gray-600 dark:text-gray-400" fill="none" stroke="currentColor"
-                  viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
-                  </path>
-                </svg>
-              </button>
-            </div>
-            <button
-              class="flex items-center text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
-              :aria-expanded="showComments.toString()" :aria-label="showComments ? 'Hide comments' : 'Show comments'">
-              <span class="mr-1">{{ showComments ? '' : '' }}</span>
-              <svg class="w-6 h-6 transform transition-transform duration-200" :class="{ 'rotate-180': showComments }"
-                fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"
-                xmlns="http://www.w3.org/2000/svg">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path>
-              </svg>
-            </button>
-          </div>
-
-          <!--Comments-->
-          <div v-if="showComments" class="mt-4 mb-6">
-            <div v-if="fetchingComments" class="space-y-4 p-2">
-              <div v-for="n in 3" :key="n" class="flex items-start space-x-3">
-                <div class="skeleton w-10 h-10 rounded-full flex-shrink-0"></div>
-                <div class="flex-1 space-y-2">
-                  <div class="skeleton h-4 w-24 rounded"></div>
-                  <div class="skeleton h-3 w-full rounded"></div>
-                  <div class="skeleton h-3 w-3/4 rounded"></div>
+              <!-- Board Dropdown & Save Button -->
+              <div class="flex items-center gap-3 relative">
+                <div v-if="currentPin.in_boards.length == 0" class="flex items-center gap-3">
+                  <div
+                    class="magnetic-button rounded-full px-4.5 py-2 hover:bg-[#2A2A35] cursor-pointer font-sans font-semibold text-[#FAF8F5] flex items-center transition-colors border border-transparent hover:border-[#2A2A35] text-xs"
+                    @click="showBoardDropdown = !showBoardDropdown">
+                    <span class="relative z-10 flex">
+                      {{ currentPin.recommended_boards[selectedBoard]?.name || '' }}
+                      <ChevronDown class="w-4 h-4 ml-1 mt-0.5" />
+                    </span>
+                  </div>
+                  <button
+                    class="magnetic-button px-5 py-2 bg-[#C9A84C] hover:bg-[#B89A45] text-[#0D0D12] rounded-full font-sans font-semibold transition-colors shadow-lg text-xs cursor-pointer"
+                    @click="saveToBoard(currentPin.recommended_boards[selectedBoard].id)">
+                    <span class="relative z-10">Save</span>
+                  </button>
+                </div>
+                <div v-else class="flex items-center gap-3">
+                  <RouterLink :to="'/board/' + currentPin.in_boards[0].id">
+                    <div
+                      class="magnetic-button rounded-full px-4 py-2 hover:bg-[#2A2A35] cursor-pointer font-sans font-semibold text-[#C9A84C] flex items-center underline-offset-4 hover:underline transition-colors text-xs">
+                      <span class="relative z-10">{{ currentPin.in_boards[0].name || '' }}</span>
+                    </div>
+                  </RouterLink>
+                  <button
+                    class="magnetic-button px-5 py-2 bg-[#2A2A35] hover:bg-[#1A1A24] text-[#FAF8F5] border border-[#2A2A35] hover:border-[#C9A84C]/30 rounded-full cursor-pointer transition-colors shadow-sm text-xs"
+                    @click="removeFromBoard(currentPin.in_boards[0].id)">
+                    <span class="relative z-10">Saved</span>
+                  </button>
+                </div>
+                <div v-if="showBoardDropdown" class="absolute right-0 top-10 mt-2 z-20 w-[180px]">
+                  <BoardDropDown :pin="currentPin" @save-to="(id) => saveToBoard(id)" />
                 </div>
               </div>
             </div>
-            <div v-else-if="commentError" class="p-4 text-center">
-              <p class="text-red-500 dark:text-red-400 text-sm mb-2">{{ commentError }}</p>
-              <button @click="GetComments(true)"
-                class="text-sm px-3 py-1.5 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-md hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors">Retry</button>
-            </div>
-            <div v-else class="space-y-4">
-              <div v-for="(comment, index) in comments" :key="comment.Id" class="flex items-start space-x-3">
 
-                <RouterLink :to="'/user/' + (comment.character_id || comment.username)">
-                  <img
-                    :src="comment.avatar || `${apiUrl}/random-image-file?user=${comment.username}`"
-                    :alt="`${comment.username}'s avatar`" class="w-10 h-10 rounded-full object-cover" />
+            <!-- Scrollable Content Area -->
+            <div class="flex flex-col gap-6">
+
+              <!-- Rank & Rating Stars -->
+              <div class="flex flex-wrap items-center justify-between gap-4 border-b border-[#2A2A35]/35 pb-4">
+                <RouterLink :to="'/rate?id=' + currentPin.Id">
+                  <span :class="[
+                    'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold shadow-sm',
+                    rank.unrated
+                      ? 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 ring-1 ring-gray-300 dark:ring-gray-600 border border-dotted border-gray-400 dark:border-gray-500'
+                      : 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 ring-1 ring-blue-300 dark:ring-blue-600'
+                  ]">
+                    <img :src="rankBadgeSrc(rank.tier)" :alt="(rank.label || 'Unranked') + ' badge'"
+                      class="h-6 w-6 object-contain" />
+                    <span>{{ rank.label || 'Unranked' }}</span>
+                  </span>
                 </RouterLink>
-                <div class="w-full">
-                  <RouterLink :to="'/user/' + (comment.character_id || comment.username)" class="hover:text-[#C9A84C] transition-colors">
-                    <p class="text-gray-900 dark:text-white font-semibold">{{ comment.username }}</p>
+
+                <div
+                  class="flex items-center gap-1.5 bg-[#2A2A35]/30 px-3 py-1.5 rounded-full border border-[#2A2A35]/50">
+                  <Star v-for="star in 5" :key="star"
+                    class="w-4 h-4 text-white cursor-pointer transition-colors duration-150" :class="{
+                      'fill-yellow-400 text-yellow-400': star <= (currentPin.Rating || 0),
+                      'hover:fill-yellow-200 hover:text-yellow-200': star <= hoverRating
+                    }" @click.prevent.stop="rateImage(star)" @mouseenter="hoverRating = star"
+                    @mouseleave="hoverRating = 0" />
+                  <p v-if="currentPin.Rating > 0" class="text-white ml-1 font-medium text-xs">{{
+                    currentPin.Rating.toFixed(1) }}</p>
+                </div>
+              </div>
+
+              <!-- Prompt Tabs -->
+              <div>
+                <div class="flex border-b border-[#2A2A35] mb-4">
+                  <button v-if="!currentPin.GeneratedPrompt && currentPin.Prompt" @click="activeTab = 'original'"
+                    :class="[
+                      'px-4 py-2 text-xs font-sans font-semibold transition-colors duration-300',
+                      activeTab === 'original'
+                        ? 'text-[#C9A84C] border-b-2 border-[#C9A84C]'
+                        : 'text-[#FAF8F5]/60 hover:text-[#FAF8F5]'
+                    ]">
+                    Original Prompt
+                  </button>
+                  <button @click="activeTab = 'generated'" :class="[
+                    'px-4 py-2 text-xs font-sans font-semibold transition-colors duration-300',
+                    activeTab === 'generated' || currentPin.GeneratedPrompt
+                      ? 'text-[#C9A84C] border-b-2 border-[#C9A84C]'
+                      : 'text-[#FAF8F5]/60 hover:text-[#FAF8F5]'
+                  ]">
+                    Generated Prompt
+                  </button>
+                </div>
+
+                <h1 v-if="activeTab === 'generated' || currentPin.GeneratedPrompt"
+                  class="text-sm font-sans font-medium leading-relaxed text-[#FAF8F5]/90 mb-4 select-text"
+                  v-html="formatPromptText(displayPromptText)" @click="showTaggerTags = !showTaggerTags"></h1>
+                <h1 v-else class="text-sm font-sans font-medium leading-relaxed text-[#FAF8F5]/90 mb-4 select-text"
+                  v-html="formatPromptText(displayPromptText)"></h1>
+              </div>
+
+              <!-- TaggerTags / NSFW Ratings -->
+              <div v-if="activeTab === 'generated' && currentPin.TaggerTags" class="mb-4">
+                <div v-if="showTaggerTags" class="space-y-1.5">
+                  <div v-for="(value, tag) in Object.entries(currentPin.TaggerTags)
+                    .sort(([, a], [, b]) => b - a)
+                    .slice(0, 15)
+                    .reduce((obj, [key, val]) => ({ ...obj, [key]: val }), {})" :key="tag" class="flex items-center">
+                    <span class="w-24 text-xs truncate text-[#FAF8F5]/50">{{ tag }}</span>
+                    <div class="flex-1 bg-gray-200 dark:bg-gray-700/60 rounded-full h-1.5 overflow-hidden">
+                      <div class="h-full rounded-full bg-[#C9A84C]" :style="{ width: `${Math.round(value * 100)}%` }">
+                      </div>
+                    </div>
+                    <span class="ml-2 text-[10px] text-gray-500 dark:text-gray-400 w-12 text-right">
+                      {{ Math.round(value * 100) }}%
+                    </span>
+                  </div>
+                  <button v-if="Object.keys(currentPin.TaggerTags).length > 15"
+                    class="text-xs text-[#C9A84C] hover:text-[#FAF8F5] mt-1 cursor-pointer"
+                    @click.stop="showAllTags = !showAllTags">
+                    {{ showAllTags ? 'Show less' : `Show ${Object.keys(currentPin.TaggerTags).length - 15} more tags` }}
+                  </button>
+                  <div v-if="showAllTags" class="space-y-1.5 mt-1">
+                    <div v-for="(value, tag) in Object.entries(currentPin.TaggerTags)
+                      .sort(([, a], [, b]) => b - a)
+                      .slice(15)
+                      .reduce((obj, [key, val]) => ({ ...obj, [key]: val }), {})" :key="tag" class="flex items-center">
+                      <span class="w-24 text-xs truncate text-[#FAF8F5]/50">{{ tag }}</span>
+                      <div class="flex-1 bg-gray-200 dark:bg-gray-700/60 rounded-full h-1.5 overflow-hidden">
+                        <div class="h-full rounded-full bg-[#C9A84C]" :style="{ width: `${Math.round(value * 100)}%` }">
+                        </div>
+                      </div>
+                      <span class="ml-2 text-[10px] text-gray-500 dark:text-gray-400 w-12 text-right">
+                        {{ Math.round(value * 100) }}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Loras Section -->
+              <div v-if="displayLoras.length">
+                <div class="flex items-center justify-between mb-2">
+                  <p class="text-[#FAF8F5]/40 font-mono text-[10px] uppercase tracking-widest">Loras</p>
+                  <button @click="copyLoras"
+                    class="text-[9px] px-2 py-0.5 bg-[#2A2A35]/60 hover:bg-[#2A2A35] border border-[#2A2A35] text-[#FAF8F5]/70 hover:text-[#FAF8F5] rounded-full transition-all cursor-pointer">
+                    {{ lorasCopied ? 'Copied' : 'Copy' }}
+                  </button>
+                </div>
+                <div class="flex flex-wrap gap-1.5">
+                  <RouterLink v-for="(lora, index) in displayLoras" :key="`${lora.name}-${lora.weight}-${index}`"
+                    :to="{ path: `/models/lora:${lora.name}` }"
+                    class="magnetic-button text-[10px] px-2.5 py-1 bg-[#2A2A35]/50 hover:bg-[#2A2A35] border border-[#2A2A35] text-[#FAF8F5]/80 hover:text-[#FAF8F5] rounded-full flex items-center transition-all">
+                    <span class="relative z-10">{{ lora.name }}</span>
+                    <span v-if="lora.weight" class="relative z-10 ml-1.5 text-[#C9A84C]">{{ lora.weight }}</span>
                   </RouterLink>
-                  <p class="text-gray-700 dark:text-gray-300">{{ comment.content }}</p>
-                  <!-- Replies section -->
-                  <div v-if="comment.replies && comment.replies.length > 0"
-                    class="mt-3 pl-4 border-l-2 border-gray-200 dark:border-gray-700 space-y-3">
-                    <div v-for="reply in comment.replies" :key="reply.Id" class="flex items-start space-x-3">
-                      <img
-                        :src="reply.avatar || `${apiUrl}/random-image-file?user=${reply.username}`"
-                        :alt="`${reply.username}'s avatar`" class="w-10 h-10 rounded-full object-cover" />
-                      <div>
-                        <p class="text-gray-900 dark:text-white font-semibold text-sm">{{ reply.username }}</p>
-                        <p class="text-gray-700 dark:text-gray-300 text-sm">{{ reply.content }}</p>
+                </div>
+              </div>
+
+              <!-- Action Buttons (Copy prompt, Remix, Edit, Open Location) -->
+              <div
+                v-if="(activeTab == 'original' && currentPin.Prompt) || (activeTab == 'generated' && currentPin.taggerPrompt)"
+                class="flex flex-wrap gap-2 pt-2 border-t border-[#2A2A35]/30">
+                <button @click="copyPrompt(false)"
+                  class="magnetic-button text-[11px] px-4 py-2 bg-[#2A2A35]/50 hover:bg-[#2A2A35] border border-[#2A2A35] text-[#FAF8F5]/80 hover:text-[#FAF8F5] rounded-full flex items-center transition-all cursor-pointer">
+                  <span class="relative z-10 flex">
+                    <span>Copy prompt</span>
+                    <span v-if="copied" class="ml-2 text-green-400">✓</span>
+                  </span>
+                </button>
+                <button @click="remixImage"
+                  class="magnetic-button text-[11px] px-4 py-2 bg-[#C9A84C]/10 hover:bg-[#C9A84C]/20 border border-[#C9A84C]/30 text-[#C9A84C] hover:text-[#C9A84C] rounded-full flex items-center transition-all cursor-pointer shadow-[0_0_10px_rgba(201,168,76,0.1)]">
+                  <span class="relative z-10 flex">
+                    <svg class="w-3 h-3 mr-1.5 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                      xmlns="http://www.w3.org/2000/svg">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
+                      </path>
+                    </svg>
+                    <span>Remix</span>
+                  </span>
+                </button>
+
+                <RouterLink :to="{ path: '/canvas', query: { image: currentPin.Id } }"
+                  class="magnetic-button text-[11px] px-4 py-2 bg-[#2A2A35]/50 hover:bg-[#2A2A35] border border-[#2A2A35] text-[#FAF8F5]/80 hover:text-[#FAF8F5] rounded-full flex items-center transition-all cursor-pointer">
+                  <span class="relative z-10">Edit in Canvas</span>
+                </RouterLink>
+
+                <button @click="PostToApi(`open-image-location/${currentPin.Id}`)"
+                  class="magnetic-button text-[11px] px-4 py-2 bg-[#2A2A35]/50 hover:bg-[#2A2A35] border border-[#2A2A35] text-[#FAF8F5]/80 hover:text-[#FAF8F5] rounded-full flex items-center transition-all cursor-pointer">
+                  <span class="relative z-10">Open Location</span>
+                </button>
+              </div>
+
+              <!-- Model & Actions -->
+              <div class="flex items-center gap-6 border-t border-[#2A2A35]/30 pt-4">
+                <RouterLink :to="'/models/' + currentPin.ModelHash">
+                  <div class="group">
+                    <p class="text-[#FAF8F5]/40 font-mono text-[9px] uppercase tracking-widest mb-1">Model</p>
+                    <p
+                      class="text-xs text-[#FAF8F5] font-sans font-semibold group-hover:text-[#C9A84C] transition-colors">
+                      {{ currentPin.Model ?? currentPin.ModelHash }}
+                    </p>
+                  </div>
+                </RouterLink>
+
+                <RouterLink :to="'/chat/' + currentPin.Id">
+                  <div class="group">
+                    <p class="text-[#FAF8F5]/40 font-mono text-[9px] uppercase tracking-widest mb-1">Actions</p>
+                    <p
+                      class="text-xs text-[#FAF8F5] font-sans font-semibold group-hover:text-[#C9A84C] transition-colors">
+                      Chat with character
+                    </p>
+                  </div>
+                </RouterLink>
+              </div>
+
+              <!-- Negative Prompt -->
+              <div v-if="currentPin.NegativePrompt" class="border-t border-[#2A2A35]/30 pt-4">
+                <p class="text-[#FAF8F5]/40 font-mono text-[9px] uppercase tracking-widest mb-1.5">Negative Prompt</p>
+                <p class="text-xs text-[#FAF8F5]/70 font-sans leading-relaxed select-text">{{ currentPin.NegativePrompt
+                }}</p>
+              </div>
+
+              <!-- Content Rating -->
+              <div v-if="currentPin.nsfw_levels" class="border-t border-[#2A2A35]/30 pt-4">
+                <div class="flex justify-between items-center cursor-pointer"
+                  @click="showContentRating = !showContentRating">
+                  <div class="text-xs font-mono uppercase tracking-widest text-[#FAF8F5]/40">
+                    Content Rating
+                    <span v-if="!showContentRating && currentPin.nsfw_levels"
+                      class="ml-2 px-2 py-0.5 text-[9px] font-sans rounded-full"
+                      :style="{ backgroundColor: getLevelColor(getHighestNsfwLevel()), color: '#fff' }">
+                      {{ getHighestNsfwLevel().charAt(0).toUpperCase() + getHighestNsfwLevel().slice(1) }}
+                    </span>
+                  </div>
+                  <svg class="w-4 h-4 transform transition-transform duration-200"
+                    :class="{ 'rotate-180': showContentRating }" fill="none" stroke="currentColor" stroke-width="2"
+                    viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path>
+                  </svg>
+                </div>
+
+                <div v-if="showContentRating" class="space-y-1.5 mt-3">
+                  <div v-for="(value, level) in Object.entries(currentPin.nsfw_levels)
+                    .sort(([, a], [, b]) => b - a)
+                    .reduce((obj, [key, val]) => ({ ...obj, [key]: val }), {})" :key="level" class="flex items-center">
+                    <span class="w-24 text-xs capitalize text-[#FAF8F5]/50">{{ level }}</span>
+                    <div class="flex-1 bg-gray-200 dark:bg-gray-700/60 rounded-full h-1.5 overflow-hidden">
+                      <div class="h-full rounded-full" :style="{
+                        width: `${Math.round(value * 100)}%`,
+                        backgroundColor: getLevelColor(level)
+                      }"></div>
+                    </div>
+                    <span class="ml-2 text-[10px] text-gray-500 dark:text-gray-400 w-12 text-right">
+                      {{ Math.round(value * 100) }}%
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Variations & Identical Images -->
+              <div v-if="currentPin.variations.length > 0" class="border-t border-[#2A2A35]/30 pt-4">
+                <h2 class="text-sm font-bold uppercase tracking-wider text-[#FAF8F5]/80 mb-3">Variations</h2>
+                <div class="grid grid-cols-3 gap-2">
+                  <Image v-for="pin in currentPin.variations" :key="pin.Id" :pin="pin" />
+                </div>
+              </div>
+              <div v-if="currentPin.identical_images.length > 0" class="border-t border-[#2A2A35]/30 pt-4">
+                <h2 class="text-sm font-bold uppercase tracking-wider text-[#FAF8F5]/80 mb-3">Identical Images</h2>
+                <div class="grid grid-cols-3 gap-2">
+                  <Image v-for="pin in currentPin.identical_images" :key="pin.Id" :pin="pin" />
+                </div>
+              </div>
+
+              <!-- Comments Section (Pinterest style) -->
+              <div class="border-t border-[#2A2A35]/30 pt-4">
+                <div class="flex justify-between items-center cursor-pointer"
+                  @click="showComments = !showComments; GetComments()">
+                  <div class="flex items-center">
+                    <h2 class="text-sm font-bold uppercase tracking-wider text-[#FAF8F5]/80">Comments</h2>
+                    <button v-if="showComments"
+                      class="ml-2 p-1 rounded-full hover:bg-[#2A2A35] transition-colors cursor-pointer"
+                      @click.stop="GetComments(true)">
+                      <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                        xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
+                        </path>
+                      </svg>
+                    </button>
+                  </div>
+                  <button
+                    class="flex items-center text-gray-400 hover:text-white transition-colors focus:outline-none rounded">
+                    <svg class="w-5 h-5 transform transition-transform duration-200"
+                      :class="{ 'rotate-180': showComments }" fill="none" stroke="currentColor" stroke-width="2"
+                      viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path>
+                    </svg>
+                  </button>
+                </div>
+
+                <div v-if="showComments" class="mt-4">
+                  <div v-if="fetchingComments" class="space-y-4 p-2">
+                    <div v-for="n in 3" :key="n" class="flex items-start space-x-3">
+                      <div class="skeleton w-10 h-10 rounded-full flex-shrink-0"></div>
+                      <div class="flex-1 space-y-2">
+                        <div class="skeleton h-4 w-24 rounded"></div>
+                        <div class="skeleton h-3 w-full rounded"></div>
                       </div>
                     </div>
                   </div>
-                  <div class="flex">
-                    <img :src="`${apiUrl}/files/automatic/avatar.png`" alt="Your avatar"
-                      class="w-8 h-8 mt-2.5 mr-1 rounded-full object-cover border border-gray-200 dark:border-gray-700" />
-                    <input type="text" v-model="comment.reply" placeholder="Reply..."
-                      class="mt-2 w-full p-2 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 text-gray-700 dark:text-gray-200 placeholder-gray-500 dark:placeholder-gray-400 text-sm transition-colors duration-200"
-                      @keyup.enter="postReply(comment.reply, index)" />
+                  <div v-else-if="commentError" class="p-4 text-center">
+                    <p class="text-red-500 dark:text-red-400 text-sm mb-2">{{ commentError }}</p>
+                    <button @click="GetComments(true)"
+                      class="text-sm px-3 py-1.5 bg-[#2A2A35] text-white rounded-md hover:bg-[#1A1A24] transition-colors cursor-pointer">Retry</button>
                   </div>
+                  <div v-else class="space-y-4">
+                    <div v-for="(comment, index) in comments" :key="comment.Id" class="flex items-start space-x-3">
+                      <RouterLink :to="'/user/' + (comment.character_id || comment.username)">
+                        <img :src="comment.avatar || `${apiUrl}/random-image-file?user=${comment.username}`"
+                          :alt="`${comment.username}'s avatar`" class="w-8 h-8 rounded-full object-cover" />
+                      </RouterLink>
+                      <div class="w-full">
+                        <RouterLink :to="'/user/' + (comment.character_id || comment.username)"
+                          class="hover:text-[#C9A84C] transition-colors">
+                          <p class="text-[#FAF8F5] font-semibold text-xs">{{ comment.username }}</p>
+                        </RouterLink>
+                        <p class="text-[#FAF8F5]/80 text-xs mt-0.5 select-text">{{ comment.content }}</p>
+                        <!-- Replies -->
+                        <div v-if="comment.replies && comment.replies.length > 0"
+                          class="mt-2 pl-3 border-l border-[#2A2A35] space-y-2.5">
+                          <div v-for="reply in comment.replies" :key="reply.Id" class="flex items-start space-x-2">
+                            <img :src="reply.avatar || `${apiUrl}/random-image-file?user=${reply.username}`"
+                              :alt="`${reply.username}'s avatar`" class="w-7 h-7 rounded-full object-cover" />
+                            <div>
+                              <p class="text-[#FAF8F5] font-semibold text-[11px]">{{ reply.username }}</p>
+                              <p class="text-[#FAF8F5]/80 text-[11px] mt-0.5 select-text">{{ reply.content }}</p>
+                            </div>
+                          </div>
+                        </div>
+                        <!-- Reply input -->
+                        <div class="flex items-center gap-2 mt-2">
+                          <img :src="`${apiUrl}/files/automatic/avatar.png`" alt="Your avatar"
+                            class="w-6 h-6 rounded-full object-cover border border-[#2A2A35]" />
+                          <input type="text" v-model="comment.reply" placeholder="Reply..."
+                            class="w-full p-1.5 bg-[#0D0D12] border border-[#2A2A35] rounded-xl focus:outline-none focus:border-[#C9A84C]/50 text-xs text-[#FAF8F5] placeholder-[#FAF8F5]/30 transition-colors"
+                            @keyup.enter="postReply(comment.reply, index)" />
+                        </div>
+                      </div>
+                    </div>
 
+                    <!-- Add Comment input -->
+                    <div class="mt-4 border-t border-[#2A2A35]/35 pt-4">
+                      <div class="flex items-start space-x-3">
+                        <img :src="`${apiUrl}/files/automatic/avatar.png`" alt="Your avatar"
+                          class="w-8 h-8 rounded-full object-cover border border-[#2A2A35]" />
+                        <div class="w-full">
+                          <textarea v-model="newComment" placeholder="Add a comment..."
+                            class="w-full p-2.5 bg-[#0D0D12] border border-[#2A2A35] rounded-2xl focus:outline-none focus:border-[#C9A84C]/50 text-xs text-[#FAF8F5] placeholder-[#FAF8F5]/30 transition-colors"
+                            rows="2"></textarea>
+                          <div class="flex justify-end mt-1.5">
+                            <button @click="postComment"
+                              class="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-medium rounded-full transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                              :disabled="!newComment.trim()">
+                              Post
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-
               </div>
-              <!-- Add a comment section -->
 
-              <div class="mt-4">
-                <div class="flex items-start space-x-3">
-                  <img :src="`${apiUrl}/files/automatic/avatar.png`" alt="Your avatar"
-                    class="w-10 h-10 rounded-full object-cover border border-gray-200 dark:border-gray-700" />
-                  <div class="w-full">
-                    <textarea v-model="newComment" placeholder="Add a comment..."
-                      class="w-full p-3 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 text-gray-700 dark:text-gray-200 placeholder-gray-500 dark:placeholder-gray-400 text-sm transition-colors duration-200"
-                      rows="2"></textarea>
-                    <div class="flex justify-end mt-2">
-                      <button @click="postComment"
-                        class="px-4 py-2 bg-red-600 hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 text-white text-sm font-medium rounded-full transition-colors duration-200 shadow-sm hover:shadow disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
-                        :disabled="!newComment.trim()">
-                        Post
-                      </button>
+              <!-- Metadata Panel -->
+              <div class="border-t border-[#2A2A35]/30 pt-4">
+                <button @click="() => showMetadata = !showMetadata"
+                  class="text-xs text-gray-400 hover:text-white transition-colors cursor-pointer">
+                  {{ showMetadata ? 'Hide technical metadata' : 'Show technical metadata' }} ↓
+                </button>
+                <div v-if="showMetadata" class="mt-4">
+                  <div
+                    class="bg-[#0D0D12] border border-[#2A2A35]/60 p-4 rounded-2xl transition-colors font-mono text-[10px] text-[#FAF8F5]/70 flex flex-col gap-1.5">
+                    <div class="flex justify-between border-b border-[#2A2A35]/15 pb-1">
+                      <span class="text-gray-500">Seed:</span>
+                      <span>{{ currentPin.Seed }}</span>
+                    </div>
+                    <div class="flex justify-between border-b border-[#2A2A35]/15 pb-1">
+                      <span class="text-gray-500">Dimensions:</span>
+                      <span>{{ currentPin.Width }} × {{ currentPin.Height }}</span>
+                    </div>
+                    <div class="flex justify-between border-b border-[#2A2A35]/15 pb-1">
+                      <span class="text-gray-500">Steps:</span>
+                      <span>{{ currentPin.Steps }}</span>
+                    </div>
+                    <div class="flex justify-between border-b border-[#2A2A35]/15 pb-1">
+                      <span class="text-gray-500">Sampler:</span>
+                      <span>{{ currentPin.Sampler }}</span>
+                    </div>
+                    <div class="flex justify-between border-b border-[#2A2A35]/15 pb-1">
+                      <span class="text-gray-500">CFG Scale:</span>
+                      <span>{{ currentPin.CFGScale }}</span>
+                    </div>
+                    <div class="flex justify-between border-b border-[#2A2A35]/15 pb-1">
+                      <span class="text-gray-500">pHash:</span>
+                      <span>{{ currentPin.pHash }}</span>
+                    </div>
+                    <div class="flex justify-between border-b border-[#2A2A35]/15 pb-1">
+                      <span class="text-gray-500">Filename:</span>
+                      <span class="truncate max-w-[180px]" :title="currentPin.FileName">{{ currentPin.FileName }}</span>
+                    </div>
+                    <div class="flex justify-between border-b border-[#2A2A35]/15 pb-1">
+                      <span class="text-gray-500">Created:</span>
+                      <span>{{ formatDate(currentPin.CreatedDate) }}</span>
+                    </div>
+                    <div class="flex flex-col gap-1 mt-1">
+                      <span class="text-gray-500">Description:</span>
+                      <div
+                        class="bg-[#14141A] p-2 rounded-xl text-[10px] leading-relaxed break-words whitespace-pre-wrap select-text border border-[#2A2A35]/40 max-h-[100px] overflow-y-auto">
+                        {{ currentPin.description || 'N/A' }}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -405,124 +507,65 @@
             </div>
 
           </div>
+        </div>
 
-          <div v-if="currentPin.nsfw_levels" class="mb-4 mt-2">
-            <div class="flex justify-between items-center cursor-pointer"
-              @click="showContentRating = !showContentRating">
-              <div class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                Content Rating
-                <span v-if="!showContentRating && currentPin.nsfw_levels" class="ml-2 px-2 py-0.5 text-xs rounded-full"
-                  :style="{ backgroundColor: getLevelColor(getHighestNsfwLevel()), color: '#fff' }">
-                  {{ getHighestNsfwLevel().charAt(0).toUpperCase() + getHighestNsfwLevel().slice(1) }}
-                </span>
-              </div>
-              <svg class="w-5 h-5 transform transition-transform duration-200"
-                :class="{ 'rotate-180': showContentRating }" fill="none" stroke="currentColor" stroke-width="2"
-                viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path>
-              </svg>
-            </div>
+        <!-- Section Header for under-card recommendations on mobile/desktop if recommendations exist -->
+        <div v-if="recommendations.length > 0 && !isDesktop" class="mt-6">
+          <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-4">More like this</h2>
+        </div>
 
-            <div v-if="showContentRating" class="space-y-1.5 mt-2">
-              <div v-for="(value, level) in Object.entries(currentPin.nsfw_levels)
-                .sort(([, a], [, b]) => b - a)
-                .reduce((obj, [key, val]) => ({ ...obj, [key]: val }), {})" :key="level" class="flex items-center">
-                <span class="w-24 text-sm capitalize text-gray-600 dark:text-gray-400">{{ level }}</span>
-                <div class="flex-1 bg-gray-200 dark:bg-gray-700 rounded-full h-2.5 overflow-hidden">
-                  <div class="h-full rounded-full" :style="{
-                    width: `${Math.round(value * 100)}%`,
-                    backgroundColor: getLevelColor(level)
-                  }"></div>
-                </div>
-                <span class="ml-2 text-xs text-gray-500 dark:text-gray-400 w-12 text-right">
-                  {{ Math.round(value * 100) }}%
-                </span>
-              </div>
-            </div>
+        <!-- Pins flowing under the card (Grouped into left-side columns) -->
+        <div v-if="recommendations.length > 0" class="w-full flex gap-6 items-start">
+          <div class="flex-1 min-w-0 flex flex-col gap-6" v-for="colIdx in leftColCount" :key="colIdx">
+            <Image v-for="pin in getLeftPins(colIdx - 1)" :key="pin.Id" :pin="pin" />
           </div>
-
-          <button @click="() => showMetadata = !showMetadata"
-            class="mt-6 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors">
-            {{ showMetadata ? 'Hide metadata' : 'Show metadata' }} ↓
-          </button>
-          <div v-if="showMetadata" class="mt-6">
-            <h2 class="text-xl font-bold mb-4 text-gray-900 dark:text-white">Metadata</h2>
-            <div class="bg-gray-100 dark:bg-gray-700/50 p-4 rounded-lg transition-colors">
-              <a :href="apiUrl + '/image/' + currentPin.Id" class="text-blue-500 dark:text-blue-400 hover:underline"
-                target="_blank">view data</a>
-              <div class="">
-                <p class="text-gray-700 dark:text-gray-300"><strong class="text-gray-900 dark:text-white">Id:</strong>
-                  {{ currentPin.Id }}</p>
-                <p class="text-gray-700 dark:text-gray-300"><strong class="text-gray-900 dark:text-white">Seed:</strong>
-                  {{ currentPin.Seed }}</p>
-                <p class="text-gray-700 dark:text-gray-300"><strong
-                    class="text-gray-900 dark:text-white">Width:</strong> {{ currentPin.Width }}</p>
-                <p class="text-gray-700 dark:text-gray-300"><strong
-                    class="text-gray-900 dark:text-white">Height:</strong> {{ currentPin.Height }}</p>
-                <p class="text-gray-700 dark:text-gray-300"><strong
-                    class="text-gray-900 dark:text-white">Steps:</strong> {{ currentPin.Steps }}</p>
-                <p class="text-gray-700 dark:text-gray-300"><strong
-                    class="text-gray-900 dark:text-white">Sampler:</strong> {{ currentPin.Sampler }}</p>
-                <p class="text-gray-700 dark:text-gray-300"><strong class="text-gray-900 dark:text-white">CFG
-                    Scale:</strong> {{ currentPin.CFGScale }}</p>
-                <p class="text-gray-700 dark:text-gray-300"><strong
-                    class="text-gray-900 dark:text-white">phash:</strong> {{ currentPin.pHash }}</p>
-                <p class="text-gray-700 dark:text-gray-300"><strong
-                    class="text-gray-900 dark:text-white">FileName:</strong> {{ currentPin.FileName }}</p>
-                <p class="text-gray-700 dark:text-gray-300"><strong class="text-gray-900 dark:text-white">Path:</strong>
-                  E:/dev/img-api{{ currentPin.Path }}</p>
-                <p class="text-gray-700 dark:text-gray-300"><strong
-                    class="text-gray-900 dark:text-white">CreatedDate:</strong> {{ formatDate(currentPin.CreatedDate)
-                    }}
-                </p>
-                <p class="text-gray-700 dark:text-gray-300"><strong
-                    class="text-gray-900 dark:text-white">ModelHash:</strong> {{ currentPin.ModelHash }}</p>
-                <p class="text-gray-700 dark:text-gray-300"><strong
-                    class="text-gray-900 dark:text-white">Description:</strong>
-                  <span v-if="currentPin.description" style="white-space: pre-line;">{{ currentPin.description }}</span>
-                  <span v-else>N/A</span>
-                </p>
-              </div>
-            </div>
-          </div>
-
-
         </div>
       </div>
-    </div>
 
-  </div>
-  <!-- Recommendations Section -->
-  <div class="mt-12">
-    <div class="flex justify-between items-center mb-6">
-      <h2 class="text-xl font-bold text-gray-900 dark:text-white">More like this</h2>
-      <select v-model="similarityMode" @change="RefreshRecommendations"
-        class="bg-[#1A1A24] border border-[#2A2A35] text-[#FAF8F5] rounded-lg px-3 py-1.5 focus:outline-none focus:border-[#C9A84C] text-sm cursor-pointer">
-        <option value="full">Full Similarity</option>
-        <option value="prompt">Prompt Only</option>
-        <option value="hash">Visual Only</option>
-        <option value="embedding">Neural (SigLIP)</option>
-      </select>
-    </div>
-    <!-- Rec Error -->
-    <div v-if="recError" class="bg-white dark:bg-gray-800 rounded-xl shadow p-8 text-center">
-      <svg class="mx-auto h-10 w-10 text-red-400 dark:text-red-500 mb-3" fill="none" stroke="currentColor"
-        stroke-width="1.5" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round"
-          d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-      </svg>
-      <p class="text-gray-500 dark:text-gray-400 mb-4">{{ recError }}</p>
-      <button @click="retryRecommendations()"
-        class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">Retry</button>
-    </div>
-    <!-- Rec Skeleton -->
-    <div v-else-if="isLoading && recommendations.length === 0"
-      class="columns-2 md:columns-3 lg:columns-4 xl:columns-5 gap-4 space-y-4">
-      <div v-for="n in 12" :key="n" class="break-inside-avoid">
-        <div class="skeleton rounded-lg w-full" :style="{ height: (180 + (n % 3) * 80) + 'px' }"></div>
+      <!-- RIGHT COLUMN: Related Pins Masonry (Spans the remaining width, pins start at the top) -->
+      <div v-if="isDesktop" :style="{ flex: `${rightColCount} 0 0%` }" class="flex flex-col gap-6">
+
+        <!-- Similarity selector at the top-right -->
+        <div class="flex justify-between items-center mb-2 w-full">
+          <h2 class="text-xl font-bold text-gray-900 dark:text-white">More like this</h2>
+          <select v-model="similarityMode" @change="RefreshRecommendations"
+            class="bg-[#1A1A24] border border-[#2A2A35] text-[#FAF8F5] rounded-lg px-3 py-1.5 focus:outline-none focus:border-[#C9A84C] text-sm cursor-pointer">
+            <option value="full">Full Similarity</option>
+            <option value="prompt">Prompt Only</option>
+            <option value="hash">Visual Only</option>
+            <option value="embedding">Neural (SigLIP)</option>
+          </select>
+        </div>
+
+        <!-- Rec Error -->
+        <div v-if="recError" class="bg-white dark:bg-gray-800 rounded-xl shadow p-8 text-center">
+          <svg class="mx-auto h-10 w-10 text-red-400 dark:text-red-500 mb-3" fill="none" stroke="currentColor"
+            stroke-width="1.5" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round"
+              d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+          </svg>
+          <p class="text-gray-500 dark:text-gray-400 mb-4">{{ recError }}</p>
+          <button @click="retryRecommendations()"
+            class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors cursor-pointer">Retry</button>
+        </div>
+
+        <!-- Rec Skeleton -->
+        <div v-else-if="isLoading && recommendations.length === 0" class="flex gap-6 w-full items-start">
+          <div class="flex-1 min-w-0 flex flex-col gap-6" v-for="colIdx in rightColCount" :key="colIdx">
+            <div v-for="n in 3" :key="n" class="skeleton rounded-lg w-full"
+              :style="{ height: (180 + (n % 3) * 80) + 'px' }"></div>
+          </div>
+        </div>
+
+        <!-- Columns 2 to N -->
+        <div v-else class="flex gap-6 w-full items-start">
+          <div class="flex-1 min-w-0 flex flex-col gap-6" v-for="colIdx in rightColCount" :key="colIdx">
+            <Image v-for="pin in getRightPins(colIdx - 1)" :key="pin.Id" :pin="pin" />
+          </div>
+        </div>
+
       </div>
     </div>
-    <ImageMasonry v-else :pins="recommendations" />
   </div>
 
   <!-- Add color settings modal -->
@@ -551,10 +594,8 @@
 
 <script setup>
 import { ref, onMounted, watch, onBeforeUnmount, inject, computed } from 'vue'
-import { apiUrl, GetFromApi, ImageSrc, PostToApi, webState } from '../api'
-import Image from '../components/Image.vue'
 import { useRoute } from 'vue-router'
-import { Star, ChevronDown, Eye } from 'lucide-vue-next'
+import { Star, ChevronDown, Eye, Tv } from 'lucide-vue-next'
 import BoardDropDown from '@/components/BoardDropDown.vue'
 import ImageMasonry from '@/components/ImageMasonry.vue'
 
@@ -565,7 +606,38 @@ const isDarkMode = inject('isDarkMode', ref(false))
 const hoverRating = ref(0)
 const showComments = ref(false)
 
-// Default color scheme for tag types
+const windowWidth = ref(window.innerWidth)
+const updateWindowWidth = () => {
+  windowWidth.value = window.innerWidth
+}
+const isDesktop = computed(() => windowWidth.value >= 1280) // xl breakpoint
+const columnCount = computed(() => {
+  if (windowWidth.value < 640) return 2
+  if (windowWidth.value < 1024) return 3
+  if (windowWidth.value < 1280) return 4
+  if (windowWidth.value < 1536) return 5
+  return 6
+})
+const leftColCount = computed(() => {
+  if (!isDesktop.value) return columnCount.value
+  return columnCount.value >= 5 ? 3 : 2
+})
+const rightColCount = computed(() => {
+  if (!isDesktop.value) return 0
+  return columnCount.value - leftColCount.value
+})
+const getLeftPins = (colIdx) => {
+  return recommendations.value.filter((p, pi) => {
+    const c = pi % columnCount.value
+    return c === colIdx
+  })
+}
+const getRightPins = (colIdx) => {
+  return recommendations.value.filter((p, pi) => {
+    const c = pi % columnCount.value
+    return c === (colIdx + leftColCount.value)
+  })
+}
 const defaultTagColors = {
   6: '#D3D3D3', // Other Light gray
   0: '#ffffff', // General - White
@@ -655,7 +727,7 @@ function copyLoras() {
 const route = useRoute()
 const currentPin = ref(null)
 const recommendations = ref([])
-const similarityMode = ref('full')
+const similarityMode = ref('embedding')
 
 const rank = ref({})
 
@@ -936,9 +1008,11 @@ async function postReply(reply, index) {
   comments.value = await GetFromApi('comments/' + currentPin.value.Id)
 }
 
+let cardObserver = null
 onMounted(async () => {
   Refresh()
   window.addEventListener('scroll', handleScroll)
+  window.addEventListener('resize', updateWindowWidth)
   //scroll to the top of the page on mount
   window.scrollTo(0, 0)
 
@@ -976,6 +1050,8 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('scroll', handleScroll)
+  window.removeEventListener('resize', updateWindowWidth)
+
 })
 
 watch(() => route.params.id, async () => {
@@ -1003,6 +1079,7 @@ async function Refresh() {
   try {
     const imageId = route.params.id
     currentPin.value = await GetFromApi(`image/${imageId}`)
+
 
     // Fetch recommendations separately so image still shows on rec failure
     await RefreshRecommendations()
@@ -1089,6 +1166,8 @@ async function rateImage(rating) {
 }
 
 import { api as viewerApi } from 'v-viewer'
+import { GetFromApi, ImageSrc } from '@/api'
+import Image from '@/components/Image.vue'
 
 function showFullscreen() {
   const images = [

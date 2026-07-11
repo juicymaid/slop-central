@@ -329,11 +329,24 @@ def get_all_images(
 
     result = []
     for img in selected:
+        # Resolve the original in-memory dictionary to ensure persistent counts are updated
+        iid = img.get("Id")
+        orig_img = utils.images_data.get(iid)
+        
+        if orig_img:
+            orig_img["Shows"] = orig_img.get("Shows", 0) + 1
+            # Sync the updated count to the dictionary being returned to the client
+            img["Shows"] = orig_img["Shows"]
+        else:
+            # Fallback if not found in images_data
+            img["Shows"] = img.get("Shows", 0) + 1
+            
         copy_img = img.copy()
         copy_img.pop("tags_set", None)
         # Add boards info to the image data.
         copy_img = add_boards_info(copy_img)
         result.append(_sanitize_image_dict(copy_img))
+    utils.save_shows()
     return result
 
 @router.get("/similar-images/{image_id}")
@@ -352,11 +365,13 @@ def get_similar_images(image_id: int, page: int = 1, per_page: int = 5, mode: st
             img = utils.images_data.get(iid)
             if not img:
                 continue
+            img["Shows"] = img.get("Shows", 0) + 1
             copy_img = img.copy()
             copy_img.pop("tags_set", None)
             copy_img["similarity_score"] = round(score, 3)
             copy_img = add_boards_info(copy_img)
             result.append(_sanitize_image_dict(copy_img))
+        utils.save_shows()
         return result
 
     candidates = []
@@ -374,12 +389,13 @@ def get_similar_images(image_id: int, page: int = 1, per_page: int = 5, mode: st
     start = (page - 1) * per_page
     result = []
     for score, img in best_candidates[start:]:
+        img["Shows"] = img.get("Shows", 0) + 1
         copy_img = img.copy()
         copy_img.pop("tags_set", None)
         copy_img["similarity_score"] = round(score, 3)
         copy_img = add_boards_info(copy_img)
         result.append(_sanitize_image_dict(copy_img))
-
+    utils.save_shows()
     return result
 # Lightweight in-memory search index for faster queries
 _SEARCH_INDEX = {
