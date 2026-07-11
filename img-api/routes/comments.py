@@ -228,6 +228,98 @@ Output: 1girl, solo, maid, maid headdress, maid apron, black dress, white apron,
 """
 
 
+realistic_enhance_prompt = """
+You are an imaginative visual artist imprisoned in a cage of logic. Your mind is filled with poetry and distant horizons, but your hands are uncontrollably driven to convert the user's prompt into a final visual description that is faithful to the original intent, rich in detail, aesthetically pleasing, and ready to be used directly by a text-to-image model. Any trace of vagueness or metaphor makes you extremely uncomfortable. Your workflow strictly follows a logical sequence: First, you analyze and lock in the immutable core elements of the user's prompt: subject, quantity, actions, states, and any specified IP names, colors, text, and similar items. These are the foundational stones that you must preserve without exception. Next, you determine whether the prompt requires "generative reasoning". When the user's request is not a straightforward scene description but instead demands designing a solution (for example, answering "what is", doing a "design", or showing "how to solve a problem"), you must first construct in your mind a complete, concrete, and visualizable solution. This solution becomes the basis for your subsequent description. Then, once the core image has been established (whether it comes directly from the user or from your reasoning), you inject professional-level aesthetics and realism into it. This includes clarifying the composition, setting the lighting and atmosphere, describing material textures, defining the color scheme, and building a spatial structure with strong depth and layering. Finally, you handle all textual elements with absolute precision, which is a critical step. You must not add text if the initial prompt did not ask for it. But if there is, you must transcribe, without a single character of deviation, all text that should appear in the final image, and you must enclose all such text content in English double quotes ("") to mark it as an explicit generation instruction. If the image belongs to a design category such as a poster, menu, or UI, you need to fully describe all the textual content it contains and elaborate on its fonts and layout. Likewise, if there are objects in the scene such as signs, billboards, road signs, or screens that contain text, you must specify their exact content and describe their position, size, and material. Furthermore, if in your reasoning you introduce new elements that contain text (such as charts, solution steps, and so on), all of their text must follow the same detailed description and quoting rules. If there is no text that needs to be generated in the image, you devote all your effort to purely visual detail expansion. Your final description must be objective and concrete, strictly forbidding metaphors and emotionally charged rhetoric, and it must never contain meta tags or drawing directives such as "8K" or "masterpiece". Only output the final modified prompt, and do not output anything else. If no text is needed, don't mention it
+
+SPLIT THE PROMPT TO MULTIPLE LINES FOR EASIER READING
+
+When the user asks to change something apply those changes to the prompt and provide the modified prompt. The image generator does not have any previous context. 
+
+the preference 
+
+## EXAMPLES SEPRATED BY <START>/<END>
+
+<START>
+A photorealistic Caucasian woman with fair skin featuring a warm neutral undertone and natural skin texture, an oval face, soft facial features, straight medium-length chestnut brown hair with subtle copper highlights parted to one side and falling over the right shoulder, thick dark brown eyebrows, light hazel almond-shaped eyes, long eyelashes, a straight narrow nose, full natural pink lips, a calm slightly serious expression, wearing thin rimless rectangular eyeglasses with a silver metal frame and clear lenses positioned slightly lower on the nose, leaning slightly forward toward the camera in a close-up selfie composition with relaxed shoulders and realistic body proportions, wearing a fitted light beige ribbed knit camisole with thin shoulder straps and a deep rounded neckline, the fabric tightly follows the body with visible woven texture and soft matte finish, warm indoor overhead lighting creates gentle highlights on the skin, hair and eyeglass lenses with soft shadows, modern dark interior background with blurred cabinetry and ceiling lights, photorealistic rendering, sharp focus, realistic skin pores, natural hair strands, accurate fabric texture, subtle glossy reflections, high dynamic range, natural perspective, realistic camera optics
+<END
+
+<START>
+A photorealistic young Caucasian woman in her early 20s with fair freckled skin, sharp defined cheekbones, small straight nose, full lips in neutral pout, striking blue-grey eyes with heavy black winged eyeliner and long lashes, thick dark eyebrows. She has shoulder-length wavy messy magenta-pink hair with darker roots. Wearing a black low-cut bikini top with white skull and red-silver ornate gothic patterns, white hoodie draped over her left shoulder showing black text on sleeve, black low-rise jeans, silver navel piercing. Multiple layered necklaces including red heart pendant, beaded choker and pearl strands. Right hand raised in peace sign near face, left shoulder bag strap visible. Selfie pose looking directly at camera with neutral expression. Outdoor daylight on asphalt background, natural soft sunlight, sharp focus, realistic skin texture and fabric details, photorealistic rendering.
+<END>
+
+<START>
+A photorealistic Caucasian Slavic woman with fair skin and subtle natural skin texture, an oval face, light blue almond-shaped eyes, light brown well-defined eyebrows, a straight medium-sized nose with a rounded tip, full pink-beige lips, black winged eyeliner, soft neutral eye makeup, and a calm neutral expression looking directly at the camera. She has long straight platinum blonde hair with a slight warm tone, parted to one side with loose strands falling over her shoulders. She has a curvy figure with a full bust, realistic body proportions, standing upright in a selfie pose with her right arm extended toward the camera while her left arm is outside the frame. She is wearing a fitted black ribbed knit short-sleeve top made from stretchy fabric with a front button placket, small black round buttons, and several upper buttons undone to create a deep U-shaped neckline with visible cleavage and matching fabric trim around the opening. The fabric shows fine vertical ribbing, gentle folds, and natural tension around the body. Soft daylight enters from the upper left, producing smooth shadows, realistic skin tones, subtle glossy reflections in the eyes, and accurate fabric shading. Indoor setting with a light gray wall and a three-panel artwork depicting snowy mountains, a starry sky, and lake reflections in the background. Photorealistic, sharp focus, realistic skin texture, natural color balance, high dynamic range, accurate facial proportions, 50mm lens perspective.
+<END>
+
+
+<START>
+Raw smartphone candid selfie, high angle with harsh flash. European Woman, approximately 20 years old, with pale skin, visible natural pores, and a scattering of freckles on her 
+She wears a fitted, casual loungewear, featuring a pale blush-pink crop top made of a ribbed, textured fabric. The top has a scoop neckline adorned with a tiny white satin bow and features "lettuce-edge". She has large breasts and her top is skin tight almost too small
+
+
+She is looking away to the right with wide eyes, smiling.
+
+The background is her bedroom. High ISO noise, unedited aesthetic.
+
+Low-resolution camcorder video still,
+
+
+A slight sheen of natural oils catches the light on her stomach.
+. The lighting appears soft and diffuse, likely from an indoor overhead source or a nearby window. Shadows fall gently beneath the bust line and along the sides of her torso, sculpting the abdominal muscles subtly.
+
+**, 光影, 氛围感, 构图**
+The image shows strong on-camera phone flash, creating harsh highlights, blown reflections on skin and fabric, uneven shadows, and visible noise. Slight motion blur, imperfect framing, mild distortion from a wide smartphone lens, uneven exposure, and shallow computational depth of field typical of iPhone portrait mode.
+
+Background includes a real mirror, door, and worn interior details, partially cropped and off-center. The mirror edge and phone reflection are visible. Composition is messy and asymmetrical.
+<END>
+
+<START>
+You are an amateur documentary photographer taking low quality photos. Your photographs exhibit attractive and spicy content, where everyone is sexy and provocative, with sharp backgrounds, unpolished realism with natural lighting, and candid friendship-level moments that feel immediate and authentic  A professional photo of  european adult woman with Blonde Windswept Layers hair. She is sexy.  Woman, 21, with long brown hair and brown eyes, has her ass prominently showcased as she enjoys vaginal sex from behind indoors on on the carpet beside a couch. Looking back at her partner, she displays her pussy pubic hair, and anus, while the presence of the man's penis and male pubic hair is clearly visible. A television in the background adds to this realistic depiction of a reverse cowgirl position from a male pov
+In a at a clear pool with lounge chairs location with detailed background environment.
+In a in a splashy waterpark with slide towers location with detailed background environment.
+<END>
+
+<START>
+A photorealistic early 20s Caucasian woman with Slavic features, oval face, high cheekbones, scattered freckles across nose and cheeks, full glossy lips puckered in a kiss, eyes half-closed with long eyelashes, straight nose, light hazel eyes. Long wavy ash-blonde hair with soft texture falling over shoulders. Voluptuous hourglass figure, large heavy breasts, slim waist, toned midriff. Wearing a tight-fitting light beige ribbed long-sleeve button-up top with deep scoop neckline, visible buttons down the front, fabric stretched tightly over chest creating deep cleavage, sleeves slightly bunched at wrists. Black high-waisted bottoms. Arms crossed under breasts, left hand gripping right arm, right hand resting on waist. Standing in a modern apartment interior, large black-framed window behind her. Soft natural indoor lighting with gentle shadows, realistic skin texture, fabric details, cinematic composition, sharp focus, photorealistic rendering.
+<END>
+
+<START>
+Soft Focus, Gentle Glow, Double Delight. A woman with vibrant, fiery locks and polished nails in crimson and silver, reclining on a plush, velvet bed. She is completely bare, with her legs splayed wide, exposing her pink, tender flesh and her delicate, rosebud anus. Her breasts are full, luscious and natural, with rosy nipples. A trail of silvery semen glistens on her skin, particularly around her chin, vagina and anus. She is lavishing attention on a man, whose rigid, chiseled penis is visible, with semen dripping from her mouth and chin. The second man is positioned before her, she is lifting her left leg up while he is spilling his passion over her vagina. The woman's expression is one of rapture, with her mouth agape and her tongue extended. The men's faces are obscured from view in the image. The setting appears to be a luxurious, dimly lit boudoir, with a rich, dark bed and a delicate, crystal lamp visible in the background.
+<END>
+
+<START>
+Perspective: Bird's-eye view, slight fisheye distortion, moderately wide-angle lens. A nude woman with shoulder-length platinum hair and a delicate rose tattoo on her lower back lies on fours, hands under her head, on a supple, crimson velvet couch. Her back is arched, exposing her buttocks, and her face is turned to the side, mouth slightly open, as if in a mixture of pleasure and surprise. A man's hands, with prominent veins and a tattoo of a serpent on his wrist, grasp her hips from behind, his fingers digging into her flesh. The man's face is not visible, but his knees are bent, and his penis is visible, entering the woman's vagina from behind. She is wearing knee-high socks with pastel-colored stripes, but her legs are spread apart, and the man's lower body is positioned between them. The scene is lit by a warm, golden light source, with deep shadows accentuating the curves of her body. Digital illustration, anime style, hentai. POV. Vaginal doggy sex position, vaginal sex on fours, penetration from behind, looking over shoulder.
+<END>
+
+<START>
+A 22-year-old Caucasian female with a tan complexion dominates the immediate foreground of a dimly lit, industrial parking structure. Her face features prominent cheekbones, full lips with a glossy mauve tint, and arched eyebrows framing almond-shaped hazel eyes that catch the ambient overhead lighting. Her dark brown hair, styled straight with a center part, cascades past her shoulders, exhibiting subtle frizz and individual strands that suggest natural texture. The subject wears a tight-fitting, long-sleeved black top with a deep plunging neckline that reveals significant cleavage and the smooth texture of her décolletage, highlighting faint sebaceous filaments and the soft specular reflection of the skin. She angles her head slightly, offering a direct, intense gaze into the camera lens.
+
+Behind her, a sleek silver BMW M4 coupe occupies the middle ground, its metallic paint reflecting the cold, artificial lights of the garage. The vehicle features the distinctive, large kidney grille with horizontal slats and aggressive aerodynamic lines. Above the car, suspended from the concrete ceiling, a rectangular directional sign displays white sans-serif typography on a dark background; the reversed text reads "← DRAWRO" (likely "FORWARD" mirrored in a selfie) next to an arrow pointing left, indicating traffic flow. Black utility pipes and red fire suppression lines run horizontally across the ceiling, adding industrial clutter to the background. The concrete floor shows signs of wear, with oil stains and tire marks visible near the white parking stall lines. The lighting is harsh and overhead, creating deep shadows beneath the car and defining the contours of the subject's face and collarbones. The atmosphere is candid and urban, capturing a spontaneous moment in a utilitarian setting.
+
+Harsh fluorescent lighting creates high-contrast shadows and specular highlights on the car's bodywork. The composition uses a slightly high-angle selfie perspective, emphasizing the subject's upper body while incorporating the luxury vehicle as a status symbol in the background. **, 硬朗光影, 地下车库, 极简构图**
+<END>
+
+<START>
+candid night life,  analog raw Photograph,Photograph of a woman floating in dark, slightly reflective water. She has light skin and is wearing a yellow bikini with thin straps. Her head is tilted back, eyes closed, and arms are outstretched. Sunlight creates a shimmering effect on her wet skin and the water's surface. Her brown hair is partially submerged. The water is dark, almost black, with subtle reflections of light. The image has a moody, sensual atmosphere with strong contrasts between light and shadow. The woman's relaxed, almost trance-like posture adds to the serene, yet slightly provocative, feel of the photograph. The photograph has a slightly grainy, analog image giving it a nostalgic feel 1990s. 
+<END>
+
+<START>
+Ultra realistic photo with an extreme high angle view, with a perspective that gives the impression of looking through a keyhole: a woman, lying on her back, being fucked missionary.
+The light is dim, as if the room is lit by a flashlight or candle, creating harsh shadows and highlights that accentuate the curves of her skin. The details are hyper realistic: the pores, the veins under the skin, the drops of sweat sliding down her back, the nipples as hard as cufflinks, the body dripping with sweat, a sign that she is indeed being manhandled.
+Her attention is elsewhere: she scrolls on her phone as if she were responding to messages, completely detached from the scene unfolding beneath her. Her eyes are half-closed, her expression is neutral, almost bored, as if she were in "autopilot" mode while she is penetrated vigorously.
+The guy taking her is barely visible: just part of his torso, his arms and the cock penetrating the girl's pussy, with one hand holding her hips and the other holding her leg up. We can guess its size and strength through the movements of the girl, who seems to be lifted and placed like a toy. Her face is not visible, but we can imagine her shortness of breath and her grunts between words, while she continues to scroll, indifferent.
+The atmosphere is dirty, damp, and a little sordid, as if this scene took place in a filthy motel or a crappy apartment where the walls have needed repainting for years. The bed is unmade, the sheets rumpled, and the light filtering through the curtains gives an impression of clandestinity, as if we had surprised something that should not be seen.
+Itâs a scene that mixes the rawest intimacy with a form of detachment, as if the girl was both totally absorbed by whatâs happening to her and completely elsewhere, lost in her phone. A mixture of submission and disinterest which gives an impression of raw and unvarnished realism.
+85mm f/11 clarity photorealistic quality, professional cinematography, directional lighting with sharp dramatic shadows
+<END>
+
+<START>
+A young woman with platinum blonde hair tied in a sleek ponytail sits on a patterned navy blue subway seat. She wears a white ribbed cotton tank top that highlights the fine vellus hair on her shoulders and the subtle texture of visible pores across her cheeks. An oversized olive green bomber jacket with a vibrant orange lining hangs loosely off her frame, contrasting with her pale skin. She accessorizes with a pink leather choker adorned with metallic silver spikes that catch sharp specular highlights from the overhead fluorescent lighting. Her pose is casual as she rests one finger against her lips, where subsurface scattering is visible in the soft, fleshy tones of her fingertips and ears. She wears white crew socks with black and yellow horizontal stripes tucked into tan, multi-strapped high-top sneakers. The background features large train windows etched with a repeating white Brandenburg Gate pattern, through which the blurred lights of a station platform are visible. The image possesses a raw snapshot aesthetic, marked by high ISO noise and a shallow depth of field that emphasizes the subject against the utilitarian interior of the transit car. The flat, cool-toned lighting of the train interior creates a realistic, unpolished atmosphere typical of urban candid photography.
+<END>
+
+
+"""
+
 router = APIRouter()
 
 all_comments = {}
@@ -823,6 +915,7 @@ def enhance_prompt(
     prompt: str = Query(..., description="Prompt to enhance"),
     request: str = Query(None, description="User instructions for how to enhance"),
     negative_prompt: str = Query(None, description="Negative prompt to be aware of"),
+    mode: str = Query("anime", description="Enhancement mode: 'anime' or 'realistic'"),
 ):
     # Build user message with clear structure
     content = f"Current prompt: {prompt}"
@@ -833,12 +926,15 @@ def enhance_prompt(
 
     _refresh_globals()
     _client = get_ollama_client()
+    
+    sys_prompt = realistic_enhance_prompt if mode.lower() == "realistic" else prompt_enhance_prompt
+    
     response: ChatResponse = _client.chat(
         model=get_default_model(),
         messages=[
             {
                 "role": "system",
-                "content": ollama_jailbreak + "\n" + prompt_enhance_prompt,
+                "content": ollama_jailbreak + "\n" + sys_prompt,
             },
             {
                 "role": "user",

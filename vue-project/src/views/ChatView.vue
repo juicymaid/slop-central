@@ -39,8 +39,7 @@
                     </div>
                     <div class="chat-info">
                         <div class="chat-name">{{ chat.character?.character_name || 'Chat' }}</div>
-                        <div class="last-message">{{ chat.messages?.[chat.messages.length - 1]?.text || 'No messages
-                            yet' }}</div>
+                        <div class="last-message">{{ chat.messages?.[chat.messages.length - 1]?.text || 'No messages yet' }}</div>
                     </div>
                     <div class="chat-meta">
                         <div class="chat-time">{{ chat.time }}</div>
@@ -98,21 +97,85 @@
                             </div>
                         </div>
                     </div>
-                    <div v-for="message in chat.messages" :key="message.id"
-                        :class="['message', { sent: message.isUser, received: !message.isUser }]">
-                        <div class="message-content">
-                            <div v-if="message.text" class="message-text">
-                                {{ message.text }}
+                    <template v-for="message in chat.messages" :key="message.id">
+                        <div v-if="message.role !== 'tool'"
+                            :class="['message', { sent: message.isUser || message.role === 'user', received: !message.isUser && message.role !== 'user' }]">
+                            <div class="message-content w-full">
+                                <!-- Model Name (if available) -->
+                                <div v-if="message.model" class="text-xs font-mono text-gray-500 mb-2">
+                                    {{ message.model }}
+                                </div>
+                                
+                                <!-- Expandable thinking (modern AI-app style) -->
+                                <div v-if="message.thinking" class="mb-3 thought-block">
+                                    <button @click="toggleExpandedThought(message.id)"
+                                        class="w-full flex items-center gap-2 text-xs font-mono uppercase text-gray-400 hover:text-gray-200 transition-colors py-1.5 focus:outline-none"
+                                        type="button">
+                                        <span class="text-[10px] transition-transform duration-200"
+                                            :class="isThoughtExpanded(message.id) ? 'rotate-90' : ''">▶</span>
+                                        <span>Thought for {{ message.thinking_duration || '2.41' }} seconds</span>
+                                    </button>
+                                    <div v-show="isThoughtExpanded(message.id)"
+                                        class="mt-1 text-xs font-mono text-gray-300 bg-gray-900/40 border border-gray-800 rounded-lg p-3 whitespace-pre-wrap leading-relaxed">
+                                        {{ message.thinking }}
+                                    </div>
+                                </div>
+
+                                <!-- Tool Calls -->
+                                <div v-if="message.tool_calls && message.tool_calls.length" class="space-y-3 mb-3">
+                                    <div v-for="tool_call in message.tool_calls" :key="tool_call.id"
+                                        class="border border-gray-850 rounded-lg overflow-hidden bg-gray-950/20">
+                                        <!-- Tool Call Header -->
+                                        <div @click="toggleExpandedResult(tool_call.id)"
+                                            class="flex items-center justify-between p-2.5 bg-gray-900/20 border-b border-gray-850 cursor-pointer select-none">
+                                            <div class="flex items-center gap-2">
+                                                <span class="w-2 h-2 rounded-full" :class="getToolColor(tool_call.function.name)"></span>
+                                                <span class="font-semibold text-xs text-blue-400 hover:underline">{{ getToolPrettyName(tool_call.function.name) }}</span>
+                                            </div>
+                                            <div class="flex items-center gap-2">
+                                                <span class="text-[10px] text-gray-500 bg-gray-900/60 px-1.5 py-0.5 rounded border border-gray-800/30 font-mono">{{ getToolNamespace(tool_call.function.name) }}</span>
+                                                <span class="text-[10px] text-gray-400 transform transition-transform duration-200"
+                                                    :class="isResultExpanded(tool_call.id) ? 'rotate-90' : ''">▶</span>
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- Tool Call Body -->
+                                        <div v-show="isResultExpanded(tool_call.id)" class="divide-y divide-gray-850">
+                                            <!-- Arguments -->
+                                            <div class="p-2.5 bg-gray-950/40 text-xs font-mono">
+                                                <div @click.stop="toggleExpandedArgs(tool_call.id)" class="cursor-pointer flex items-center gap-1.5 text-gray-400 hover:text-gray-200 select-none">
+                                                    <span class="transform transition-transform duration-200" :class="{ 'rotate-90': isArgsExpanded(tool_call.id) }">▶</span>
+                                                    <span class="font-semibold">Arguments:</span>
+                                                    <span v-if="!isArgsExpanded(tool_call.id)" class="text-gray-500 truncate max-w-[200px] sm:max-w-md">{{ tool_call.function.arguments }}</span>
+                                                </div>
+                                                <pre v-show="isArgsExpanded(tool_call.id)" class="mt-1.5 p-2 bg-gray-950/80 rounded border border-gray-900 text-gray-300 overflow-x-auto whitespace-pre-wrap text-[11px]">{{ formatJson(tool_call.function.arguments) }}</pre>
+                                            </div>
+                                            <!-- Result (if available) -->
+                                            <div v-if="getToolResult(tool_call.id)" class="p-2.5 bg-gray-950/40 text-xs font-mono">
+                                                <div @click.stop="toggleExpandedResultSection(tool_call.id)" class="cursor-pointer flex items-center gap-1.5 text-gray-400 hover:text-gray-200 select-none">
+                                                    <span class="transform transition-transform duration-200" :class="{ 'rotate-90': isResultSectionExpanded(tool_call.id) }">▶</span>
+                                                    <span class="font-semibold">Result:</span>
+                                                </div>
+                                                <pre v-show="isResultSectionExpanded(tool_call.id)" class="mt-1.5 p-2 bg-gray-950/80 rounded border border-gray-900 text-gray-300 overflow-x-auto whitespace-pre-wrap text-[11px] max-h-[300px]">{{ formatJson(getToolResult(tool_call.id)) }}</pre>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Text response -->
+                                <div v-if="message.text" class="message-text">
+                                    {{ message.text }}
+                                </div>
+                                <div v-if="message.text && message.image_prompt" class="text-gray-400">
+                                    {{ message.image_prompt }}
+                                </div>
+                                <div v-if="message.image" class="message-image">
+                                    <img :src="message.image" :alt="'Shared image'" @click="openImage(message.image)" />
+                                </div>
+                                <div class="message-time">{{ message.time }}</div>
                             </div>
-                            <div v-if="message.text" class="text-gray-400">
-                                {{ message.image_prompt }}
-                            </div>
-                            <div v-if="message.image" class="message-image">
-                                <img :src="message.image" :alt="'Shared image'" @click="openImage(message.image)" />
-                            </div>
-                            <div class="message-time">{{ message.time }}</div>
                         </div>
-                    </div>
+                    </template>
                     <div>
                         <div v-if="isTyping" class="typing-indicator">
                             <span class="dot"></span>
@@ -232,6 +295,100 @@ const selectedChat = ref(null);
 const newMessage = ref('');
 const selectedImage = ref(null);
 const messagesContainer = ref(null);
+
+// Collapsible UI states for thoughts & tool calls
+const expandedThoughts = ref({});
+const expandedResults = ref({});
+const expandedArgs = ref({});
+const expandedResultSections = ref({});
+
+function toggleExpandedThought(id) {
+    expandedThoughts.value[id] = !expandedThoughts.value[id];
+}
+function isThoughtExpanded(id) {
+    return !!expandedThoughts.value[id];
+}
+
+function toggleExpandedResult(id) {
+    expandedResults.value[id] = !expandedResults.value[id];
+}
+function isResultExpanded(id) {
+    // Default to expanded so the user sees results initially
+    return expandedResults.value[id] !== false;
+}
+
+function toggleExpandedArgs(id) {
+    expandedArgs.value[id] = !expandedArgs.value[id];
+}
+function isArgsExpanded(id) {
+    return !!expandedArgs.value[id];
+}
+
+function toggleExpandedResultSection(id) {
+    expandedResultSections.value[id] = !expandedResultSections.value[id];
+}
+function isResultSectionExpanded(id) {
+    // Default to expanded initially
+    return expandedResultSections.value[id] !== false;
+}
+
+function getToolResult(toolCallId) {
+    if (!chat.value || !chat.value.messages) return null;
+    const toolMsg = chat.value.messages.find(m => m.role === 'tool' && m.tool_call_id === toolCallId);
+    return toolMsg ? toolMsg.content : null;
+}
+
+function formatJson(val) {
+    if (!val) return '';
+    if (typeof val === 'object') return JSON.stringify(val, null, 2);
+    try {
+        return JSON.stringify(JSON.parse(val), null, 2);
+    } catch (e) {
+        return val;
+    }
+}
+
+function getToolPrettyName(name) {
+    const prettyNames = {
+        search_images: 'Search Images',
+        get_random_images: 'Get Random Images',
+        show_image: 'Show Image',
+        generate_new_image: 'Generate Image',
+        inpaint_image: 'Inpaint Image',
+        search_civitai_models: 'Search CivitAI Models',
+        get_civitai_images: 'Get CivitAI Images',
+        show_prompt: 'Show Prompt',
+        search: 'Web Search',
+        'visit-website': 'Visit Website',
+    };
+    return prettyNames[name] || name;
+}
+
+function getToolNamespace(name) {
+    const namespaces = {
+        search_images: 'local/search-images',
+        get_random_images: 'local/get-random-images',
+        show_image: 'local/show-image',
+        generate_new_image: 'local/generate-new-image',
+        inpaint_image: 'local/inpaint-image',
+        search_civitai_models: 'civitai/search-models',
+        get_civitai_images: 'civitai/get-images',
+        show_prompt: 'local/show-prompt',
+        search: 'vadimfedenko/duck-duck-go-reworked',
+        'visit-website': 'vadimfedenko/visit-website-reworked',
+    };
+    return namespaces[name] || 'mcp/' + name;
+}
+
+function getToolColor(name) {
+    if (name === 'search' || name === 'search_images' || name === 'search_civitai_models') {
+        return 'bg-amber-500';
+    }
+    if (name === 'visit-website' || name === 'show_image') {
+        return 'bg-blue-500';
+    }
+    return 'bg-green-500';
+}
 
 const chats = reactive([
     {

@@ -13,14 +13,6 @@ const isMobile = ref(false)
 const checkMobile = () => {
   isMobile.value = window.innerWidth < 768
 }
-onMounted(() => {
-  checkMobile()
-  window.addEventListener('resize', checkMobile)
-})
-onBeforeUnmount(() => {
-  window.removeEventListener('resize', checkMobile)
-})
-
 
 const searchQuery = ref('')
 const showSuggestions = ref(false)
@@ -29,10 +21,43 @@ const suggestions = ref([])
 const selectedIndex = ref(-1)
 const isDarkMode = ref(false)
 
+const handleKeyDown = (e) => {
+  if (e.key === 'Control') {
+    document.body.classList.add('ctrl-pressed')
+  }
+}
 
-// Update UI when search query changes
+const handleKeyUp = (e) => {
+  if (e.key === 'Control') {
+    document.body.classList.remove('ctrl-pressed')
+  }
+}
+
+const handleDevBlurFocusLoss = () => {
+  document.body.classList.remove('ctrl-pressed')
+}
+
 onMounted(() => {
+  checkMobile()
+  window.addEventListener('resize', checkMobile)
 
+  if (import.meta.env.VITE_DEV_BLUR === 'true') {
+    document.body.classList.add('dev-blur-enabled')
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+    window.addEventListener('blur', handleDevBlurFocusLoss)
+    window.addEventListener('focusout', handleDevBlurFocusLoss)
+  }
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', checkMobile)
+  if (import.meta.env.VITE_DEV_BLUR === 'true') {
+    window.removeEventListener('keydown', handleKeyDown)
+    window.removeEventListener('keyup', handleKeyUp)
+    window.removeEventListener('blur', handleDevBlurFocusLoss)
+    window.removeEventListener('focusout', handleDevBlurFocusLoss)
+  }
 })
 
 // Provide theme context to child components

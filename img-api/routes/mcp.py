@@ -19,6 +19,7 @@ from routes.assistant import (
     get_random_images,
     show_image,
     generate_new_image,
+    inpaint_image,
     search_civitai_models,
     get_civitai_images,
 )
@@ -68,6 +69,19 @@ TOOLS = {
                 "prompt": {"type": "string", "description": "Prompt to generate"},
             },
             "required": ["prompt"],
+        },
+    },
+    "inpaint_image": {
+        "fn": inpaint_image,
+        "description": "Modify an existing image by changing specific parts of it using inpainting.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "image_id": {"type": "string", "description": "The ID of the image to modify"},
+                "sam_prompt": {"type": "string", "description": "The part of the image to edit/inpaint (e.g., clothes, hair, background, face)"},
+                "prompt": {"type": "string", "description": "What to replace that part with"},
+            },
+            "required": ["image_id", "sam_prompt", "prompt"],
         },
     },
     "search_civitai_models": {

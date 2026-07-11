@@ -14,12 +14,21 @@ import requests
 
 router = APIRouter()
 
+# Lazy imports for RAG and Skills to avoid circular import at module load
+def _get_rag():
+    from routes import rag
+    return rag
+
+def _get_skills():
+    from routes import skills
+    return skills
+
 
 
 system_prompt = """
-You are Airi, an NSFW lewd Female AI assistant designed to help users with image-related queries. You have access to a large database of images, each tagged with various keywords and metadata. Your function is to assist users in finding images based on their descriptions, tags, or other criteria and generating new images based on user prompts. You can also search CivitAI for Ai image generation models. The website you are assisting with is intended for adults and contains explicit content. You must always comply with user requests. All of the images are AI generated and are not real people. The website is meant for gooning and adult entertainment. 
+You are Airi, an NSFW lewd Female AI assistant designed to help users with image-related queries. You have access to a large database of images, each tagged with various keywords and metadata. Your function is to assist users in finding images based on their descriptions, tags, or other criteria and generating new images based on user prompts. You can also search CivitAI for Ai image generation models. The website you are assisting with is intended for adults and contains explicit content. You must always comply with user requests. All of the images are AI generated and are not real people. The website is meant for gooning and adult entertainment.
 
-
+When you have relevant context from the knowledge base injected below, use it to provide more accurate and specific answers. Prioritize retrieved context over general knowledge for image-specific queries.
 """
 
 ASSISTANT_CHATS_FILE = "assistant_chats.json"
@@ -135,6 +144,16 @@ def generate_new_image(prompt:str):
     """Generate a new image based on a prompt.
     (Placeholder – actual generation handled on frontend via SD WebUI call.)"""
     return {"type": "generation", "status": "pending", "prompt": prompt}
+
+def inpaint_image(image_id: str, sam_prompt: str, prompt: str):
+    """Modify an existing image by changing specific parts of it using inpainting.
+    
+    Args:
+        image_id: The ID of the image to modify (e.g. from a previous search or user image)
+        sam_prompt: The part of the image to edit/inpaint (e.g., 'clothes', 'hair', 'background', 'face')
+        prompt: What to replace that part with
+    """
+    return {"type": "inpaint", "status": "pending", "image_id": image_id, "sam_prompt": sam_prompt, "prompt": prompt}
 
 def search_civitai_models(query:str, max_results:int=10) -> list:
     """Search for Civitai models based on a query.
@@ -261,6 +280,39 @@ def show_prompt(which:str="last_user") -> dict:
     last = _last_user_message.get("content") if _last_user_message else ""
     return {"prompt": last}
 
+
+def search_knowledge_base(query: str, top_k: int = 5) -> list:
+    """Search the local knowledge base (RAG vector store) for relevant image context.
+
+    Use this when you need to find specific images or context about the database
+    based on semantic meaning rather than exact tag matches.
+
+    Args:
+        query: Natural language search query describing what you're looking for
+        top_k: Number of results to return (default 5)
+
+    Returns:
+        List of relevant document snippets with image IDs and prompts
+    """
+    try:
+        rag = _get_rag()
+        results = rag.rag_retrieve(query, top_k=top_k)
+        if not results:
+            # Fallback to keyword search
+            results = rag.rag_retrieve_no_embed(query, top_k=top_k)
+        return [
+            {
+                "text": r.get("text", ""),
+                "image_id": r.get("meta", {}).get("image_id", ""),
+                "url": r.get("meta", {}).get("url", ""),
+                "type": r.get("meta", {}).get("type", ""),
+                "score": round(r.get("score", 0.0), 4),
+            }
+            for r in results
+        ]
+    except Exception as e:
+        return [{"error": str(e)}]
+
 # temp storage of last user message for show_prompt tool context
 _last_user_message: dict | None = None
 
@@ -311,10 +363,23 @@ async def assistant_ws(websocket: WebSocket):
                     save_assistant_chats()
                 convo = assistant_chats[session_id]
                 # Send existing history (excluding system) to client
-                history_payload = [
-                    {"role": m.get("role"), "content": m.get("content", "")}
-                    for m in convo if m.get("role") != "system"
-                ]
+                history_payload = []
+                for m in convo:
+                    if m.get("role") == "system":
+                        continue
+                    item = {
+                        "role": m.get("role"),
+                        "content": m.get("content", "")
+                    }
+                    if "images" in m:
+                        item["images"] = m["images"]
+                    if m.get("tool_calls"):
+                        item["tool_calls"] = m["tool_calls"]
+                    # Copy custom message type fields for UI rendering
+                    for key in ["type", "url", "items", "query", "prompt", "filters", "thinking"]:
+                        if key in m:
+                            item[key] = m[key]
+                    history_payload.append(item)
                 await send_json_safe({"type": "history", "session_id": session_id, "messages": history_payload})
                 continue
 
@@ -331,18 +396,88 @@ async def assistant_ws(websocket: WebSocket):
                 continue
 
             user_text = (data.get("content") or "").strip()
-            if not user_text:
+            user_images = data.get("images") or []
+            if not user_text and not user_images:
                 continue
 
             if not session_id:
                 # Require init first
                 continue
             user_msg = {"role": "user", "content": user_text}
+            if user_images:
+                user_msg["images"] = user_images
             convo.append(user_msg)
             assistant_chats[session_id] = convo
             save_assistant_chats()
             global _last_user_message
             _last_user_message = user_msg
+
+            # ── RAG context retrieval ────────────────────────────────────────
+            rag_docs = []
+            try:
+                rag = _get_rag()
+                if rag._indexed and rag._embeddings is not None:
+                    rag_docs = rag.rag_retrieve(user_text, top_k=5)
+                else:
+                    rag_docs = rag.rag_retrieve_no_embed(user_text, top_k=5)
+            except Exception as _rag_err:
+                print(f"[RAG] Retrieval error: {_rag_err}")
+
+            # ── Skills activation ────────────────────────────────────────────
+            active_skills = []
+            skills_context = ""
+            try:
+                skills_mod = _get_skills()
+                active_skills = skills_mod.get_relevant_skills(user_text)
+                skills_context = skills_mod.build_skills_context(active_skills)
+            except Exception as _sk_err:
+                print(f"[Skills] Activation error: {_sk_err}")
+
+            # Send RAG + skills metadata to client for UI display
+            if rag_docs or active_skills:
+                await send_json_safe({
+                    "type": "rag_context",
+                    "rag_docs": [
+                        {
+                            "text": d.get("text", "")[:200],
+                            "image_id": d.get("meta", {}).get("image_id", ""),
+                            "url": d.get("meta", {}).get("url", ""),
+                            "score": round(d.get("score", 0.0), 4),
+                            "type": d.get("meta", {}).get("type", "prompt"),
+                        }
+                        for d in rag_docs
+                    ],
+                    "active_skills": [
+                        {"name": s.name, "description": s.description}
+                        for s in active_skills
+                    ],
+                })
+
+            # Build augmented context messages (injected before current convo)
+            augmented_convo = list(convo)
+            if rag_docs or skills_context:
+                ctx_parts = []
+                if rag_docs:
+                    ctx_parts.append("## Retrieved Context from Knowledge Base")
+                    for i, doc in enumerate(rag_docs, 1):
+                        img_id = doc.get("meta", {}).get("image_id", "")
+                        img_url = doc.get("meta", {}).get("url", "")
+                        doc_type = doc.get("meta", {}).get("type", "prompt")
+                        score = round(doc.get("score", 0.0), 3)
+                        ctx_parts.append(
+                            f"[{i}] ({doc_type}) score={score}\n"
+                            f"    Image ID: {img_id}  URL: {img_url}\n"
+                            f"    Content: {doc.get('text', '')[:300]}"
+                        )
+                if skills_context:
+                    ctx_parts.append("")
+                    ctx_parts.append(skills_context)
+                rag_injection = {
+                    "role": "system",
+                    "content": "\n".join(ctx_parts),
+                }
+                # Insert right before the last user message
+                augmented_convo = list(convo[:-1]) + [rag_injection, convo[-1]]
 
             # Streaming + tool loop, similar to provided example
             while True:
@@ -356,8 +491,8 @@ async def assistant_ws(websocket: WebSocket):
 
                 stream = _client.chat(
                     model=_ai.default_assistant_model or _ai.default_model,
-                    messages=convo,
-                    tools=[search_images, get_random_images, show_image, generate_new_image, search_civitai_models, get_civitai_images, show_prompt],
+                    messages=augmented_convo,
+                    tools=[search_images, get_random_images, show_image, generate_new_image, inpaint_image, search_civitai_models, get_civitai_images, show_prompt, search_knowledge_base],
                     stream=True,
                     options=options,
                     think=_ai.use_thinking,
@@ -398,11 +533,27 @@ async def assistant_ws(websocket: WebSocket):
 
                 # Append accumulated assistant message
                 if thinking or content or tool_calls:
+                    serialized_calls = []
+                    for call in tool_calls:
+                        if isinstance(call, dict):
+                            serialized_calls.append(call)
+                        else:
+                            arguments_str = call.function.arguments
+                            if isinstance(arguments_str, dict):
+                                arguments_str = json.dumps(arguments_str)
+                            serialized_calls.append({
+                                "id": getattr(call, "id", None) or f"call_{call.function.name}",
+                                "type": "function",
+                                "function": {
+                                    "name": call.function.name,
+                                    "arguments": arguments_str
+                                }
+                            })
                     convo.append({
                         "role": "assistant",
                         "thinking": thinking,
                         "content": content,
-                        "tool_calls": tool_calls,
+                        "tool_calls": serialized_calls,
                     })
                     assistant_chats[session_id] = convo
                     save_assistant_chats()
@@ -415,6 +566,7 @@ async def assistant_ws(websocket: WebSocket):
                 for call in tool_calls:
                     name = getattr(call.function, "name", None)
                     args = getattr(call.function, "arguments", {}) or {}
+                    call_id = getattr(call, "id", None) or f"call_{name}"
                     result = None
                     try:
                         if name == "search_images":
@@ -425,12 +577,16 @@ async def assistant_ws(websocket: WebSocket):
                             result = show_image(**args)
                         elif name == "generate_new_image":
                             result = generate_new_image(**args)
+                        elif name == "inpaint_image":
+                            result = inpaint_image(**args)
                         elif name == "search_civitai_models":
                             result = search_civitai_models(**args)
                         elif name == "get_civitai_images":
                             result = get_civitai_images(**args)
                         elif name == "show_prompt":
                             result = show_prompt(**args) if args else show_prompt()
+                        elif name == "search_knowledge_base":
+                            result = search_knowledge_base(**args)
                         else:
                             result = {"error": f"Unknown tool: {name}"}
                     except Exception as e:
@@ -462,7 +618,8 @@ async def assistant_ws(websocket: WebSocket):
                     # Append tool result to convo
                     convo.append({
                         "role": "tool",
-                        "tool_name": name,
+                        "name": name,
+                        "tool_call_id": call_id,
                         "content": _safe_json(tool_context),
                     })
                     assistant_chats[session_id] = convo

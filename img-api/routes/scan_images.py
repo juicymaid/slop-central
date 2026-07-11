@@ -14,7 +14,7 @@ router = APIRouter()
 
 folders = [
     r"E:\unity\cache\_\ai\stable-diffusion-webui\outputs",
-    r"H:\ent\ai\StabilityMatrix\Packages\ComfyUI_Backup\ComfyUI\output",
+    r"H:\ent\ai\StabilityMatrix\Packages\ComfyUI\output",
 ]
 
 scan_inprogress = False

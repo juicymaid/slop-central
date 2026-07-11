@@ -46,6 +46,12 @@ const urls = [
     "/files/comfyui/RMBGVID/vid_00018.webm",
     "/files/comfyui/RMBGVID/vid_00019.webm",
     "/files/comfyui/RMBGVID/vid_00020.webm",
+    "/files/comfyui/RMBGVID/vid_00021.webm",
+    "/files/comfyui/RMBGVID/vid_00022.webm",
+    "/files/comfyui/RMBGVID/vid_00023.webm",
+    "/files/comfyui/RMBGVID/vid_00024.webm",
+    "/files/comfyui/RMBGVID/vid_00025.webm",
+
 
 
     "https://cdn.donmai.us/original/27/3b/__toutetsu_yuuma_touhou_drawn_by_chups__273bfc163bb1321438cef17f0a88ae6c.png",

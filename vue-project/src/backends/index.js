@@ -1,6 +1,7 @@
 import { reactive } from 'vue'
 import { saveToFile, loadFromFile } from '@/storage'
 import { current_model, defaultStyles } from '@/api'
+import { comfyState, buildComfyPrompt, getActiveWorkflow } from './comfyui'
 
 const BACKEND_SETTINGS_FILE = 'backendSettings.json'
 
@@ -35,7 +36,7 @@ export const backendDefinitions = {
   comfyui: {
     id: 'comfyui',
     label: 'ComfyUI',
-    description: 'Local ComfyUI server (placeholder adapter).',
+    description: 'Local ComfyUI workflow-based generation.',
     type: 'local',
     required: ['url'],
     fields: [
@@ -54,9 +55,10 @@ export const backendDefinitions = {
       supportsLocalModels: false,
       supportsLoras: false,
       supportsExtensions: false,
-      supportsProgress: false,
-      supportsInterrupt: false,
+      supportsProgress: true,
+      supportsInterrupt: true,
       supportsModelThumbnails: false,
+      supportsWorkflows: true,
     },
   },
   aiHorde: {
@@ -397,6 +399,51 @@ export const buildBackendRequest = ({ baseRequest, inputImage, denoisingStrength
       },
       payload,
       supportsProgress: false,
+      supportsInterrupt: true,
+    }
+  }
+
+  if (backend.id === 'comfyui') {
+    const baseUrl = getBackendBaseUrl('comfyui')
+    const activeWorkflow = getActiveWorkflow()
+
+    if (!activeWorkflow) {
+      return {
+        status: 'ready',
+        backend,
+        adapter: 'comfyui',
+        reason: 'No workflow selected. Import a workflow to generate.',
+        noWorkflow: true,
+        baseUrl,
+        supportsProgress: true,
+        supportsInterrupt: true,
+      }
+    }
+
+    // Build overrides from the exposed inputs' current values
+    const inputOverrides = {}
+    for (const input of activeWorkflow.exposedInputs) {
+      inputOverrides[`${input.nodeId}.${input.inputKey}`] = input.value
+    }
+
+    const promptData = buildComfyPrompt(activeWorkflow.workflow, inputOverrides)
+
+    return {
+      status: 'ready',
+      backend,
+      adapter: 'comfyui',
+      requestUrl: `${baseUrl}prompt`,
+      interruptUrl: `${baseUrl}interrupt`,
+      historyUrl: `${baseUrl}history/`,
+      viewUrl: `${baseUrl}view`,
+      wsUrl: baseUrl.replace(/^http/, 'ws') + `ws?clientId=${comfyState.clientId}`,
+      baseUrl,
+      headers: { 'Content-Type': 'application/json' },
+      payload: {
+        prompt: promptData,
+        client_id: comfyState.clientId,
+      },
+      supportsProgress: true,
       supportsInterrupt: true,
     }
   }

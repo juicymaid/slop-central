@@ -688,7 +688,19 @@
   },
   "lucy": {
     "chat_id": "lucy",
-    "messages": [],
+    "messages": [
+      {
+        "isUser": true,
+        "text": "hi",
+        "timestamp": "2026-07-03 13:48:36"
+      },
+      {
+        "isUser": false,
+        "text": "Oh... hi.",
+        "image_prompt": "",
+        "timestamp": "2026-07-03 13:48:37"
+      }
+    ],
     "character": {
       "character_name": "Lucy",
       "short_description": "Lucy is a 23 year old half Japanese half Polish female netrunner with light purple eyes and pastel Rainbow colored hair. Lucy's personality is introverted, not liking to talk about her past, or about ",

@@ -13,6 +13,20 @@ import {
     loadBackendSettings
 } from '@/backends'
 import { loadFromFile, saveToFile } from '@/storage'
+import {
+    comfyState,
+    loadComfyWorkflows,
+    saveComfyWorkflows,
+    getActiveWorkflow,
+    removeWorkflow as removeComfyWorkflow,
+    connectComfyWebSocket,
+    closeComfyWebSocket,
+    interruptComfyExecution,
+    getComfyHistory,
+    fetchComfyImage,
+    blobToDataUrl,
+    getComfySystemStats,
+} from '@/backends/comfyui'
 
 const chatHistory = ref([])
 
@@ -648,8 +662,39 @@ const activeBackend = computed(() => getActiveBackend())
 const backendCapabilities = computed(() => activeBackend.value.capabilities || {})
 const url = computed(() => getBackendBaseUrl())
 const isForgeBackend = computed(() => activeBackend.value.id === 'forge')
+const isComfyBackend = computed(() => activeBackend.value.id === 'comfyui')
 const canSelectModels = computed(() => backendCapabilities.value.supportsLocalModels)
 const canSelectLoras = computed(() => backendCapabilities.value.supportsLoras)
+const showWorkflowImportModal = ref(false)
+const textareaRefs = reactive({})
+const promptActionTarget = ref(null)
+
+const comfyWorkflowsList = computed(() => comfyState.workflows)
+const activeComfyWorkflowId = computed({
+    get: () => comfyState.activeWorkflowId,
+    set: (val) => { comfyState.activeWorkflowId = val }
+})
+const activeComfyWorkflow = computed(() => getActiveWorkflow())
+
+function handleWorkflowImported(workflow) {
+    comfyState.activeWorkflowId = workflow.id
+    showWorkflowImportModal.value = false
+}
+
+function deleteComfyWorkflow(workflowId) {
+    if (!confirm('Delete this workflow?')) return
+    removeComfyWorkflow(workflowId)
+    saveComfyWorkflows()
+}
+
+// Watch for ComfyUI workflow input changes and auto-save
+let comfyInputSaveTimer = null
+watch(() => comfyState.workflows, () => {
+    clearTimeout(comfyInputSaveTimer)
+    comfyInputSaveTimer = setTimeout(() => {
+        saveComfyWorkflows()
+    }, 500)
+}, { deep: true })
 
 //current selected model and loras
 //save this in local storage
@@ -751,6 +796,17 @@ async function cancelGeneration() {
             console.warn('Failed to cancel AI Horde request:', error)
         }
         aiHordeRequestState.id = null
+    }
+
+    // ComfyUI interrupt
+    if (isComfyBackend.value && url.value) {
+        try {
+            await interruptComfyExecution(url.value)
+        } catch (error) {
+            console.warn('Failed to interrupt ComfyUI:', error)
+        }
+        closeComfyWebSocket()
+        return
     }
 
     if (!backendCapabilities.value.supportsInterrupt || !url.value) {
@@ -1110,6 +1166,35 @@ async function getBackendStatus() {
             }
         }
 
+        // ComfyUI status check via /system_stats
+        if (backend.id === 'comfyui') {
+            const baseUrl = url.value
+            if (!baseUrl) {
+                webState.backendStatus = 'misconfigured'
+                webState.backendStatusMessage = 'Missing ComfyUI URL.'
+                return
+            }
+            try {
+                const stats = await getComfySystemStats(baseUrl)
+                if (stats) {
+                    webState.backendRunning = true
+                    webState.backendAvailable = true
+                    webState.backendStatus = 'ready'
+                    webState.backendStatusMessage = stats.system?.os
+                        ? `ComfyUI running on ${stats.system.os}`
+                        : 'ComfyUI is running'
+                    return
+                }
+                webState.backendStatus = 'stopped'
+                webState.backendStatusMessage = 'ComfyUI is not responding.'
+                return
+            } catch (error) {
+                webState.backendStatus = 'stopped'
+                webState.backendStatusMessage = `ComfyUI connection failed: ${error}`
+                return
+            }
+        }
+
         webState.backendStatus = 'unsupported'
         webState.backendStatusMessage = `${backend.label} adapter not wired yet.`
         return
@@ -1261,6 +1346,7 @@ var generationCosts = ref({
 
 onMounted(async () => {
     await loadBackendSettings()
+    await loadComfyWorkflows()
     getBackendStatus()
     onUiUpdate();
     LoadHistory();
@@ -1377,6 +1463,7 @@ import ChatPanel from './ChatPanel.vue'
 import CanvasView from '@/views/canvasView.vue'
 import AutoComplete from './autoComplete.vue'
 import BackendSettingsPanel from './BackendSettingsPanel.vue'
+import ComfyWorkflowImportModal from './ComfyWorkflowImportModal.vue'
 import { Image, InfoIcon, Settings } from 'lucide-vue-next'
 import ClearArt from './ClearArt.vue'
 
@@ -1880,6 +1967,158 @@ async function ProcessRequest(queueItem) {
         return
     }
 
+    // ── ComfyUI Generation ──────────────────────────────────────────
+    if (backendRequest.adapter === 'comfyui') {
+        try {
+            // POST the prompt to ComfyUI
+            const response = await fetch(backendRequest.requestUrl, {
+                method: 'POST',
+                headers: backendRequest.headers,
+                body: JSON.stringify(backendRequest.payload),
+            })
+
+            if (!response.ok) {
+                const errorText = await response.text()
+                console.error('ComfyUI prompt failed:', errorText)
+                isGenerating.value = false
+                return
+            }
+
+            const result = await response.json()
+            const promptId = result.prompt_id
+            if (!promptId) {
+                console.error('ComfyUI did not return a prompt_id')
+                isGenerating.value = false
+                return
+            }
+
+            generationState.value = { job: 'Queued' }
+
+            // Connect WebSocket and wait for completion
+            const comfyImages = await new Promise((resolve, reject) => {
+                const outputImages = []
+                let currentNode = ''
+
+                const ws = connectComfyWebSocket(backendRequest.baseUrl, {
+                    onProgress: (data) => {
+                        if (data.prompt_id === promptId) {
+                            generationProgress.value = data.max > 0 ? data.value / data.max : 0
+                            generationState.value = {
+                                ...generationState.value,
+                                sampling_step: data.value,
+                                sampling_steps: data.max,
+                                job: `Step ${data.value}/${data.max}`,
+                            }
+                        }
+                    },
+                    onExecuting: (data) => {
+                        if (data.prompt_id === promptId) {
+                            if (data.node === null) {
+                                // Execution complete
+                                generationProgress.value = 1
+                                generationState.value.job = 'Complete'
+                                closeComfyWebSocket()
+                                resolve(outputImages)
+                            } else {
+                                currentNode = data.node
+                                generationState.value.job = `Processing node ${data.node}`
+                            }
+                        }
+                    },
+                    onExecuted: (data) => {
+                        if (data.prompt_id === promptId && data.output?.images) {
+                            for (const img of data.output.images) {
+                                outputImages.push(img)
+                            }
+                        }
+                    },
+                    onError: (data) => {
+                        console.error('ComfyUI execution error:', data)
+                        closeComfyWebSocket()
+                        reject(new Error(data.exception_message || 'ComfyUI execution error'))
+                    },
+                })
+            })
+
+            // Fetch images from ComfyUI and convert to displayable format
+            const imagePaths = []
+            let firstSavedId = null
+            for (const imgInfo of comfyImages) {
+                try {
+                    const blob = await fetchComfyImage(
+                        backendRequest.baseUrl,
+                        imgInfo.filename,
+                        imgInfo.subfolder || '',
+                        imgInfo.type || 'output'
+                    )
+                    const dataUrl = await blobToDataUrl(blob)
+
+                    // Save to local img-api storage
+                    const activeWf = getActiveWorkflow()
+                    const promptText = activeWf?.exposedInputs
+                        ?.find(i => i.spec?.type === 'textarea' || i.spec?.type === 'text')
+                        ?.value || 'ComfyUI Generation'
+
+                    const saveResponse = await fetch(apiUrl + '/save-cloud', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            image_base64: dataUrl,
+                            prompt: promptText,
+                            negative_prompt: '',
+                            sampler: 'comfyui',
+                            cfg_scale: 0,
+                            steps: 0,
+                            seed: 0,
+                            width: 0,
+                            height: 0,
+                            model_name: activeWf?.name || 'ComfyUI Workflow',
+                            model_hash: ''
+                        })
+                    })
+                    if (saveResponse.ok) {
+                        const savedImg = await saveResponse.json()
+                        imagePaths.push(savedImg.Path)
+                        if (firstSavedId === null) {
+                            firstSavedId = savedImg.Id
+                        }
+                    } else {
+                        imagePaths.push(dataUrl)
+                    }
+                } catch (e) {
+                    console.error('Error fetching ComfyUI image:', e)
+                }
+            }
+
+            // Add to history (push to end of history array so the newest is history[history.length - 1])
+            const activeWf = getActiveWorkflow()
+            history.value.push({
+                request: {
+                    prompt: activeWf?.exposedInputs?.find(i => i.spec?.type === 'textarea' || i.spec?.type === 'text')?.value || 'ComfyUI Generation',
+                    negative_prompt: '',
+                    comfyui_workflow: activeWf?.name,
+                },
+                images: imagePaths,
+                timestamp: Date.now(),
+                id: firstSavedId,
+                path: imagePaths[0] || null,
+            })
+
+            generationState.value.current_image = null
+
+        } catch (error) {
+            console.error('ComfyUI generation failed:', error)
+        } finally {
+            isGenerating.value = false
+            closeComfyWebSocket()
+            if (generationQueue.value.length > 0) {
+                await ProcessRequest(generationQueue.value.shift())
+            }
+        }
+
+        return
+    }
+
     // Start polling progress every 500ms
     if (backendRequest.supportsProgress) {
         progressInterval.value = setInterval(pollProgress, 500)
@@ -2145,8 +2384,8 @@ function autoResizePositivePrompt() {
 
 
 
-async function randomizePrompt(source) {
-
+async function randomizePrompt(source, target = null) {
+    let result = '';
     if (source == 'booru') {
         const prompts = await getRandomPrompt({
             booru: 'rule34',           // Which booru to use
@@ -2158,7 +2397,7 @@ async function randomizePrompt(source) {
             rating: 'All'                // Content rating filter
         });
         console.log('Randomized prompt:', prompts);
-        request.prompt = prompts.prompt;
+        result = prompts.prompt;
     }
     else if (source == 'local') {
         const response = await fetch(apiUrl + '/random-image')
@@ -2168,16 +2407,20 @@ async function randomizePrompt(source) {
         }
         const data = await response.json()
         if (data.taggerPrompt) {
-            request.prompt = data.taggerPrompt
+            result = data.taggerPrompt
         } else {
             const taggerPrompt = await PostToApi("generate_tagger_prompt_for/" + encodeURIComponent(data.Id))
-            request.prompt = taggerPrompt.prompt ?? ""
+            result = taggerPrompt.prompt ?? ""
         }
     }
-    else if (source == "ai") {
 
+    if (target) {
+        target.value = result;
+    } else if (promptActionTarget.value) {
+        promptActionTarget.value.value = result;
+    } else {
+        request.prompt = result;
     }
-
 }
 const promptEnhanceRequest = ref("");
 const promptEnhanceInProgress = ref(false)
@@ -2187,6 +2430,7 @@ const enhanceHistory = ref([])
 const enhanceLocalPrompt = ref('')
 const enhanceLocalNegativePrompt = ref('')
 const enhanceInstructions = ref('')
+const enhanceMode = ref('anime')
 
 const enhanceOriginalPrompt = ref('')
 const enhanceResultPrompt = ref('')
@@ -2234,9 +2478,11 @@ const promptDiff = computed(() => {
     return diffWords(enhanceOriginalPrompt.value, enhanceResultPrompt.value);
 });
 
-function openEnhancePanel() {
-    enhanceLocalPrompt.value = request.prompt
-    enhanceLocalNegativePrompt.value = request.negative_prompt
+function openEnhancePanel(target = null) {
+    promptActionTarget.value = target
+    const currentVal = target ? target.value : request.prompt
+    enhanceLocalPrompt.value = currentVal
+    enhanceLocalNegativePrompt.value = target ? '' : request.negative_prompt
     enhanceInstructions.value = promptEnhanceRequest.value
     enhanceSubTab.value = 'enhance'
     showEnhancePanel.value = true
@@ -2253,10 +2499,10 @@ function closeEnhancePanel() {
 
 async function enhancePrompt() {
     promptEnhanceInProgress.value = true
-    const original = enhanceLocalPrompt.value || request.prompt
+    const original = enhanceLocalPrompt.value || (promptActionTarget.value ? promptActionTarget.value.value : request.prompt)
     enhanceOriginalPrompt.value = original
 
-    let url = apiUrl + '/prompt-enhance?prompt=' + encodeURIComponent(original) + "&request=" + encodeURIComponent(enhanceInstructions.value || promptEnhanceRequest.value) + "&negative_prompt=" + encodeURIComponent(enhanceLocalNegativePrompt.value || request.negative_prompt)
+    let url = apiUrl + '/prompt-enhance?prompt=' + encodeURIComponent(original) + "&request=" + encodeURIComponent(enhanceInstructions.value || promptEnhanceRequest.value) + "&negative_prompt=" + encodeURIComponent(enhanceLocalNegativePrompt.value || request.negative_prompt) + "&mode=" + encodeURIComponent(enhanceMode.value)
     const response = await fetch(url)
     promptEnhanceInProgress.value = false
     if (!response.ok) {
@@ -2276,7 +2522,11 @@ function acceptEnhancement() {
     const original = enhanceOriginalPrompt.value;
     const enhanced = enhanceResultPrompt.value;
 
-    request.prompt = enhanced;
+    if (promptActionTarget.value) {
+        promptActionTarget.value.value = enhanced
+    } else {
+        request.prompt = enhanced;
+    }
     enhanceLocalPrompt.value = enhanced;
 
     // Save to enhance history
@@ -2810,6 +3060,22 @@ watch(activeTab, (newTab) => {
                                             rows="5"></textarea>
                                     </div>
                                 </div>
+                                <!-- Enhance Mode Switch -->
+                                <div>
+                                    <label class="text-sm text-gray-300 font-medium block mb-2">Enhance Style</label>
+                                    <div class="flex bg-[#121620] p-1 rounded-lg border border-[#222836] select-none">
+                                        <button type="button" @click="enhanceMode = 'anime'"
+                                            :class="enhanceMode === 'anime' ? 'bg-blue-600 text-white font-medium shadow-md' : 'text-gray-400 hover:text-gray-200'"
+                                            class="flex-1 py-1.5 text-xs rounded-md transition-all text-center">
+                                            Anime / Tag-based
+                                        </button>
+                                        <button type="button" @click="enhanceMode = 'realistic'"
+                                            :class="enhanceMode === 'realistic' ? 'bg-blue-600 text-white font-medium shadow-md' : 'text-gray-400 hover:text-gray-200'"
+                                            class="flex-1 py-1.5 text-xs rounded-md transition-all text-center">
+                                            Realistic / Photographic
+                                        </button>
+                                    </div>
+                                </div>
                                 <!-- Instructions -->
                                 <div>
                                     <label class="text-sm text-gray-300 font-medium block mb-1">Instructions</label>
@@ -2925,18 +3191,162 @@ watch(activeTab, (newTab) => {
                                 class="flex-1 text-gray-400 font-medium py-2 px-4 rounded-md text-sm hover:text-[#FAF8F5]">Video</button>
                         </div>
 
-                        <!-- Workflow -->
-                        <div class="hidden">
-                            <div class="flex items-center space-x-2 mb-2">
-                                <label class="text-sm text-gray-300 font-medium">Workflow</label>
-                                <span
-                                    class="bg-green-500 text-black text-xs px-2 py-0.5 rounded-full font-bold">NEW</span>
+                        <!-- ComfyUI Workflow Selector (visible when ComfyUI backend is active) -->
+                        <div v-if="isComfyBackend" class="sidebar-card p-3">
+                            <div class="flex items-center justify-between mb-2">
+                                <div class="flex items-center gap-2">
+                                    <label class="text-sm text-gray-300 font-medium">Workflow</label>
+                                    <span
+                                        class="bg-purple-500/20 text-purple-300 text-[10px] font-bold px-2 py-0.5 rounded-full border border-purple-500/30 uppercase tracking-wider">ComfyUI</span>
+                                </div>
+                                <button @click="showWorkflowImportModal = true"
+                                    class="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 transition-colors">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M12 4v16m8-8H4" />
+                                    </svg>
+                                    Import
+                                </button>
                             </div>
-                            <select v-model="workflow"
-                                class="w-full bg-[#1A1A24] border border-[#2A2A35] text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500 appearance-none">
-                                <option>Text-to-image</option>
-                                <option>ComfyUI (coming soon)</option>
-                            </select>
+                            <div v-if="comfyWorkflowsList.length === 0" class="text-xs text-gray-500 italic py-2">
+                                No workflows imported. Click Import to add a ComfyUI workflow.
+                            </div>
+                            <div v-else class="flex items-center gap-2">
+                                <select v-model="activeComfyWorkflowId"
+                                    class="flex-1 bg-[#0A0A10] border border-[#2A2A35] text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500/60 text-[#FAF8F5]">
+                                    <option v-for="wf in comfyWorkflowsList" :key="wf.id" :value="wf.id">{{ wf.name }}
+                                    </option>
+                                </select>
+                                <button v-if="activeComfyWorkflow" @click="deleteComfyWorkflow(activeComfyWorkflow.id)"
+                                    class="p-2 text-gray-400 hover:text-red-400 transition-colors"
+                                    title="Delete workflow">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                    </svg>
+                                </button>
+                            </div>
+
+                            <!-- Dynamic ComfyUI Inputs -->
+                            <div v-if="activeComfyWorkflow && activeComfyWorkflow.exposedInputs.length > 0"
+                                class="mt-4 space-y-4 pt-4 border-t border-[#2A2A35]">
+                                <div v-for="input in activeComfyWorkflow.exposedInputs"
+                                    :key="`${input.nodeId}.${input.inputKey}`" class="space-y-2">
+                                    <div class="flex items-center justify-between">
+                                        <label class="text-sm font-medium text-gray-300 flex items-center gap-2">
+                                            {{ input.label }}
+                                            <span class="text-[10px] text-gray-500 font-mono">{{ input.spec?.type }}</span>
+                                        </label>
+                                        <div class="flex items-center gap-1">
+                                            <!-- Action buttons for textareas (AI Enhance & Dice randomize) -->
+                                            <template v-if="input.spec?.type === 'textarea'">
+                                                <button type="button" @click="openEnhancePanel(input)" 
+                                                    class="text-gray-400 hover:text-blue-400 p-1 transition-colors" 
+                                                    title="AI Enhance">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-sparkles">
+                                                        <path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z" />
+                                                        <path d="M20 2v4" />
+                                                        <path d="M22 4h-4" />
+                                                        <circle cx="4" cy="20" r="2" />
+                                                    </svg>
+                                                </button>
+                                                <button type="button" @click="randomizePrompt('local', input)" 
+                                                    class="text-gray-400 hover:text-amber-400 p-1 transition-colors" 
+                                                    title="Local Random Prompt">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-dice-1">
+                                                        <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                                                        <path d="M12 12h.01" />
+                                                    </svg>
+                                                </button>
+                                                <button type="button" @click="randomizePrompt('booru', input)" 
+                                                    class="text-gray-400 hover:text-purple-400 p-1 transition-colors" 
+                                                    title="Booru Random Prompt">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-dice-2">
+                                                        <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                                                        <path d="M15 9h.01" />
+                                                        <path d="M9 15h.01" />
+                                                    </svg>
+                                                </button>
+                                            </template>
+                                            
+                                            <!-- Ellipsis Options Button -->
+                                            <button type="button" class="text-gray-500 hover:text-white p-1 transition-colors">
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z" />
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <!-- Textarea (Multiline String) with Autocomplete -->
+                                    <div v-if="input.spec?.type === 'textarea'" class="relative">
+                                        <textarea v-model="input.value"
+                                            :ref="el => { if (el) textareaRefs[`${input.nodeId}.${input.inputKey}`] = el }"
+                                            class="w-full bg-[#1A1A24] border border-[#2A2A35] text-sm text-[#FAF8F5] placeholder-gray-600 rounded-lg px-3 py-2.5 min-h-[100px] focus:outline-none focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/20"
+                                            :title="input.spec?.tooltip"
+                                            rows="4" />
+                                        <AutoComplete v-model:input="input.value" :textareaRef="textareaRefs[`${input.nodeId}.${input.inputKey}`]" />
+                                    </div>
+
+                                    <!-- Simple Text -->
+                                    <input v-else-if="input.spec?.type === 'text'" v-model="input.value" type="text"
+                                        class="w-full bg-[#1A1A24] border border-[#2A2A35] text-sm text-[#FAF8F5] placeholder-gray-600 rounded-lg px-3 py-2.5 focus:outline-none focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/20"
+                                        :title="input.spec?.tooltip" />
+
+                                    <!-- Integer / Float Custom Pill Slider -->
+                                    <div v-else-if="input.spec?.type === 'int' || input.spec?.type === 'float'"
+                                        class="flex items-center justify-between bg-[#1A1A24] rounded-lg px-4 py-2.5 border border-[#2A2A35] transition-all focus-within:border-blue-500/40">
+                                        <button type="button" @click="input.value = Math.max((input.spec?.min ?? 0), input.value - (input.spec?.step || (input.spec?.type === 'int' ? 1 : 0.1)))"
+                                            class="text-gray-400 hover:text-white transition-colors text-lg font-bold select-none px-1">
+                                            —
+                                        </button>
+                                        <input type="number" v-model.number="input.value"
+                                            :step="input.spec?.step || (input.spec?.type === 'int' ? 1 : 0.1)"
+                                            class="w-full text-center bg-transparent border-0 outline-none focus:ring-0 font-mono text-sm font-semibold text-gray-200" />
+                                        <div class="flex items-center gap-2">
+                                            <!-- Seed randomize button if input key matches seed -->
+                                            <button v-if="input.inputKey.toLowerCase().includes('seed') || input.label.toLowerCase().includes('seed')" 
+                                                type="button" 
+                                                @click="input.value = Math.floor(Math.random() * (input.spec?.max || 18446744073709551615))"
+                                                class="text-blue-400 hover:text-blue-300 transition-colors p-1"
+                                                title="Randomize Seed">
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4.5 h-4.5">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12c0-1.232-.046-2.453-.138-3.662a4.006 4.006 0 0 0-3.7-3.7 48.656 48.656 0 0 0-7.324 0 4.006 4.006 0 0 0-3.7 3.7c-.017.22-.032.441-.046.662M19.5 12l3-3m-3 3-3-3M3 12c0 1.232.046 2.453.138 3.662a4.006 4.006 0 0 0 3.7 3.7 48.656 48.656 0 0 0 7.324 0 4.006 4.006 0 0 0 3.7-3.7c.017-.22.032-.441.046-.662M3 12l-3 3m3-3 3 3" />
+                                                </svg>
+                                            </button>
+                                            <button type="button" @click="input.value = Math.min((input.spec?.max ?? (input.spec?.type === 'int' ? 18446744073709551615 : 1000.0)), input.value + (input.spec?.step || (input.spec?.type === 'int' ? 1 : 0.1)))"
+                                                class="text-gray-400 hover:text-white transition-colors text-lg font-bold select-none px-1">
+                                                +
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <!-- Select/Dropdown -->
+                                    <div v-else-if="input.spec?.type === 'select'" class="relative">
+                                        <select v-model="input.value"
+                                            class="w-full bg-[#1A1A24] border border-[#2A2A35] text-sm text-[#FAF8F5] rounded-lg px-3 py-2.5 focus:outline-none focus:border-blue-500/60 appearance-none"
+                                            :title="input.spec?.tooltip">
+                                            <option v-for="opt in input.spec?.options" :key="opt" :value="opt">{{ opt }}
+                                            </option>
+                                        </select>
+                                        <div class="absolute inset-y-0 right-3 flex items-center pointer-events-none text-gray-500">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                                            </svg>
+                                        </div>
+                                    </div>
+
+                                    <!-- Boolean/Toggle -->
+                                    <label v-else-if="input.spec?.type === 'boolean'"
+                                        class="relative inline-flex items-center cursor-pointer"
+                                        :title="input.spec?.tooltip">
+                                        <input type="checkbox" v-model="input.value" class="sr-only peer">
+                                        <div
+                                            class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                                        </div>
+                                    </label>
+                                </div>
+                            </div>
                         </div>
                         <!-- Start BackEnd Options with status (isrunning/stopped) and launch button if stopped-->
                         <div class="mb-4">
@@ -2985,903 +3395,928 @@ watch(activeTab, (newTab) => {
                         </div>
 
 
-                        <!-- Model -->
-                        <div v-if="!compactMode">
-                            <div v-if="!backendCapabilities.supportsLocalModels"
-                                class="sidebar-card p-4 text-sm text-gray-300">
-                                <p class="font-medium text-[#FAF8F5] mb-1">Models are backend-specific</p>
-                                <p class="text-xs text-gray-400">
-                                    The current backend does not expose local models. Switch to Forge or configure a
-                                    compatible adapter in Settings.
-                                </p>
-                            </div>
-                            <div v-else>
-                                <div class="flex items-center justify-between mb-2">
-                                    <div class="flex items-center space-x-2">
-                                        <label class="text-sm text-gray-300 font-medium">Model</label>
-                                        <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor"
-                                            viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                                d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                        </svg>
-                                    </div>
+                        <!-- Standard Forge Inputs Wrapper -->
+                        <div v-if="!isComfyBackend" class="space-y-6">
+                            <!-- Model -->
+                            <div v-if="!compactMode">
+                                <div v-if="!backendCapabilities.supportsLocalModels"
+                                    class="sidebar-card p-4 text-sm text-gray-300">
+                                    <p class="font-medium text-[#FAF8F5] mb-1">Models are backend-specific</p>
+                                    <p class="text-xs text-gray-400">
+                                        The current backend does not expose local models. Switch to Forge or configure a
+                                        compatible adapter in Settings.
+                                    </p>
                                 </div>
-                                <div class="sidebar-card">
-                                    <!-- Model Section -->
-                                    <div class="p-3 flex items-center justify-between gap-4">
-                                        <div class="flex items-center gap-2 min-w-0">
-                                            <img :src="getModelImage(current_model.model, 0)" alt=""
-                                                class="w-16 h-16 rounded-xl object-cover aspect-square bg-gradient-to-br from-orange-400 to-red-500 border border-[#2A2A35] shadow-md"
-                                                @error="handleImageError($event, current_model.model)" />
-
-                                            <div class="min-w-0">
-                                                <p
-                                                    class="text-base md:text-lg font-semibold text-[#FAF8F5] flex items-center gap-2 truncate">
-                                                    <span class="truncate">
-                                                        {{
-                                                            (current_model?.model?.title || current_model?.model?.name ||
-                                                                '')?.split('\\').pop().replace(".safetensors",
-                                                                    "")
-                                                        }}
-                                                    </span>
-                                                    <a v-if="current_model.model.info?.modelId"
-                                                        :href="`https://civitai.com/models/${current_model.model.info.modelId}`"
-                                                        target="_blank" rel="noopener noreferrer"
-                                                        class="ml-1 text-blue-400 hover:underline flex items-center"
-                                                        title="View on Civitai">
-                                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none"
-                                                            viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"
-                                                            class="w-4 h-4 mr-1">
-                                                            <path strokeLinecap="round" strokeLinejoin="round"
-                                                                d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
-                                                        </svg>
-
-                                                        <span class="hidden sm:inline"></span>
-                                                    </a>
-                                                </p>
-                                                <p class="text-xs text-[#9AA3B2] truncate max-w-[180px] md:max-w-xs">
-                                                    {{ current_model.model.title }}
-                                                </p>
-                                            </div>
-                                        </div>
-                                        <div class="flex gap-2 flex-shrink-0">
-                                            <button @click="showModelStyles()"
-                                                class="bg-[#2F7DFF] hover:bg-[#3B8BFF] text-[#FAF8F5] text-xs px-2 py-1 rounded-lg font-medium flex items-center gap-1 shadow"
-                                                title="Edit Model Prefixes">
-                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
-                                                    stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                        d="M9.53 16.122a3 3 0 0 0-5.78 1.128 2.25 2.25 0 0 1-2.4 2.245 4.5 4.5 0 0 0 8.4-2.245c0-.399-.078-.78-.22-1.128Zm0 0a15.998 15.998 0 0 0 3.388-1.62m-5.043-.025a15.994 15.994 0 0 1 1.622-3.395m3.42 3.42a15.995 15.995 0 0 0 4.764-4.648l3.876-5.814a1.151 1.151 0 0 0-1.597-1.597L14.146 6.32a15.996 15.996 0 0 0-4.649 4.763m3.42 3.42a6.776 6.776 0 0 0-3.42-3.42" />
-                                                </svg>
-                                            </button>
-                                            <button @click="showModelType = 'checkpoint'"
-                                                class="bg-[#2F7DFF] hover:bg-[#3B8BFF] text-[#FAF8F5] text-xs px-3 py-1.5 rounded-lg font-medium shadow flex items-center gap-1">
-                                                <span class="text-lg leading-none">⚡</span>
-                                                <span class="hidden sm:inline">Swap</span>
-                                            </button>
+                                <div v-else>
+                                    <div class="flex items-center justify-between mb-2">
+                                        <div class="flex items-center space-x-2">
+                                            <label class="text-sm text-gray-300 font-medium">Model</label>
+                                            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor"
+                                                viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                    d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                            </svg>
                                         </div>
                                     </div>
-                                    <!-- Default Styles Section -->
-                                    <div v-if="showDefaultStyles" class="border-t border-[#232834] p-3 space-y-2">
-                                        <!--Prompt Prefix input-->
-                                        <div class="space-y-2">
-                                            <label class="text-sm text-gray-300 font-medium block mb-1">Prompt Prefix
-                                            </label>
-                                            <input v-model="getDefaultStyles().prompt_prefix" @input="saveDefaultStyles"
-                                                type="text" placeholder="Enter prompt prefix"
-                                                class="sidebar-input w-full text-xs px-3 py-2 rounded-lg transition-colors placeholder-gray-500 focus:border-blue-500" />
-                                        </div>
-                                        <!--Prompt Prefix input-->
-                                        <div class="space-y-2">
-                                            <label class="text-sm text-gray-300 font-medium block mb-1">Negative prompt
-                                                Prefix</label>
-                                            <input @input="saveDefaultStyles"
-                                                v-model="getDefaultStyles().negative_prompt_prefix" type="text"
-                                                placeholder="Enter negative prompt prefix"
-                                                class="sidebar-input w-full text-xs px-3 py-2 rounded-lg transition-colors placeholder-gray-500 focus:border-blue-500" />
-                                        </div>
-                                        <!--Override Sampler-->
-                                        <div class="space-y-2">
-                                            <label class="text-sm text-gray-300 font-medium block mb-1">Override
-                                                Sampler</label>
-                                            <select v-model="getDefaultStyles().override_sampler"
-                                                @change="saveDefaultStyles"
-                                                class="sidebar-input w-full text-xs px-3 py-2 rounded-lg transition-colors focus:border-blue-500">
-                                                <option :value="null"></option>
-                                                <option v-for="sampler in samplers" :key="sampler.name"
-                                                    :value="sampler.name">{{
-                                                        sampler.name }}</option>
+                                    <div class="sidebar-card">
+                                        <!-- Model Section -->
+                                        <div class="p-3 flex items-center justify-between gap-4">
+                                            <div class="flex items-center gap-2 min-w-0">
+                                                <img :src="getModelImage(current_model.model, 0)" alt=""
+                                                    class="w-16 h-16 rounded-xl object-cover aspect-square bg-gradient-to-br from-orange-400 to-red-500 border border-[#2A2A35] shadow-md"
+                                                    @error="handleImageError($event, current_model.model)" />
 
+                                                <div class="min-w-0">
+                                                    <p
+                                                        class="text-base md:text-lg font-semibold text-[#FAF8F5] flex items-center gap-2 truncate">
+                                                        <span class="truncate">
+                                                            {{
+                                                                (current_model?.model?.title || current_model?.model?.name
+                                                                    ||
+                                                                    '')?.split('\\').pop().replace(".safetensors",
+                                                                        "")
+                                                            }}
+                                                        </span>
+                                                        <a v-if="current_model.model.info?.modelId"
+                                                            :href="`https://civitai.com/models/${current_model.model.info.modelId}`"
+                                                            target="_blank" rel="noopener noreferrer"
+                                                            class="ml-1 text-blue-400 hover:underline flex items-center"
+                                                            title="View on Civitai">
+                                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none"
+                                                                viewBox="0 0 24 24" strokeWidth={1.5}
+                                                                stroke="currentColor" class="w-4 h-4 mr-1">
+                                                                <path strokeLinecap="round" strokeLinejoin="round"
+                                                                    d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                                                            </svg>
 
-                                            </select>
-                                        </div>
-                                    </div>
-
-                                    <!-- Additional Resources Section -->
-                                    <div v-if="backendCapabilities.supportsLoras" :class="current_model.showLoras
-                                        ? 'border-b border-[#232834] rounded-b-none'
-                                        : 'rounded-b-xl'" class="border-t border-[#232834] px-3 py-2 bg-[#141821]"
-                                        @click="current_model.showLoras = !current_model.showLoras">
-                                        <div class="flex items-center justify-between ">
-                                            <div>
-                                                <span class="text-sm text-gray-300 font-medium">Additional
-                                                    Resources</span>
-                                                <!--lora count-->
-                                                <span
-                                                    class="ml-1 bg-[#2F7DFF]/80 text-[#FAF8F5] rounded-full px-2 py-0.5 text-xs font-semibold">{{
-                                                        current_model.loras.length }}</span>
-                                                <span v-if="current_model.loras_not_found.length > 0"
-                                                    class="ml-1 bg-red-600/80 text-[#FAF8F5] rounded-full px-2 py-0.5 text-xs font-semibold">{{
-                                                        current_model.loras_not_found.length }}</span>
+                                                            <span class="hidden sm:inline"></span>
+                                                        </a>
+                                                    </p>
+                                                    <p
+                                                        class="text-xs text-[#9AA3B2] truncate max-w-[180px] md:max-w-xs">
+                                                        {{ current_model.model.title }}
+                                                    </p>
+                                                </div>
                                             </div>
-                                            <div class="flex items-center space-x-1">
-                                                <button @click="showDownloadModal = !showDownloadModal"
-                                                    class="text-blue-300 hover:text-[#F4F6FA] text-xs font-medium border border-dashed border-[#2A2F3B] hover:border-blue-400 bg-[#11141B] px-3 py-1 rounded-full transition-colors">
-                                                    + Download
+                                            <div class="flex gap-2 flex-shrink-0">
+                                                <button @click="showModelStyles()"
+                                                    class="bg-[#2F7DFF] hover:bg-[#3B8BFF] text-[#FAF8F5] text-xs px-2 py-1 rounded-lg font-medium flex items-center gap-1 shadow"
+                                                    title="Edit Model Prefixes">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none"
+                                                        viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"
+                                                        class="w-4 h-4">
+                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                            d="M9.53 16.122a3 3 0 0 0-5.78 1.128 2.25 2.25 0 0 1-2.4 2.245 4.5 4.5 0 0 0 8.4-2.245c0-.399-.078-.78-.22-1.128Zm0 0a15.998 15.998 0 0 0 3.388-1.62m-5.043-.025a15.994 15.994 0 0 1 1.622-3.395m3.42 3.42a15.995 15.995 0 0 0 4.764-4.648l3.876-5.814a1.151 1.151 0 0 0-1.597-1.597L14.146 6.32a15.996 15.996 0 0 0-4.649 4.763m3.42 3.42a6.776 6.776 0 0 0-3.42-3.42" />
+                                                    </svg>
                                                 </button>
-                                                <button @click="showModelType = 'lora'"
-                                                    class="text-blue-300 hover:text-[#F4F6FA] text-xs font-medium border border-dashed border-[#2A2F3B] hover:border-blue-400 bg-[#11141B] px-3 py-1 rounded-full transition-colors mr-1.5">
-                                                    + Add
+                                                <button @click="showModelType = 'checkpoint'"
+                                                    class="bg-[#2F7DFF] hover:bg-[#3B8BFF] text-[#FAF8F5] text-xs px-3 py-1.5 rounded-lg font-medium shadow flex items-center gap-1">
+                                                    <span class="text-lg leading-none">⚡</span>
+                                                    <span class="hidden sm:inline">Swap</span>
                                                 </button>
-                                                <!--arrow to indicate collapsible content-->
-                                                <svg :class="current_model.showLoras ? 'transform rotate-180' : ''"
-                                                    class="w-4 h-4 text-gray-400 transition-transform duration-200"
-                                                    fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                        stroke-width="2" d="M19 9l-7 7-7-7" />
-                                                </svg>
+                                            </div>
+                                        </div>
+                                        <!-- Default Styles Section -->
+                                        <div v-if="showDefaultStyles" class="border-t border-[#232834] p-3 space-y-2">
+                                            <!--Prompt Prefix input-->
+                                            <div class="space-y-2">
+                                                <label class="text-sm text-gray-300 font-medium block mb-1">Prompt
+                                                    Prefix
+                                                </label>
+                                                <input v-model="getDefaultStyles().prompt_prefix"
+                                                    @input="saveDefaultStyles" type="text"
+                                                    placeholder="Enter prompt prefix"
+                                                    class="sidebar-input w-full text-xs px-3 py-2 rounded-lg transition-colors placeholder-gray-500 focus:border-blue-500" />
+                                            </div>
+                                            <!--Prompt Prefix input-->
+                                            <div class="space-y-2">
+                                                <label class="text-sm text-gray-300 font-medium block mb-1">Negative
+                                                    prompt
+                                                    Prefix</label>
+                                                <input @input="saveDefaultStyles"
+                                                    v-model="getDefaultStyles().negative_prompt_prefix" type="text"
+                                                    placeholder="Enter negative prompt prefix"
+                                                    class="sidebar-input w-full text-xs px-3 py-2 rounded-lg transition-colors placeholder-gray-500 focus:border-blue-500" />
+                                            </div>
+                                            <!--Override Sampler-->
+                                            <div class="space-y-2">
+                                                <label class="text-sm text-gray-300 font-medium block mb-1">Override
+                                                    Sampler</label>
+                                                <select v-model="getDefaultStyles().override_sampler"
+                                                    @change="saveDefaultStyles"
+                                                    class="sidebar-input w-full text-xs px-3 py-2 rounded-lg transition-colors focus:border-blue-500">
+                                                    <option :value="null"></option>
+                                                    <option v-for="sampler in samplers" :key="sampler.name"
+                                                        :value="sampler.name">{{
+                                                            sampler.name }}</option>
+
+
+                                                </select>
                                             </div>
                                         </div>
 
-                                    </div>
-                                    <!-- LoRA Section -->
-                                    <div v-if="backendCapabilities.supportsLoras && current_model.showLoras"
-                                        class="mx-3 mb-3 mt-3 space-y-3">
-                                        <h3 v-if="current_model.loras.length > 0"
-                                            class="text-sm text-gray-300 font-medium">
-                                            LoRA Models</h3>
-                                        <!-- lora -->
-                                        <div v-for="(lora, index) in current_model.loras" class="p-1 rounded-xl">
-                                            <div class="flex items-center justify-between mb-2">
-                                                <div class="flex items-center space-x-2">
-                                                    <img :src="getModelImage(lora, 0)" alt=""
-                                                        class="w-12 h-12 rounded-lg object-cover bg-gradient-to-br from-purple-400 to-pink-500 border border-[#2A2A35]"
-                                                        @error="handleImageError($event, lora)" />
-                                                    <span class="text-sm text-[#FAF8F5] font-medium">{{ lora.name
-                                                    }}</span>
-                                                    <button class="cursor-pointer" @click="OpenLoraData(lora.path)">
-                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor"
-                                                            viewBox="0 0 24 24">
-                                                            <path stroke-linecap="round" stroke-linejoin="round"
-                                                                stroke-width="2"
-                                                                d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14">
-                                                            </path>
-                                                        </svg></button>
+                                        <!-- Additional Resources Section -->
+                                        <div v-if="backendCapabilities.supportsLoras" :class="current_model.showLoras
+                                            ? 'border-b border-[#232834] rounded-b-none'
+                                            : 'rounded-b-xl'" class="border-t border-[#232834] px-3 py-2 bg-[#141821]"
+                                            @click="current_model.showLoras = !current_model.showLoras">
+                                            <div class="flex items-center justify-between ">
+                                                <div>
+                                                    <span class="text-sm text-gray-300 font-medium">Additional
+                                                        Resources</span>
+                                                    <!--lora count-->
+                                                    <span
+                                                        class="ml-1 bg-[#2F7DFF]/80 text-[#FAF8F5] rounded-full px-2 py-0.5 text-xs font-semibold">{{
+                                                            current_model.loras.length }}</span>
+                                                    <span v-if="current_model.loras_not_found.length > 0"
+                                                        class="ml-1 bg-red-600/80 text-[#FAF8F5] rounded-full px-2 py-0.5 text-xs font-semibold">{{
+                                                            current_model.loras_not_found.length }}</span>
+                                                </div>
+                                                <div class="flex items-center space-x-1">
+                                                    <button @click="showDownloadModal = !showDownloadModal"
+                                                        class="text-blue-300 hover:text-[#F4F6FA] text-xs font-medium border border-dashed border-[#2A2F3B] hover:border-blue-400 bg-[#11141B] px-3 py-1 rounded-full transition-colors">
+                                                        + Download
+                                                    </button>
+                                                    <button @click="showModelType = 'lora'"
+                                                        class="text-blue-300 hover:text-[#F4F6FA] text-xs font-medium border border-dashed border-[#2A2F3B] hover:border-blue-400 bg-[#11141B] px-3 py-1 rounded-full transition-colors mr-1.5">
+                                                        + Add
+                                                    </button>
+                                                    <!--arrow to indicate collapsible content-->
+                                                    <svg :class="current_model.showLoras ? 'transform rotate-180' : ''"
+                                                        class="w-4 h-4 text-gray-400 transition-transform duration-200"
+                                                        fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                            stroke-width="2" d="M19 9l-7 7-7-7" />
+                                                    </svg>
+                                                </div>
+                                            </div>
+
+                                        </div>
+                                        <!-- LoRA Section -->
+                                        <div v-if="backendCapabilities.supportsLoras && current_model.showLoras"
+                                            class="mx-3 mb-3 mt-3 space-y-3">
+                                            <h3 v-if="current_model.loras.length > 0"
+                                                class="text-sm text-gray-300 font-medium">
+                                                LoRA Models</h3>
+                                            <!-- lora -->
+                                            <div v-for="(lora, index) in current_model.loras" class="p-1 rounded-xl">
+                                                <div class="flex items-center justify-between mb-2">
+                                                    <div class="flex items-center space-x-2">
+                                                        <img :src="getModelImage(lora, 0)" alt=""
+                                                            class="w-12 h-12 rounded-lg object-cover bg-gradient-to-br from-purple-400 to-pink-500 border border-[#2A2A35]"
+                                                            @error="handleImageError($event, lora)" />
+                                                        <span class="text-sm text-[#FAF8F5] font-medium">{{ lora.name
+                                                        }}</span>
+                                                        <button class="cursor-pointer" @click="OpenLoraData(lora.path)">
+                                                            <svg class="w-4 h-4" fill="none" stroke="currentColor"
+                                                                viewBox="0 0 24 24">
+                                                                <path stroke-linecap="round" stroke-linejoin="round"
+                                                                    stroke-width="2"
+                                                                    d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14">
+                                                                </path>
+                                                            </svg></button>
+                                                    </div>
+                                                    <div class="flex items-center space-x-2">
+                                                        <button class="text-gray-400 hover:text-[#FAF8F5]"
+                                                            @click="current_model.loras.splice(index, 1)">
+                                                            <svg class="w-4 h-4" fill="none" stroke="currentColor"
+                                                                viewBox="0 0 24 24">
+                                                                <path stroke-linecap="round" stroke-linejoin="round"
+                                                                    stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                                                            </svg>
+                                                        </button>
+                                                    </div>
                                                 </div>
                                                 <div class="flex items-center space-x-2">
-                                                    <button class="text-gray-400 hover:text-[#FAF8F5]"
-                                                        @click="current_model.loras.splice(index, 1)">
-                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor"
-                                                            viewBox="0 0 24 24">
-                                                            <path stroke-linecap="round" stroke-linejoin="round"
-                                                                stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                                                    <div class="flex-1 relative">
+                                                        <input type="range" min="0" max="2" step="0.1"
+                                                            v-model="lora.weight"
+                                                            class="w-full h-1.5 bg-[#2A2F3B] rounded-lg appearance-none cursor-pointer slider">
+                                                    </div>
+                                                    <input type="number" v-model="lora.weight" min="-1" max="2"
+                                                        step="0.1"
+                                                        class="sidebar-input w-16 text-xs rounded-md px-2 py-1 text-center">
+
+                                                </div>
+                                            </div>
+                                            <div v-if="current_model.loras.length == 0"
+                                                class="text-xs text-gray-400 italic">
+                                                No Resources Added.
+                                            </div>
+                                            <div v-if="current_model.loras_not_found.length > 0" class="mt-3">
+                                                <h3 class="text-sm text-red-400 font-medium">LoRA Models Not Found</h3>
+                                                <ul class="list-disc list-inside text-xs text-gray-400">
+                                                    <li v-for="(lora, index) in current_model.loras_not_found"
+                                                        :key="index">
+                                                        {{
+                                                            lora.name }}</li>
+                                                </ul>
+
+
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Styles -->
+                            <div class="mt-4">
+                                <div class="flex items-center justify-between mb-2">
+                                    <label class="text-sm text-gray-300 font-medium">Styles</label>
+                                    <div class="flex items-center gap-2">
+                                        <button @click="showStyleManager = true"
+                                            class="text-xs text-blue-400 hover:text-blue-300">Manage</button>
+                                        <button v-if="selectedStyleIds.length > 0" @click="clearSelectedStyles"
+                                            class="text-xs text-gray-400 hover:text-[#FAF8F5]">Clear</button>
+                                    </div>
+                                </div>
+                                <div v-if="styles.length === 0" class="text-xs text-gray-400 italic">
+                                    No styles saved yet.
+                                </div>
+                                <div v-else class="flex flex-wrap gap-2">
+                                    <button v-for="style in styles" :key="style.id" type="button"
+                                        @click="toggleStyleSelection(style.id)"
+                                        class="flex items-center gap-2 px-2 py-1 rounded-full border text-xs transition-colors"
+                                        :class="selectedStyleIds.includes(style.id)
+                                            ? 'bg-[#243358] border-[#3E5CA8] text-[#CFE1FF]'
+                                            : 'bg-[#141821] border-[#2A2F3B] text-[#C7CCD6] hover:bg-[#1B1F2A]'">
+                                        <img :src="style.image || placeholderImage" alt=""
+                                            class="w-6 h-6 rounded-full object-cover border border-[#2A2F3B]" />
+                                        <span class="truncate max-w-[140px]">{{ style.name }}</span>
+                                    </button>
+                                </div>
+                                <div v-if="selectedStyleTags" class="mt-2 text-xs text-gray-400 break-words hidden">
+                                    Adds: {{ selectedStyleTags }}
+                                </div>
+                            </div>
+
+
+
+                            <!-- Prompts -->
+                            <div>
+                                <div class="flex items-center justify-between mb-2">
+                                    <label class="text-sm text-gray-300 font-medium flex items-center gap-1">
+                                        Prompt
+                                    </label>
+                                    <div class="cursor-pointer ">
+                                        <input type="text" v-model="promptEnhanceRequest"
+                                            placeholder="Enter your prompt here"
+                                            class="hidden w-48 bg-[#232323] border border-[#2A2A35] focus:border-blue-500 text-xs text-[#FAF8F5] px-3 py-1 rounded-lg transition-colors placeholder-gray-500 mr-2" />
+                                        <button :title="promptEnhanceInProgress ? 'Enhancing…' : 'AI Enhance'"
+                                            @click="openEnhancePanel()">
+                                            <div class="flex space-x-1">
+                                                <p>Enhance </p>
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                                                    viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                                    class="lucide lucide-sparkles-icon lucide-sparkles">
+                                                    <path
+                                                        d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z" />
+                                                    <path d="M20 2v4" />
+                                                    <path d="M22 4h-4" />
+                                                    <circle cx="4" cy="20" r="2" />
+                                                </svg>
+
+                                            </div>
+                                        </button>
+                                        <button @click="randomizePrompt('local')">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                                stroke-linecap="round" stroke-linejoin="round"
+                                                class="lucide lucide-dice1-icon lucide-dice-1">
+                                                <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                                                <path d="M12 12h.01" />
+                                            </svg> </button>
+                                        <button @click="randomizePrompt('booru')">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                                stroke-linecap="round" stroke-linejoin="round"
+                                                class="lucide lucide-dice2-icon lucide-dice-2">
+                                                <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                                                <path d="M15 9h.01" />
+                                                <path d="M9 15h.01" />
+                                            </svg> </button>
+                                    </div>
+                                </div>
+
+                                <div
+                                    class="sidebar-card p-4 space-y-2 focus-within:border-[#C9A84C]/40 transition-colors duration-200">
+                                    <div class="relative rounded-lg min-h-[72px]"
+                                        @dragenter.prevent="(e) => { showDragOverlay = true; }" @dragover.prevent
+                                        @dragleave="(e) => { showDragOverlay = false; }"
+                                        @drop.prevent="handlePromptDrop">
+
+                                        <!-- Ghost Text / Inline Autocomplete Overlay (matches font and sizing of textarea) -->
+                                        <div v-if="aiSettings.autocomplete_enabled && ghostText"
+                                            class="absolute inset-0 pointer-events-none text-sm leading-relaxed whitespace-pre-wrap break-words text-transparent select-none"
+                                            style="font-family: inherit; font-size: inherit; line-height: inherit; padding: 0px; margin: 0px;">
+                                            <span class="text-transparent">{{ request.prompt }}</span><span
+                                                class="text-gray-500/60 font-medium bg-[#C9A84C]/10 rounded px-0.5 border-b border-[#C9A84C]/20">{{
+                                                    ghostText }}</span>
+                                        </div>
+
+                                        <textarea id="positive_prompt" v-model="request.prompt"
+                                            placeholder="Your prompt goes here..."
+                                            class="positive_prompt w-full text-sm bg-transparent text-[#E7E9F2] placeholder-gray-500 leading-relaxed resize-none focus:outline-none relative z-10"
+                                            rows="3" ref="positivePrompt" @input="autoResizeTextArea($event.target)"
+                                            @keydown="handleAutocompleteKeydown" />
+
+                                        <AutoComplete v-model:input="request.prompt" :textareaRef="positivePrompt" />
+                                        <div v-if="showDragOverlay"
+                                            class="drop-overlay absolute inset-0 z-10 rounded-lg border-2 border-dashed border-blue-400 bg-black/60 backdrop-blur-sm flex items-center justify-center px-4 text-center text-[#FAF8F5] text-sm font-semibold pointer-events-none">
+                                            Drop here to Interrogate
+                                        </div>
+                                    </div>
+
+                                    <!-- Copilot Status Indicator Footer -->
+                                    <div
+                                        class="flex items-center justify-between border-t border-[#232834]/50 pt-2 text-[10px] text-gray-500 select-none">
+                                        <div class="flex items-center gap-1.5">
+                                            <span class="text-gray-600">Prompt:</span>
+                                            <span class="font-mono text-gray-400">{{ request.prompt ?
+                                                request.prompt.length
+                                                : 0 }}
+                                                chars</span>
+                                        </div>
+
+
+                                        <div class="flex items-center gap-1.5 cursor-pointer hover:text-gray-300 transition-colors"
+                                            @click="togglePromptAutocomplete"
+                                            :title="aiSettings.autocomplete_enabled ? 'Click to turn off autocomplete' : 'Click to turn on autocomplete'">
+                                            <template v-if="aiSettings.autocomplete_enabled">
+                                                <span class="w-1.5 h-1.5 rounded-full bg-[#C9A84C]"
+                                                    :class="{ 'animate-pulse bg-amber-400': isFetchingAutocomplete }"></span>
+                                                <span
+                                                    class="text-[9px] bg-[#2A2F3B] text-gray-400 px-1 py-0.2 rounded border border-[#353B48]">TAB</span>
+                                            </template>
+                                            <template v-else>
+                                                <span class="w-1.5 h-1.5 rounded-full bg-gray-600"></span>
+                                                <span>copilot off</span>
+                                            </template>
+                                        </div>
+
+                                    </div>
+
+                                    <!-- Trigger Words -->
+                                    <div v-if="triggerWords.length > 0" class="border-t border-[#232834] pt-3">
+                                        <label class="text-sm text-gray-300 font-medium block mb-2">Trigger
+                                            Words</label>
+                                        <div class="flex flex-wrap items-center gap-2 mb-2">
+                                            <button v-for="(word, index) in triggerWords" :key="index" type="button"
+                                                @click="addTriggerWord(word, index)"
+                                                class="px-3 py-1 rounded-full text-xs font-medium cursor-pointer transition-colors flex items-center gap-1 relative border"
+                                                :class="request.prompt.includes(word)
+                                                    ? 'bg-[#5A48D6] border-[#7B6DFF] text-white'
+                                                    : 'bg-[#2A2F3B] border-[#353B48] text-[#D7DBE6] hover:bg-[#343A48]'">
+                                                {{ word }}
+
+                                                <span v-if="copiedIndex === index"
+                                                    class="absolute -top-6 left-1/2 -translate-x-1/2 bg-black text-[#FAF8F5] text-xs px-1.5 py-0.5 rounded shadow">Copied!</span>
+                                            </button>
+                                            <button @click="addAllTriggerWords"
+                                                class="text-blue-300 hover:text-[#F4F6FA] text-xs font-medium px-3 py-1.5 rounded-full border border-[#2A2F3B] hover:border-blue-400 hover:bg-blue-500/10 transition-colors">
+                                                Add All
+                                            </button>
+                                            <span v-if="copiedAll"
+                                                class="ml-1 text-purple-400 text-xs font-medium">Copied!</span>
+                                        </div>
+                                    </div>
+
+                                </div>
+
+                                <!--<PillPrompt :prompt="request.prompt"/>-->
+
+
+
+
+                                <div class="mt-3">
+                                    <label class="text-sm text-gray-300 font-medium block mb-2">Negative Prompt</label>
+                                    <div class="relative rounded-lg">
+                                        <input id="negative_prompt" type="text" v-model="request.negative_prompt"
+                                            placeholder="Negative Prompt"
+                                            class="sidebar-input w-full text-sm p-3 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 placeholder-gray-500"
+                                            ref="negativePrompt" />
+                                        <AutoComplete v-model:input="request.negative_prompt"
+                                            :textareaRef="negativePrompt" />
+                                    </div>
+
+                                </div>
+                            </div>
+
+                            <!--Image input-->
+                            <div>
+                                <label class="text-sm text-gray-300 font-medium block mb-2">Img2Img</label>
+                                <div class="sidebar-card">
+                                    <input ref="imageInputRef" type="file" accept="image/*" class="hidden"
+                                        @change="handleImageInputChange" />
+                                    <div class="relative rounded-lg border border-dashed border-[#2E3442] bg-[#11141B]/40 p-3 transition-colors cursor-pointer hover:border-blue-500 overflow-hidden"
+                                        :class="imageInput.preview ? 'border-transparent min-h-42' : ''"
+                                        @click="openImageInputDialog" @dragenter.prevent="showImageDropOverlay = true"
+                                        @dragover.prevent @dragleave="showImageDropOverlay = false"
+                                        @drop.prevent="handleImageInputDrop">
+                                        <div v-if="imageInput.preview" class="absolute inset-0 bg-cover bg-center z-0"
+                                            :style="{
+                                                backgroundImage: `url(${imageInput.preview})`,
+                                                filter: `blur(${Math.round((img2imgDenoise || 0) * 10)}px)`,
+                                                transform: 'scale(1.05)'
+                                            }" aria-hidden="true"></div>
+                                        <div v-if="!imageInput.preview"
+                                            class="flex items-center gap-2 text-[#9AA3B2] text-sm">
+                                            <Image class="w-5 h-5" />
+                                            <p>Drop images here or click to select</p>
+                                        </div>
+                                        <div v-if="imageInput.preview"
+                                            class="absolute inset-0 z-10 flex flex-col gap-3 p-3" @click.stop>
+                                            <div class="flex items-start justify-between gap-2">
+                                                <div
+                                                    class="bg-black/45 text-xs text-gray-100 px-3 py-2 rounded-lg backdrop-blur-sm">
+                                                    <p class="text-sm font-semibold text-gray-100">Image2Image</p>
+                                                    <p class="text-[11px] text-gray-200/80">Transform your image.</p>
+                                                </div>
+                                                <button type="button" @click.stop="clearImageInput"
+                                                    class="bg-black/50 text-gray-100 hover:text-white text-xs font-semibold w-8 h-8 rounded-lg backdrop-blur-sm flex items-center justify-center">
+                                                    X
+                                                </button>
+                                            </div>
+                                            <div
+                                                class="mt-auto bg-black/45 text-xs text-gray-100 px-3 py-3 rounded-lg backdrop-blur-sm border border-white/10">
+                                                <div class="flex items-center justify-between text-xs text-gray-200">
+                                                    <span>Denoise strength</span>
+                                                    <span>{{ img2imgDenoise.toFixed(2) }}</span>
+                                                </div>
+                                                <input type="range" min="0" max="1" step="0.05"
+                                                    v-model.number="img2imgDenoise" @click.stop
+                                                    class="mt-2 w-full h-3 bg-white/25 rounded-full appearance-none cursor-pointer slider accent-blue-400"
+                                                    :style="{ background: `linear-gradient(to right, rgba(59,130,246,0.9) 0%, rgba(59,130,246,0.9) ${img2imgDenoise * 100}%, rgba(255,255,255,0.25) ${img2imgDenoise * 100}%, rgba(255,255,255,0.25) 100%)` }">
+                                            </div>
+                                        </div>
+                                        <div v-if="showImageDropOverlay"
+                                            class="drop-overlay absolute inset-0 z-10 rounded-lg border-2 border-dashed border-blue-400 bg-black/60 backdrop-blur-sm flex items-center justify-center px-4 text-center text-[#FAF8F5] text-sm font-semibold pointer-events-none">
+                                            Drop image to use as input
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Aspect Ratio -->
+                            <div v-if="!compactMode">
+                                <label class="text-sm text-gray-300 font-medium block mb-3">Aspect Ratio</label>
+                                <div class="sidebar-subtle p-1.5 flex gap-1">
+                                    <button @click="updateAspectRatio('Square')" :class="aspectRatio === 'Square'
+                                        ? 'bg-[#232836] text-[#F4F6FA] shadow-[inset_0_0_0_1px_rgba(96,165,250,0.35)]'
+                                        : 'text-[#A1A9B6] hover:text-[#F4F6FA] hover:bg-[#1A1E29]'"
+                                        class="flex flex-col items-center py-2.5 px-2 rounded-lg text-xs font-medium transition-colors w-full">
+                                        <div class="w-4 h-4 border border-current rounded mb-1"></div>
+                                        <span>Square</span>
+                                        <span class="text-xs opacity-60">1024x1024</span>
+                                    </button>
+                                    <button @click="updateAspectRatio('Landscape')" :class="aspectRatio === 'Landscape'
+                                        ? 'bg-[#232836] text-[#F4F6FA] shadow-[inset_0_0_0_1px_rgba(96,165,250,0.35)]'
+                                        : 'text-[#A1A9B6] hover:text-[#F4F6FA] hover:bg-[#1A1E29]'"
+                                        class="flex flex-col items-center py-2.5 px-2 rounded-lg text-xs font-medium transition-colors w-full">
+                                        <div class="w-5 h-3 border border-current rounded mb-1"></div>
+                                        <span>Landscape</span>
+                                        <span class="text-xs opacity-60">1216x832</span>
+                                    </button>
+                                    <button @click="updateAspectRatio('Portrait')" :class="aspectRatio === 'Portrait'
+                                        ? 'bg-[#232836] text-[#F4F6FA] shadow-[inset_0_0_0_1px_rgba(96,165,250,0.35)]'
+                                        : 'text-[#A1A9B6] hover:text-[#F4F6FA] hover:bg-[#1A1E29]'"
+                                        class="flex flex-col items-center py-2.5 px-2 rounded-lg text-xs font-medium transition-colors w-full">
+                                        <div class="w-3 h-5 border border-current rounded mb-1"></div>
+                                        <span>Portrait</span>
+                                        <span class="text-xs opacity-60">832x1216</span>
+                                    </button>
+                                </div>
+                            </div>
+
+
+
+                            <!-- Advanced Section -->
+                            <div v-if="!compactMode" class="sidebar-card">
+                                <button @click="showAdvanced = !showAdvanced"
+                                    class="w-full flex items-center justify-between p-4 text-left">
+                                    <span class="text-sm font-medium text-gray-300">Advanced</span>
+                                    <svg :class="{ 'rotate-180': showAdvanced }"
+                                        class="w-4 h-4 text-gray-400 transition-transform" fill="none"
+                                        stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M19 9l-7 7-7-7" />
+                                    </svg>
+                                </button>
+
+                                <div v-show="showAdvanced" class="px-4 pb-4 space-y-6 border-t border-[#232834]">
+                                    <!-- CFG Scale -->
+                                    <div class="pt-4">
+                                        <div class="flex items-center justify-between mb-2 w-full">
+                                            <label class="text-sm font-medium text-gray-300">CFG Scale</label>
+                                            <div
+                                                class="flex bg-[#1a1a1a] rounded-lg overflow-hidden border border-[#2A2A35]">
+                                                <button @click="request.cfg_scale = 4"
+                                                    :class="request.cfg_scale <= 5 ? 'bg-gray-700 text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-gray-800'"
+                                                    class="flex-1 py-1 px-2 text-xs font-medium transition-all duration-200 flex items-center justify-center gap-1">
+                                                    <svg class="w-3 h-3" fill="none" stroke="currentColor"
+                                                        viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                            stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                                    </svg>
+                                                    Creative
+                                                </button>
+                                                <button @click="request.cfg_scale = 7"
+                                                    :class="request.cfg_scale > 5 && request.cfg_scale <= 8 ? 'bg-blue-600 text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-gray-800'"
+                                                    class="flex-1 py-1 px-2 text-xs font-medium transition-all duration-200 flex items-center justify-center gap-1 border-x border-[#2A2A35]">
+                                                    <svg class="w-3 h-3" fill="none" stroke="currentColor"
+                                                        viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                            stroke-width="2"
+                                                            d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                                                    </svg>
+                                                    Balanced
+                                                </button>
+                                                <button @click="request.cfg_scale = 10"
+                                                    :class="request.cfg_scale > 8 ? 'bg-gray-700 text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-gray-800'"
+                                                    class="flex-1 py-1 px-2 text-xs font-medium transition-all duration-200 flex items-center justify-center gap-1">
+                                                    <svg class="w-3 h-3" fill="none" stroke="currentColor"
+                                                        viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                            stroke-width="2"
+                                                            d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                    </svg>
+                                                    Precise
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div class="flex items-center space-x-3">
+                                            <div
+                                                class="flex items-center bg-[#1a1a1a] border border-[#2A2A35] rounded-lg overflow-hidden shadow-sm">
+                                                <input type="number" min="1" max="10" step="0.5"
+                                                    v-model="request.cfg_scale"
+                                                    class="bg-transparent text-[#FAF8F5] text-center font-medium w-12 py-2 px-1 focus:outline-none focus:bg-[#1A1A24] transition-colors" />
+                                                <div class="flex flex-col border-l border-[#2A2A35]">
+                                                    <button type="button"
+                                                        @click="request.cfg_scale = Math.min(request.cfg_scale + 0.5, 10)"
+                                                        class="px-2 py-1 text-xs text-gray-400 hover:text-[#FAF8F5] hover:bg-[#1A1A24] transition-colors">
+                                                        <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                                            <path fill-rule="evenodd"
+                                                                d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z"
+                                                                clip-rule="evenodd" />
+                                                        </svg>
+                                                    </button>
+                                                    <button type="button"
+                                                        @click="request.cfg_scale = Math.max(request.cfg_scale - 0.5, 1)"
+                                                        class="px-2 py-1 text-xs text-gray-400 hover:text-[#FAF8F5] hover:bg-[#1A1A24] transition-colors border-t border-[#2A2A35]">
+                                                        <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                                            <path fill-rule="evenodd"
+                                                                d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+                                                                clip-rule="evenodd" />
                                                         </svg>
                                                     </button>
                                                 </div>
                                             </div>
-                                            <div class="flex items-center space-x-2">
-                                                <div class="flex-1 relative">
-                                                    <input type="range" min="0" max="2" step="0.1" v-model="lora.weight"
-                                                        class="w-full h-1.5 bg-[#2A2F3B] rounded-lg appearance-none cursor-pointer slider">
-                                                </div>
-                                                <input type="number" v-model="lora.weight" min="-1" max="2" step="0.1"
-                                                    class="sidebar-input w-16 text-xs rounded-md px-2 py-1 text-center">
+
+                                            <div class="flex-1 relative">
+                                                <input type="range" min="1" max="10" step="0.5"
+                                                    v-model="request.cfg_scale"
+                                                    class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer slider focus:outline-none    mb-1"
+                                                    :style="{ background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(request.cfg_scale - 1) / 9 * 100}%, #4b5563 ${(request.cfg_scale - 1) / 9 * 100}%, #4b5563 100%)` }">
 
                                             </div>
                                         </div>
-                                        <div v-if="current_model.loras.length == 0"
-                                            class="text-xs text-gray-400 italic">
-                                            No Resources Added.
-                                        </div>
-                                        <div v-if="current_model.loras_not_found.length > 0" class="mt-3">
-                                            <h3 class="text-sm text-red-400 font-medium">LoRA Models Not Found</h3>
-                                            <ul class="list-disc list-inside text-xs text-gray-400">
-                                                <li v-for="(lora, index) in current_model.loras_not_found" :key="index">
-                                                    {{
-                                                        lora.name }}</li>
-                                            </ul>
 
-
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Styles -->
-                        <div class="mt-4">
-                            <div class="flex items-center justify-between mb-2">
-                                <label class="text-sm text-gray-300 font-medium">Styles</label>
-                                <div class="flex items-center gap-2">
-                                    <button @click="showStyleManager = true"
-                                        class="text-xs text-blue-400 hover:text-blue-300">Manage</button>
-                                    <button v-if="selectedStyleIds.length > 0" @click="clearSelectedStyles"
-                                        class="text-xs text-gray-400 hover:text-[#FAF8F5]">Clear</button>
-                                </div>
-                            </div>
-                            <div v-if="styles.length === 0" class="text-xs text-gray-400 italic">
-                                No styles saved yet.
-                            </div>
-                            <div v-else class="flex flex-wrap gap-2">
-                                <button v-for="style in styles" :key="style.id" type="button"
-                                    @click="toggleStyleSelection(style.id)"
-                                    class="flex items-center gap-2 px-2 py-1 rounded-full border text-xs transition-colors"
-                                    :class="selectedStyleIds.includes(style.id)
-                                        ? 'bg-[#243358] border-[#3E5CA8] text-[#CFE1FF]'
-                                        : 'bg-[#141821] border-[#2A2F3B] text-[#C7CCD6] hover:bg-[#1B1F2A]'">
-                                    <img :src="style.image || placeholderImage" alt=""
-                                        class="w-6 h-6 rounded-full object-cover border border-[#2A2F3B]" />
-                                    <span class="truncate max-w-[140px]">{{ style.name }}</span>
-                                </button>
-                            </div>
-                            <div v-if="selectedStyleTags" class="mt-2 text-xs text-gray-400 break-words hidden">
-                                Adds: {{ selectedStyleTags }}
-                            </div>
-                        </div>
-
-
-
-                        <!-- Prompts -->
-                        <div>
-                            <div class="flex items-center justify-between mb-2">
-                                <label class="text-sm text-gray-300 font-medium flex items-center gap-1">
-                                    Prompt
-                                </label>
-                                <div class="cursor-pointer ">
-                                    <input type="text" v-model="promptEnhanceRequest"
-                                        placeholder="Enter your prompt here"
-                                        class="hidden w-48 bg-[#232323] border border-[#2A2A35] focus:border-blue-500 text-xs text-[#FAF8F5] px-3 py-1 rounded-lg transition-colors placeholder-gray-500 mr-2" />
-                                    <button :title="promptEnhanceInProgress ? 'Enhancing…' : 'AI Enhance'"
-                                        @click="openEnhancePanel()">
-                                        <div class="flex space-x-1">
-                                            <p>Enhance </p>
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
-                                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                stroke-linecap="round" stroke-linejoin="round"
-                                                class="lucide lucide-sparkles-icon lucide-sparkles">
-                                                <path
-                                                    d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z" />
-                                                <path d="M20 2v4" />
-                                                <path d="M22 4h-4" />
-                                                <circle cx="4" cy="20" r="2" />
-                                            </svg>
-
-                                        </div>
-                                    </button>
-                                    <button @click="randomizePrompt('local')">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
-                                            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                            stroke-linecap="round" stroke-linejoin="round"
-                                            class="lucide lucide-dice1-icon lucide-dice-1">
-                                            <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
-                                            <path d="M12 12h.01" />
-                                        </svg> </button>
-                                    <button @click="randomizePrompt('booru')">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
-                                            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                            stroke-linecap="round" stroke-linejoin="round"
-                                            class="lucide lucide-dice2-icon lucide-dice-2">
-                                            <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
-                                            <path d="M15 9h.01" />
-                                            <path d="M9 15h.01" />
-                                        </svg> </button>
-                                </div>
-                            </div>
-
-                            <div
-                                class="sidebar-card p-4 space-y-2 focus-within:border-[#C9A84C]/40 transition-colors duration-200">
-                                <div class="relative rounded-lg min-h-[72px]"
-                                    @dragenter.prevent="(e) => { showDragOverlay = true; }" @dragover.prevent
-                                    @dragleave="(e) => { showDragOverlay = false; }" @drop.prevent="handlePromptDrop">
-
-                                    <!-- Ghost Text / Inline Autocomplete Overlay (matches font and sizing of textarea) -->
-                                    <div v-if="aiSettings.autocomplete_enabled && ghostText"
-                                        class="absolute inset-0 pointer-events-none text-sm leading-relaxed whitespace-pre-wrap break-words text-transparent select-none"
-                                        style="font-family: inherit; font-size: inherit; line-height: inherit; padding: 0px; margin: 0px;">
-                                        <span class="text-transparent">{{ request.prompt }}</span><span
-                                            class="text-gray-500/60 font-medium bg-[#C9A84C]/10 rounded px-0.5 border-b border-[#C9A84C]/20">{{
-                                                ghostText }}</span>
                                     </div>
 
-                                    <textarea id="positive_prompt" v-model="request.prompt"
-                                        placeholder="Your prompt goes here..."
-                                        class="positive_prompt w-full text-sm bg-transparent text-[#E7E9F2] placeholder-gray-500 leading-relaxed resize-none focus:outline-none relative z-10"
-                                        rows="3" ref="positivePrompt" @input="autoResizeTextArea($event.target)"
-                                        @keydown="handleAutocompleteKeydown" />
-
-                                    <AutoComplete v-model:input="request.prompt" :textareaRef="positivePrompt" />
-                                    <div v-if="showDragOverlay"
-                                        class="drop-overlay absolute inset-0 z-10 rounded-lg border-2 border-dashed border-blue-400 bg-black/60 backdrop-blur-sm flex items-center justify-center px-4 text-center text-[#FAF8F5] text-sm font-semibold pointer-events-none">
-                                        Drop here to Interrogate
-                                    </div>
-                                </div>
-
-                                <!-- Copilot Status Indicator Footer -->
-                                <div
-                                    class="flex items-center justify-between border-t border-[#232834]/50 pt-2 text-[10px] text-gray-500 select-none">
-                                    <div class="flex items-center gap-1.5">
-                                        <span class="text-gray-600">Prompt:</span>
-                                        <span class="font-mono text-gray-400">{{ request.prompt ? request.prompt.length
-                                            : 0 }}
-                                            chars</span>
-                                    </div>
-
-
-                                    <div class="flex items-center gap-1.5 cursor-pointer hover:text-gray-300 transition-colors"
-                                        @click="togglePromptAutocomplete"
-                                        :title="aiSettings.autocomplete_enabled ? 'Click to turn off autocomplete' : 'Click to turn on autocomplete'">
-                                        <template v-if="aiSettings.autocomplete_enabled">
-                                            <span class="w-1.5 h-1.5 rounded-full bg-[#C9A84C]"
-                                                :class="{ 'animate-pulse bg-amber-400': isFetchingAutocomplete }"></span>
-                                            <span
-                                                class="text-[9px] bg-[#2A2F3B] text-gray-400 px-1 py-0.2 rounded border border-[#353B48]">TAB</span>
-                                        </template>
-                                        <template v-else>
-                                            <span class="w-1.5 h-1.5 rounded-full bg-gray-600"></span>
-                                            <span>copilot off</span>
-                                        </template>
-                                    </div>
-
-                                </div>
-
-                                <!-- Trigger Words -->
-                                <div v-if="triggerWords.length > 0" class="border-t border-[#232834] pt-3">
-                                    <label class="text-sm text-gray-300 font-medium block mb-2">Trigger Words</label>
-                                    <div class="flex flex-wrap items-center gap-2 mb-2">
-                                        <button v-for="(word, index) in triggerWords" :key="index" type="button"
-                                            @click="addTriggerWord(word, index)"
-                                            class="px-3 py-1 rounded-full text-xs font-medium cursor-pointer transition-colors flex items-center gap-1 relative border"
-                                            :class="request.prompt.includes(word)
-                                                ? 'bg-[#5A48D6] border-[#7B6DFF] text-white'
-                                                : 'bg-[#2A2F3B] border-[#353B48] text-[#D7DBE6] hover:bg-[#343A48]'">
-                                            {{ word }}
-
-                                            <span v-if="copiedIndex === index"
-                                                class="absolute -top-6 left-1/2 -translate-x-1/2 bg-black text-[#FAF8F5] text-xs px-1.5 py-0.5 rounded shadow">Copied!</span>
-                                        </button>
-                                        <button @click="addAllTriggerWords"
-                                            class="text-blue-300 hover:text-[#F4F6FA] text-xs font-medium px-3 py-1.5 rounded-full border border-[#2A2F3B] hover:border-blue-400 hover:bg-blue-500/10 transition-colors">
-                                            Add All
-                                        </button>
-                                        <span v-if="copiedAll"
-                                            class="ml-1 text-purple-400 text-xs font-medium">Copied!</span>
-                                    </div>
-                                </div>
-
-                            </div>
-
-                            <!--<PillPrompt :prompt="request.prompt"/>-->
-
-
-
-
-                            <div class="mt-3">
-                                <label class="text-sm text-gray-300 font-medium block mb-2">Negative Prompt</label>
-                                <div class="relative rounded-lg">
-                                    <input id="negative_prompt" type="text" v-model="request.negative_prompt"
-                                        placeholder="Negative Prompt"
-                                        class="sidebar-input w-full text-sm p-3 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 placeholder-gray-500"
-                                        ref="negativePrompt" />
-                                    <AutoComplete v-model:input="request.negative_prompt"
-                                        :textareaRef="negativePrompt" />
-                                </div>
-
-                            </div>
-                        </div>
-
-                        <!--Image input-->
-                        <div>
-                            <label class="text-sm text-gray-300 font-medium block mb-2">Img2Img</label>
-                            <div class="sidebar-card">
-                                <input ref="imageInputRef" type="file" accept="image/*" class="hidden"
-                                    @change="handleImageInputChange" />
-                                <div class="relative rounded-lg border border-dashed border-[#2E3442] bg-[#11141B]/40 p-3 transition-colors cursor-pointer hover:border-blue-500 overflow-hidden"
-                                    :class="imageInput.preview ? 'border-transparent min-h-42' : ''"
-                                    @click="openImageInputDialog" @dragenter.prevent="showImageDropOverlay = true"
-                                    @dragover.prevent @dragleave="showImageDropOverlay = false"
-                                    @drop.prevent="handleImageInputDrop">
-                                    <div v-if="imageInput.preview" class="absolute inset-0 bg-cover bg-center z-0"
-                                        :style="{
-                                            backgroundImage: `url(${imageInput.preview})`,
-                                            filter: `blur(${Math.round((img2imgDenoise || 0) * 10)}px)`,
-                                            transform: 'scale(1.05)'
-                                        }" aria-hidden="true"></div>
-                                    <div v-if="!imageInput.preview"
-                                        class="flex items-center gap-2 text-[#9AA3B2] text-sm">
-                                        <Image class="w-5 h-5" />
-                                        <p>Drop images here or click to select</p>
-                                    </div>
-                                    <div v-if="imageInput.preview" class="absolute inset-0 z-10 flex flex-col gap-3 p-3"
-                                        @click.stop>
-                                        <div class="flex items-start justify-between gap-2">
+                                    <!-- Sampler -->
+                                    <div>
+                                        <div class="flex items-center justify-between mb-2">
+                                            <label class="text-sm font-medium text-gray-300">Sampler</label>
                                             <div
-                                                class="bg-black/45 text-xs text-gray-100 px-3 py-2 rounded-lg backdrop-blur-sm">
-                                                <p class="text-sm font-semibold text-gray-100">Image2Image</p>
-                                                <p class="text-[11px] text-gray-200/80">Transform your image.</p>
-                                            </div>
-                                            <button type="button" @click.stop="clearImageInput"
-                                                class="bg-black/50 text-gray-100 hover:text-white text-xs font-semibold w-8 h-8 rounded-lg backdrop-blur-sm flex items-center justify-center">
-                                                X
-                                            </button>
-                                        </div>
-                                        <div
-                                            class="mt-auto bg-black/45 text-xs text-gray-100 px-3 py-3 rounded-lg backdrop-blur-sm border border-white/10">
-                                            <div class="flex items-center justify-between text-xs text-gray-200">
-                                                <span>Denoise strength</span>
-                                                <span>{{ img2imgDenoise.toFixed(2) }}</span>
-                                            </div>
-                                            <input type="range" min="0" max="1" step="0.05"
-                                                v-model.number="img2imgDenoise" @click.stop
-                                                class="mt-2 w-full h-3 bg-white/25 rounded-full appearance-none cursor-pointer slider accent-blue-400"
-                                                :style="{ background: `linear-gradient(to right, rgba(59,130,246,0.9) 0%, rgba(59,130,246,0.9) ${img2imgDenoise * 100}%, rgba(255,255,255,0.25) ${img2imgDenoise * 100}%, rgba(255,255,255,0.25) 100%)` }">
-                                        </div>
-                                    </div>
-                                    <div v-if="showImageDropOverlay"
-                                        class="drop-overlay absolute inset-0 z-10 rounded-lg border-2 border-dashed border-blue-400 bg-black/60 backdrop-blur-sm flex items-center justify-center px-4 text-center text-[#FAF8F5] text-sm font-semibold pointer-events-none">
-                                        Drop image to use as input
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Aspect Ratio -->
-                        <div v-if="!compactMode">
-                            <label class="text-sm text-gray-300 font-medium block mb-3">Aspect Ratio</label>
-                            <div class="sidebar-subtle p-1.5 flex gap-1">
-                                <button @click="updateAspectRatio('Square')" :class="aspectRatio === 'Square'
-                                    ? 'bg-[#232836] text-[#F4F6FA] shadow-[inset_0_0_0_1px_rgba(96,165,250,0.35)]'
-                                    : 'text-[#A1A9B6] hover:text-[#F4F6FA] hover:bg-[#1A1E29]'"
-                                    class="flex flex-col items-center py-2.5 px-2 rounded-lg text-xs font-medium transition-colors w-full">
-                                    <div class="w-4 h-4 border border-current rounded mb-1"></div>
-                                    <span>Square</span>
-                                    <span class="text-xs opacity-60">1024x1024</span>
-                                </button>
-                                <button @click="updateAspectRatio('Landscape')" :class="aspectRatio === 'Landscape'
-                                    ? 'bg-[#232836] text-[#F4F6FA] shadow-[inset_0_0_0_1px_rgba(96,165,250,0.35)]'
-                                    : 'text-[#A1A9B6] hover:text-[#F4F6FA] hover:bg-[#1A1E29]'"
-                                    class="flex flex-col items-center py-2.5 px-2 rounded-lg text-xs font-medium transition-colors w-full">
-                                    <div class="w-5 h-3 border border-current rounded mb-1"></div>
-                                    <span>Landscape</span>
-                                    <span class="text-xs opacity-60">1216x832</span>
-                                </button>
-                                <button @click="updateAspectRatio('Portrait')" :class="aspectRatio === 'Portrait'
-                                    ? 'bg-[#232836] text-[#F4F6FA] shadow-[inset_0_0_0_1px_rgba(96,165,250,0.35)]'
-                                    : 'text-[#A1A9B6] hover:text-[#F4F6FA] hover:bg-[#1A1E29]'"
-                                    class="flex flex-col items-center py-2.5 px-2 rounded-lg text-xs font-medium transition-colors w-full">
-                                    <div class="w-3 h-5 border border-current rounded mb-1"></div>
-                                    <span>Portrait</span>
-                                    <span class="text-xs opacity-60">832x1216</span>
-                                </button>
-                            </div>
-                        </div>
-
-
-
-                        <!-- Advanced Section -->
-                        <div v-if="!compactMode" class="sidebar-card">
-                            <button @click="showAdvanced = !showAdvanced"
-                                class="w-full flex items-center justify-between p-4 text-left">
-                                <span class="text-sm font-medium text-gray-300">Advanced</span>
-                                <svg :class="{ 'rotate-180': showAdvanced }"
-                                    class="w-4 h-4 text-gray-400 transition-transform" fill="none" stroke="currentColor"
-                                    viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                        d="M19 9l-7 7-7-7" />
-                                </svg>
-                            </button>
-
-                            <div v-show="showAdvanced" class="px-4 pb-4 space-y-6 border-t border-[#232834]">
-                                <!-- CFG Scale -->
-                                <div class="pt-4">
-                                    <div class="flex items-center justify-between mb-2 w-full">
-                                        <label class="text-sm font-medium text-gray-300">CFG Scale</label>
-                                        <div
-                                            class="flex bg-[#1a1a1a] rounded-lg overflow-hidden border border-[#2A2A35]">
-                                            <button @click="request.cfg_scale = 4"
-                                                :class="request.cfg_scale <= 5 ? 'bg-gray-700 text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-gray-800'"
-                                                class="flex-1 py-1 px-2 text-xs font-medium transition-all duration-200 flex items-center justify-center gap-1">
-                                                <svg class="w-3 h-3" fill="none" stroke="currentColor"
-                                                    viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                        stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                                                </svg>
-                                                Creative
-                                            </button>
-                                            <button @click="request.cfg_scale = 7"
-                                                :class="request.cfg_scale > 5 && request.cfg_scale <= 8 ? 'bg-blue-600 text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-gray-800'"
-                                                class="flex-1 py-1 px-2 text-xs font-medium transition-all duration-200 flex items-center justify-center gap-1 border-x border-[#2A2A35]">
-                                                <svg class="w-3 h-3" fill="none" stroke="currentColor"
-                                                    viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                        stroke-width="2"
-                                                        d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-                                                </svg>
-                                                Balanced
-                                            </button>
-                                            <button @click="request.cfg_scale = 10"
-                                                :class="request.cfg_scale > 8 ? 'bg-gray-700 text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-gray-800'"
-                                                class="flex-1 py-1 px-2 text-xs font-medium transition-all duration-200 flex items-center justify-center gap-1">
-                                                <svg class="w-3 h-3" fill="none" stroke="currentColor"
-                                                    viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                        stroke-width="2"
-                                                        d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                                </svg>
-                                                Precise
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div class="flex items-center space-x-3">
-                                        <div
-                                            class="flex items-center bg-[#1a1a1a] border border-[#2A2A35] rounded-lg overflow-hidden shadow-sm">
-                                            <input type="number" min="1" max="10" step="0.5" v-model="request.cfg_scale"
-                                                class="bg-transparent text-[#FAF8F5] text-center font-medium w-12 py-2 px-1 focus:outline-none focus:bg-[#1A1A24] transition-colors" />
-                                            <div class="flex flex-col border-l border-[#2A2A35]">
-                                                <button type="button"
-                                                    @click="request.cfg_scale = Math.min(request.cfg_scale + 0.5, 10)"
-                                                    class="px-2 py-1 text-xs text-gray-400 hover:text-[#FAF8F5] hover:bg-[#1A1A24] transition-colors">
-                                                    <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                                                        <path fill-rule="evenodd"
-                                                            d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z"
-                                                            clip-rule="evenodd" />
+                                                class="flex bg-[#1a1a1a] rounded-lg overflow-hidden border border-[#2A2A35]">
+                                                <button @click="request.sampler_name = 'Euler a'"
+                                                    :class="request.sampler_name === 'Euler a' ? 'bg-blue-600 text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-gray-800'"
+                                                    class="flex-1 py-1 px-2 text-xs font-medium transition-all duration-200 flex items-center justify-center gap-1">
+                                                    <svg class="w-3 h-3" fill="none" stroke="currentColor"
+                                                        viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                            stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
                                                     </svg>
+                                                    Fast
                                                 </button>
-                                                <button type="button"
-                                                    @click="request.cfg_scale = Math.max(request.cfg_scale - 0.5, 1)"
-                                                    class="px-2 py-1 text-xs text-gray-400 hover:text-[#FAF8F5] hover:bg-[#1A1A24] transition-colors border-t border-[#2A2A35]">
-                                                    <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                                                        <path fill-rule="evenodd"
-                                                            d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-                                                            clip-rule="evenodd" />
+                                                <button @click="request.sampler_name = 'DPM++ 2M'"
+                                                    :class="request.sampler_name === 'DPM++ 2M' ? 'bg-blue-600 text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-gray-800'"
+                                                    class="flex-1 py-1 px-2 text-xs font-medium transition-all duration-200 flex items-center justify-center gap-1 border-x border-[#2A2A35]">
+                                                    <svg class="w-3 h-3" fill="none" stroke="currentColor"
+                                                        viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                            stroke-width="2"
+                                                            d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
                                                     </svg>
+                                                    Quality
                                                 </button>
                                             </div>
                                         </div>
+                                        <div v-if="defaultStyles[current_model.model.model_name]?.override_sampler">
+                                            <div
+                                                class="flex items-center bg-[#1a1a1a] border border-[#2A2A35] text-sm rounded-lg px-3 py-2">
+                                                <span class="flex-1">
+                                                    {{
+                                                        defaultStyles[current_model.model.model_name]?.override_sampler
+                                                    }}
+                                                </span>
 
-                                        <div class="flex-1 relative">
-                                            <input type="range" min="1" max="10" step="0.5" v-model="request.cfg_scale"
-                                                class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer slider focus:outline-none    mb-1"
-                                                :style="{ background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(request.cfg_scale - 1) / 9 * 100}%, #4b5563 ${(request.cfg_scale - 1) / 9 * 100}%, #4b5563 100%)` }">
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+                                                    stroke-width="1.5" stroke="currentColor"
+                                                    class="w-4 h-4 text-gray-400 ml-2">
+                                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                                        d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
+                                                </svg>
 
+                                            </div>
+                                        </div>
+                                        <div v-else>
+                                            <select v-model="request.sampler_name"
+                                                class="w-full bg-[#1a1a1a] border border-[#2A2A35] text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
+                                                <option v-for="sampler in samplers" :key="sampler.name"
+                                                    :value="sampler.name">{{
+                                                        sampler.name }}
+                                                </option>
+                                            </select>
                                         </div>
                                     </div>
 
-                                </div>
-
-                                <!-- Sampler -->
-                                <div>
-                                    <div class="flex items-center justify-between mb-2">
-                                        <label class="text-sm font-medium text-gray-300">Sampler</label>
-                                        <div
-                                            class="flex bg-[#1a1a1a] rounded-lg overflow-hidden border border-[#2A2A35]">
-                                            <button @click="request.sampler_name = 'Euler a'"
-                                                :class="request.sampler_name === 'Euler a' ? 'bg-blue-600 text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-gray-800'"
-                                                class="flex-1 py-1 px-2 text-xs font-medium transition-all duration-200 flex items-center justify-center gap-1">
-                                                <svg class="w-3 h-3" fill="none" stroke="currentColor"
-                                                    viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                        stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                                                </svg>
-                                                Fast
-                                            </button>
-                                            <button @click="request.sampler_name = 'DPM++ 2M'"
-                                                :class="request.sampler_name === 'DPM++ 2M' ? 'bg-blue-600 text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-gray-800'"
-                                                class="flex-1 py-1 px-2 text-xs font-medium transition-all duration-200 flex items-center justify-center gap-1 border-x border-[#2A2A35]">
-                                                <svg class="w-3 h-3" fill="none" stroke="currentColor"
-                                                    viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                        stroke-width="2"
-                                                        d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-                                                </svg>
-                                                Quality
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div v-if="defaultStyles[current_model.model.model_name]?.override_sampler">
-                                        <div
-                                            class="flex items-center bg-[#1a1a1a] border border-[#2A2A35] text-sm rounded-lg px-3 py-2">
-                                            <span class="flex-1">
-                                                {{
-                                                    defaultStyles[current_model.model.model_name]?.override_sampler
-                                                }}
-                                            </span>
-
-                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
-                                                stroke-width="1.5" stroke="currentColor"
-                                                class="w-4 h-4 text-gray-400 ml-2">
-                                                <path stroke-linecap="round" stroke-linejoin="round"
-                                                    d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
-                                            </svg>
-
-                                        </div>
-                                    </div>
-                                    <div v-else>
-                                        <select v-model="request.sampler_name"
-                                            class="w-full bg-[#1a1a1a] border border-[#2A2A35] text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
-                                            <option v-for="sampler in samplers" :key="sampler.name"
-                                                :value="sampler.name">{{
-                                                    sampler.name }}
-                                            </option>
-                                        </select>
-                                    </div>
-                                </div>
-
-                                <!-- Steps -->
-                                <div>
-                                    <div class="flex items-center justify-between mb-2">
-                                        <label class="text-sm font-medium text-gray-300">Steps</label>
-                                        <div
-                                            class="flex bg-[#1a1a1a] rounded-lg overflow-hidden border border-[#2A2A35]">
-                                            <button @click="request.steps = 14"
-                                                :class="request.steps <= 14 ? 'bg-gray-700 text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-gray-800'"
-                                                class="flex-1 py-1 px-2 text-xs font-medium transition-all duration-200 flex items-center justify-center gap-1">
-                                                <svg class="w-3 h-3" fill="none" stroke="currentColor"
-                                                    viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                        stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                                                </svg>
-                                                Fast
-                                            </button>
-                                            <button @click="request.steps = 24"
-                                                :class="request.steps > 14 && request.steps <= 33 ? 'bg-blue-600 text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-gray-800'"
-                                                class="flex-1 py-1 px-2 text-xs font-medium transition-all duration-200 flex items-center justify-center gap-1 border-x border-[#2A2A35]">
-                                                <svg class="w-3 h-3" fill="none" stroke="currentColor"
-                                                    viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                        stroke-width="2"
-                                                        d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-                                                </svg>
-                                                Balanced
-                                            </button>
-                                            <button @click="request.steps = 34"
-                                                :class="request.steps > 33 ? 'bg-gray-700 text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-gray-800'"
-                                                class="flex-1 py-1 px-2 text-xs font-medium transition-all duration-200 flex items-center justify-center gap-1">
-                                                <svg class="w-3 h-3" fill="none" stroke="currentColor"
-                                                    viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                        stroke-width="2"
-                                                        d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                                </svg>
-                                                High
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div class="flex items-center space-x-3">
-                                        <div
-                                            class="flex items-center bg-[#1a1a1a] border border-[#2A2A35] rounded-lg overflow-hidden shadow-sm">
-                                            <input type="number" min="1" max="50" v-model="request.steps"
-                                                class="bg-transparent text-[#FAF8F5] text-center font-medium w-12 py-2 px-1 focus:outline-none focus:bg-[#1A1A24] transition-colors" />
-                                            <div class="flex flex-col border-l border-[#2A2A35]">
-                                                <button type="button"
-                                                    @click="request.steps = Math.min(request.steps + 1, 50)"
-                                                    class="px-2 py-1 text-xs text-gray-400 hover:text-[#FAF8F5] hover:bg-[#1A1A24] transition-colors">
-                                                    <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                                                        <path fill-rule="evenodd"
-                                                            d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z"
-                                                            clip-rule="evenodd" />
+                                    <!-- Steps -->
+                                    <div>
+                                        <div class="flex items-center justify-between mb-2">
+                                            <label class="text-sm font-medium text-gray-300">Steps</label>
+                                            <div
+                                                class="flex bg-[#1a1a1a] rounded-lg overflow-hidden border border-[#2A2A35]">
+                                                <button @click="request.steps = 14"
+                                                    :class="request.steps <= 14 ? 'bg-gray-700 text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-gray-800'"
+                                                    class="flex-1 py-1 px-2 text-xs font-medium transition-all duration-200 flex items-center justify-center gap-1">
+                                                    <svg class="w-3 h-3" fill="none" stroke="currentColor"
+                                                        viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                            stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
                                                     </svg>
+                                                    Fast
                                                 </button>
-                                                <button type="button"
-                                                    @click="request.steps = Math.max(request.steps - 1, 1)"
-                                                    class="px-2 py-1 text-xs text-gray-400 hover:text-[#FAF8F5] hover:bg-[#1A1A24] transition-colors border-t border-[#2A2A35]">
-                                                    <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                                                        <path fill-rule="evenodd"
-                                                            d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-                                                            clip-rule="evenodd" />
+                                                <button @click="request.steps = 24"
+                                                    :class="request.steps > 14 && request.steps <= 33 ? 'bg-blue-600 text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-gray-800'"
+                                                    class="flex-1 py-1 px-2 text-xs font-medium transition-all duration-200 flex items-center justify-center gap-1 border-x border-[#2A2A35]">
+                                                    <svg class="w-3 h-3" fill="none" stroke="currentColor"
+                                                        viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                            stroke-width="2"
+                                                            d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
                                                     </svg>
+                                                    Balanced
+                                                </button>
+                                                <button @click="request.steps = 34"
+                                                    :class="request.steps > 33 ? 'bg-gray-700 text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-gray-800'"
+                                                    class="flex-1 py-1 px-2 text-xs font-medium transition-all duration-200 flex items-center justify-center gap-1">
+                                                    <svg class="w-3 h-3" fill="none" stroke="currentColor"
+                                                        viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                                            stroke-width="2"
+                                                            d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                    </svg>
+                                                    High
                                                 </button>
                                             </div>
                                         </div>
+                                        <div class="flex items-center space-x-3">
+                                            <div
+                                                class="flex items-center bg-[#1a1a1a] border border-[#2A2A35] rounded-lg overflow-hidden shadow-sm">
+                                                <input type="number" min="1" max="50" v-model="request.steps"
+                                                    class="bg-transparent text-[#FAF8F5] text-center font-medium w-12 py-2 px-1 focus:outline-none focus:bg-[#1A1A24] transition-colors" />
+                                                <div class="flex flex-col border-l border-[#2A2A35]">
+                                                    <button type="button"
+                                                        @click="request.steps = Math.min(request.steps + 1, 50)"
+                                                        class="px-2 py-1 text-xs text-gray-400 hover:text-[#FAF8F5] hover:bg-[#1A1A24] transition-colors">
+                                                        <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                                            <path fill-rule="evenodd"
+                                                                d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z"
+                                                                clip-rule="evenodd" />
+                                                        </svg>
+                                                    </button>
+                                                    <button type="button"
+                                                        @click="request.steps = Math.max(request.steps - 1, 1)"
+                                                        class="px-2 py-1 text-xs text-gray-400 hover:text-[#FAF8F5] hover:bg-[#1A1A24] transition-colors border-t border-[#2A2A35]">
+                                                        <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                                            <path fill-rule="evenodd"
+                                                                d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+                                                                clip-rule="evenodd" />
+                                                        </svg>
+                                                    </button>
+                                                </div>
+                                            </div>
 
-                                        <div class="flex-1 relative">
-                                            <input type="range" min="1" max="50" v-model="request.steps"
-                                                class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer slider focus:outline-none mb-1"
-                                                :style="{ background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(request.steps - 1) / 49 * 100}%, #4b5563 ${(request.steps - 1) / 49 * 100}%, #4b5563 100%)` }">
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <!-- Seed -->
-                                <div>
-                                    <div class="flex items-center justify-between mb-3">
-                                        <label class="text-sm font-medium text-gray-300">Seed</label>
-                                        <div
-                                            class="flex bg-[#1a1a1a] rounded-lg overflow-hidden border border-[#2A2A35]">
-                                            <button @click="request.seed = -1"
-                                                :class="request.seed === -1 ? 'bg-blue-600 text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-gray-800'"
-                                                class="flex-1 py-1 px-2 text-xs font-medium transition-all duration-200 flex items-center justify-center gap-1">
-                                                <svg class="w-3 h-3" fill="none" stroke="currentColor"
-                                                    viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                        stroke-width="2"
-                                                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                                                </svg>
-                                                Random
-                                            </button>
-                                            <button
-                                                @click="request.seed = request.seed === -1 ? Math.floor(Math.random() * 4294967295) : request.seed"
-                                                :class="request.seed !== -1 ? 'bg-gray-700 text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-gray-800'"
-                                                class="flex-1 py-1 px-2 text-xs font-medium transition-all duration-200 flex items-center justify-center gap-1">
-                                                <svg class="w-3 h-3" fill="none" stroke="currentColor"
-                                                    viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                        stroke-width="2"
-                                                        d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4" />
-                                                </svg>
-                                                Fixed
-                                            </button>
+                                            <div class="flex-1 relative">
+                                                <input type="range" min="1" max="50" v-model="request.steps"
+                                                    class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer slider focus:outline-none mb-1"
+                                                    :style="{ background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(request.steps - 1) / 49 * 100}%, #4b5563 ${(request.steps - 1) / 49 * 100}%, #4b5563 100%)` }">
+                                            </div>
                                         </div>
                                     </div>
 
-                                    <div class="space-y-3">
-                                        <!-- Seed Input (when fixed mode is selected) -->
-                                        <div v-if="request.seed !== -1" class="relative">
-                                            <input type="number" v-model="request.seed" min="0" max="4294967295"
-                                                step="1" placeholder="Enter seed value (0-4294967295)"
-                                                class="w-full bg-[#1a1a1a] border border-[#2A2A35] text-sm text-[#FAF8F5] px-3 py-2.5 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 transition-all placeholder-gray-500 pr-20" />
-
-                                            <!-- Quick Action Buttons -->
-                                            <div class="absolute right-2 top-2 flex space-x-1">
-                                                <button @click="request.seed = Math.floor(Math.random() * 4294967295)"
-                                                    class="bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-[#FAF8F5] p-1.5 rounded text-xs transition-colors"
-                                                    title="Generate random seed">
+                                    <!-- Seed -->
+                                    <div>
+                                        <div class="flex items-center justify-between mb-3">
+                                            <label class="text-sm font-medium text-gray-300">Seed</label>
+                                            <div
+                                                class="flex bg-[#1a1a1a] rounded-lg overflow-hidden border border-[#2A2A35]">
+                                                <button @click="request.seed = -1"
+                                                    :class="request.seed === -1 ? 'bg-blue-600 text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-gray-800'"
+                                                    class="flex-1 py-1 px-2 text-xs font-medium transition-all duration-200 flex items-center justify-center gap-1">
                                                     <svg class="w-3 h-3" fill="none" stroke="currentColor"
                                                         viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round"
                                                             stroke-width="2"
                                                             d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                                                     </svg>
+                                                    Random
                                                 </button>
-                                                <button @click="navigator.clipboard.writeText(request.seed.toString())"
-                                                    class="bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-[#FAF8F5] p-1.5 rounded text-xs transition-colors"
-                                                    title="Copy seed">
+                                                <button
+                                                    @click="request.seed = request.seed === -1 ? Math.floor(Math.random() * 4294967295) : request.seed"
+                                                    :class="request.seed !== -1 ? 'bg-gray-700 text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-gray-800'"
+                                                    class="flex-1 py-1 px-2 text-xs font-medium transition-all duration-200 flex items-center justify-center gap-1">
                                                     <svg class="w-3 h-3" fill="none" stroke="currentColor"
                                                         viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round"
                                                             stroke-width="2"
-                                                            d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                                            d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4" />
                                                     </svg>
+                                                    Fixed
                                                 </button>
                                             </div>
                                         </div>
 
-                                        <!-- Random Seed Display -->
-                                        <div v-else
-                                            class="bg-[#1a1a1a] border border-[#2A2A35] rounded-lg px-3 py-2.5 flex items-center justify-between">
-                                            <div class="flex items-center gap-2 text-gray-400">
-                                                <span class="text-sm">Random seed will be generated</span>
+                                        <div class="space-y-3">
+                                            <!-- Seed Input (when fixed mode is selected) -->
+                                            <div v-if="request.seed !== -1" class="relative">
+                                                <input type="number" v-model="request.seed" min="0" max="4294967295"
+                                                    step="1" placeholder="Enter seed value (0-4294967295)"
+                                                    class="w-full bg-[#1a1a1a] border border-[#2A2A35] text-sm text-[#FAF8F5] px-3 py-2.5 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 transition-all placeholder-gray-500 pr-20" />
+
+                                                <!-- Quick Action Buttons -->
+                                                <div class="absolute right-2 top-2 flex space-x-1">
+                                                    <button
+                                                        @click="request.seed = Math.floor(Math.random() * 4294967295)"
+                                                        class="bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-[#FAF8F5] p-1.5 rounded text-xs transition-colors"
+                                                        title="Generate random seed">
+                                                        <svg class="w-3 h-3" fill="none" stroke="currentColor"
+                                                            viewBox="0 0 24 24">
+                                                            <path stroke-linecap="round" stroke-linejoin="round"
+                                                                stroke-width="2"
+                                                                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                                        </svg>
+                                                    </button>
+                                                    <button
+                                                        @click="navigator.clipboard.writeText(request.seed.toString())"
+                                                        class="bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-[#FAF8F5] p-1.5 rounded text-xs transition-colors"
+                                                        title="Copy seed">
+                                                        <svg class="w-3 h-3" fill="none" stroke="currentColor"
+                                                            viewBox="0 0 24 24">
+                                                            <path stroke-linecap="round" stroke-linejoin="round"
+                                                                stroke-width="2"
+                                                                d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                                        </svg>
+                                                    </button>
+                                                </div>
                                             </div>
-                                            <div class="text-xs bg-gray-700 text-gray-300 px-2 py-1 rounded font-mono">
-                                                Auto
+
+                                            <!-- Random Seed Display -->
+                                            <div v-else
+                                                class="bg-[#1a1a1a] border border-[#2A2A35] rounded-lg px-3 py-2.5 flex items-center justify-between">
+                                                <div class="flex items-center gap-2 text-gray-400">
+                                                    <span class="text-sm">Random seed will be generated</span>
+                                                </div>
+                                                <div
+                                                    class="text-xs bg-gray-700 text-gray-300 px-2 py-1 rounded font-mono">
+                                                    Auto
+                                                </div>
+                                            </div>
+
+                                            <!-- Seed Info -->
+                                            <div class="text-xs text-gray-500 flex items-start gap-2">
+                                                <svg class="w-3 h-3 mt-0.5 flex-shrink-0" fill="none"
+                                                    stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                                        stroke-width="2"
+                                                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                </svg>
+                                                <span class="leading-relaxed">
+                                                    Use the same seed to reproduce identical results. Random mode
+                                                    generates
+                                                    a different image each time.
+                                                </span>
                                             </div>
                                         </div>
 
-                                        <!-- Seed Info -->
-                                        <div class="text-xs text-gray-500 flex items-start gap-2">
-                                            <svg class="w-3 h-3 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor"
-                                                viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                                    d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                            </svg>
-                                            <span class="leading-relaxed">
-                                                Use the same seed to reproduce identical results. Random mode generates
-                                                a different image each time.
-                                            </span>
+                                    </div>
+                                    <!-- Clip Skip -->
+                                    <div>
+                                        <div class="flex items-center justify-between mb-2">
+                                            <label class="text-sm font-medium text-gray-300">Clip Skip</label>
                                         </div>
-                                    </div>
+                                        <div class="flex items-center space-x-3">
+                                            <div
+                                                class="flex items-center bg-[#1a1a1a] border border-[#2A2A35] rounded-lg overflow-hidden shadow-sm">
+                                                <input type="number" min="1" max="12" step="1"
+                                                    v-model="request.clip_skip"
+                                                    class="bg-transparent text-[#FAF8F5] text-center font-medium w-12 py-2 px-1 focus:outline-none focus:bg-[#1A1A24] transition-colors" />
+                                                <div class="flex flex-col border-l border-[#2A2A35]">
+                                                    <button type="button"
+                                                        @click="request.clip_skip = Math.min((request.clip_skip || 1) + 1, 12)"
+                                                        class="px-2 py-1 text-xs text-gray-400 hover:text-[#FAF8F5] hover:bg-[#1A1A24] transition-colors">
+                                                        <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                                            <path fill-rule="evenodd"
+                                                                d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z"
+                                                                clip-rule="evenodd" />
+                                                        </svg>
+                                                    </button>
+                                                    <button type="button"
+                                                        @click="request.clip_skip = Math.max((request.clip_skip || 1) - 1, 1)"
+                                                        class="px-2 py-1 text-xs text-gray-400 hover:text-[#FAF8F5] hover:bg-[#1A1A24] transition-colors border-t border-[#2A2A35]">
+                                                        <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                                            <path fill-rule="evenodd"
+                                                                d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+                                                                clip-rule="evenodd" />
+                                                        </svg>
+                                                    </button>
+                                                </div>
+                                            </div>
 
-                                </div>
-                                <!-- Clip Skip -->
-                                <div>
-                                    <div class="flex items-center justify-between mb-2">
-                                        <label class="text-sm font-medium text-gray-300">Clip Skip</label>
-                                    </div>
-                                    <div class="flex items-center space-x-3">
-                                        <div
-                                            class="flex items-center bg-[#1a1a1a] border border-[#2A2A35] rounded-lg overflow-hidden shadow-sm">
-                                            <input type="number" min="1" max="12" step="1" v-model="request.clip_skip"
-                                                class="bg-transparent text-[#FAF8F5] text-center font-medium w-12 py-2 px-1 focus:outline-none focus:bg-[#1A1A24] transition-colors" />
-                                            <div class="flex flex-col border-l border-[#2A2A35]">
-                                                <button type="button"
-                                                    @click="request.clip_skip = Math.min((request.clip_skip || 1) + 1, 12)"
-                                                    class="px-2 py-1 text-xs text-gray-400 hover:text-[#FAF8F5] hover:bg-[#1A1A24] transition-colors">
-                                                    <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                                                        <path fill-rule="evenodd"
-                                                            d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z"
-                                                            clip-rule="evenodd" />
-                                                    </svg>
-                                                </button>
-                                                <button type="button"
-                                                    @click="request.clip_skip = Math.max((request.clip_skip || 1) - 1, 1)"
-                                                    class="px-2 py-1 text-xs text-gray-400 hover:text-[#FAF8F5] hover:bg-[#1A1A24] transition-colors border-t border-[#2A2A35]">
-                                                    <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                                                        <path fill-rule="evenodd"
-                                                            d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-                                                            clip-rule="evenodd" />
-                                                    </svg>
-                                                </button>
+                                            <div class="flex-1 relative">
+                                                <input type="range" min="1" max="2" step="1" v-model="request.clip_skip"
+                                                    class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer slider focus:outline-none mb-1"
+                                                    :style="{ background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${((request.clip_skip || 1) - 1) / 11 * 100}%, #4b5563 ${((request.clip_skip || 1) - 1) / 11 * 100}%, #4b5563 100%)` }">
                                             </div>
                                         </div>
-
-                                        <div class="flex-1 relative">
-                                            <input type="range" min="1" max="2" step="1" v-model="request.clip_skip"
-                                                class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer slider focus:outline-none mb-1"
-                                                :style="{ background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${((request.clip_skip || 1) - 1) / 11 * 100}%, #4b5563 ${((request.clip_skip || 1) - 1) / 11 * 100}%, #4b5563 100%)` }">
-                                        </div>
                                     </div>
-                                </div>
-                                <!-- Adetailer -->
-                                <div v-if="adetailerAvailable && !compactMode"
-                                    class="flex items-center justify-between ">
-                                    <div class="flex items-center space-x-2">
-                                        <label class="text-sm text-gray-300 font-medium">ADetailer</label>
-                                    </div>
-                                    <label class="relative inline-flex items-center cursor-pointer">
-                                        <input type="checkbox" v-model="current_model.adetailer" class="sr-only peer">
-                                        <div
-                                            class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
-                                        </div>
-                                    </label>
-                                </div>
-
-                                <!-- Block Cache -->
-                                <div v-if="blockCacheAvailable && !compactMode" class="space-y-3 mt-4">
-                                    <div class="flex items-center justify-between">
+                                    <!-- Adetailer -->
+                                    <div v-if="adetailerAvailable && !compactMode"
+                                        class="flex items-center justify-between ">
                                         <div class="flex items-center space-x-2">
-                                            <label class="text-sm text-gray-300 font-medium">First Block Cache /
-                                                TeaCache</label>
+                                            <label class="text-sm text-gray-300 font-medium">ADetailer</label>
                                         </div>
                                         <label class="relative inline-flex items-center cursor-pointer">
-                                            <input type="checkbox" v-model="current_model.blockCache"
+                                            <input type="checkbox" v-model="current_model.adetailer"
                                                 class="sr-only peer">
                                             <div
                                                 class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
                                             </div>
                                         </label>
                                     </div>
-                                    <div v-if="current_model.blockCache" class="space-y-4 pt-2">
-                                        <div class="flex items-center justify-between w-full">
-                                            <label class="text-sm text-gray-400 font-medium">Method</label>
-                                            <div
-                                                class="flex bg-[#1a1a1a] rounded-lg overflow-hidden border border-[#2A2A35]">
-                                                <button @click="current_model.blockCacheMethod = 'First Block Cache'"
-                                                    :class="(!current_model.blockCacheMethod || current_model.blockCacheMethod === 'First Block Cache') ? 'bg-blue-600 text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-gray-800'"
-                                                    class="flex-1 py-1 px-3 text-xs font-medium transition-all duration-200 flex items-center justify-center">
-                                                    First Block Cache
-                                                </button>
-                                                <button @click="current_model.blockCacheMethod = 'TeaCache'"
-                                                    :class="current_model.blockCacheMethod === 'TeaCache' ? 'bg-blue-600 text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-gray-800'"
-                                                    class="flex-1 py-1 px-3 text-xs font-medium transition-all duration-200 flex items-center justify-center border-l border-[#2A2A35]">
-                                                    TeaCache
-                                                </button>
+
+                                    <!-- Block Cache -->
+                                    <div v-if="blockCacheAvailable && !compactMode" class="space-y-3 mt-4">
+                                        <div class="flex items-center justify-between">
+                                            <div class="flex items-center space-x-2">
+                                                <label class="text-sm text-gray-300 font-medium">First Block Cache /
+                                                    TeaCache</label>
                                             </div>
-                                        </div>
-                                        <div>
-                                            <label
-                                                class="text-sm text-gray-400 font-medium block mb-2">Threshold</label>
-                                            <div class="flex items-center space-x-3 w-full">
+                                            <label class="relative inline-flex items-center cursor-pointer">
+                                                <input type="checkbox" v-model="current_model.blockCache"
+                                                    class="sr-only peer">
                                                 <div
-                                                    class="flex items-center bg-[#1a1a1a] border border-[#2A2A35] rounded-lg overflow-hidden shadow-sm">
-                                                    <input type="number" step="0.01" min="0" max="1"
-                                                        v-model="current_model.blockCacheThreshold"
-                                                        class="bg-transparent text-[#FAF8F5] text-center font-medium w-16 py-1.5 px-1 focus:outline-none focus:bg-[#1A1A24] transition-colors"
-                                                        placeholder="0.1" />
+                                                    class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
                                                 </div>
-                                                <div class="flex-1 relative">
-                                                    <input type="range" min="0" max="1" step="0.01"
-                                                        v-model="current_model.blockCacheThreshold"
-                                                        class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer slider focus:outline-none mb-1"
-                                                        :style="{ background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(current_model.blockCacheThreshold !== undefined ? current_model.blockCacheThreshold : 0.1) * 100}%, #4b5563 ${(current_model.blockCacheThreshold !== undefined ? current_model.blockCacheThreshold : 0.1) * 100}%, #4b5563 100%)` }">
+                                            </label>
+                                        </div>
+                                        <div v-if="current_model.blockCache" class="space-y-4 pt-2">
+                                            <div class="flex items-center justify-between w-full">
+                                                <label class="text-sm text-gray-400 font-medium">Method</label>
+                                                <div
+                                                    class="flex bg-[#1a1a1a] rounded-lg overflow-hidden border border-[#2A2A35]">
+                                                    <button
+                                                        @click="current_model.blockCacheMethod = 'First Block Cache'"
+                                                        :class="(!current_model.blockCacheMethod || current_model.blockCacheMethod === 'First Block Cache') ? 'bg-blue-600 text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-gray-800'"
+                                                        class="flex-1 py-1 px-3 text-xs font-medium transition-all duration-200 flex items-center justify-center">
+                                                        First Block Cache
+                                                    </button>
+                                                    <button @click="current_model.blockCacheMethod = 'TeaCache'"
+                                                        :class="current_model.blockCacheMethod === 'TeaCache' ? 'bg-blue-600 text-[#FAF8F5]' : 'text-gray-400 hover:text-[#FAF8F5] hover:bg-gray-800'"
+                                                        class="flex-1 py-1 px-3 text-xs font-medium transition-all duration-200 flex items-center justify-center border-l border-[#2A2A35]">
+                                                        TeaCache
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label
+                                                    class="text-sm text-gray-400 font-medium block mb-2">Threshold</label>
+                                                <div class="flex items-center space-x-3 w-full">
+                                                    <div
+                                                        class="flex items-center bg-[#1a1a1a] border border-[#2A2A35] rounded-lg overflow-hidden shadow-sm">
+                                                        <input type="number" step="0.01" min="0" max="1"
+                                                            v-model="current_model.blockCacheThreshold"
+                                                            class="bg-transparent text-[#FAF8F5] text-center font-medium w-16 py-1.5 px-1 focus:outline-none focus:bg-[#1A1A24] transition-colors"
+                                                            placeholder="0.1" />
+                                                    </div>
+                                                    <div class="flex-1 relative">
+                                                        <input type="range" min="0" max="1" step="0.01"
+                                                            v-model="current_model.blockCacheThreshold"
+                                                            class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer slider focus:outline-none mb-1"
+                                                            :style="{ background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(current_model.blockCacheThreshold !== undefined ? current_model.blockCacheThreshold : 0.1) * 100}%, #4b5563 ${(current_model.blockCacheThreshold !== undefined ? current_model.blockCacheThreshold : 0.1) * 100}%, #4b5563 100%)` }">
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
@@ -4530,14 +4965,12 @@ watch(activeTab, (newTab) => {
             <div class="absolute inset-y-0 -left-1 -right-1 group-hover:bg-blue-500/20"></div>
         </div>
     </div>
-    <div class="fixed bottom-0 z-50 hidden" :style="{ left: `${webState.sidebarWidth}px` }">
-        <img v-if="generationState.current_image || history.length > 0" :src="generationState.current_image
-            ? resolveImageSrc(generationState.current_image)
-            : resolveImageSrc(history[history.length - 1].images[0])"
-            :alt="generationState.current_image ? 'Generated Preview' : 'Image URL Preview'"
-            class="h-96 w-full object-contain rounded-lg" />
-    </div>
+    <div class="fixed bottom-0 z-50 " :style="{ left: `${webState.sidebarWidth}px` }">
+        <!-- ComfyUI Workflow Import Modal -->
+        <ComfyWorkflowImportModal v-if="showWorkflowImportModal" :baseUrl="url" @close="showWorkflowImportModal = false"
+            @imported="handleWorkflowImported" />
 
+    </div>
 </template>
 
 <style scoped>

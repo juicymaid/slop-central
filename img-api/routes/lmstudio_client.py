@@ -20,7 +20,8 @@ class ToolCallFunction:
         self.arguments = arguments  # Must be a dict
 
 class ToolCall:
-    def __init__(self, name, arguments):
+    def __init__(self, name, arguments, id=None):
+        self.id = id
         self.function = ToolCallFunction(name, arguments)
 
 class MessageChunk:
@@ -177,6 +178,22 @@ def function_to_openai_tool(fn):
                 }
             }
         }
+    elif name == "search_knowledge_base":
+        return {
+            "type": "function",
+            "function": {
+                "name": "search_knowledge_base",
+                "description": "Search the local knowledge base using semantic similarity to find relevant images and context.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Natural language description of what to search for."},
+                        "top_k": {"type": "integer", "description": "Number of results to return (default 5)."}
+                    },
+                    "required": ["query"]
+                }
+            }
+        }
 
     # Fallback to automatic reflection
     sig = inspect.signature(fn)
@@ -268,41 +285,68 @@ class LMStudioClient:
             content = msg.get("content")
             images = msg.get("images")
             
-            if not images:
-                converted_messages.append({"role": role, "content": content})
-                continue
-                
-            new_content = []
-            if content:
-                new_content.append({"type": "text", "text": content})
-                
-            for img in images:
-                b64_data = None
-                if isinstance(img, str):
-                    if os.path.exists(img):
-                        try:
-                            with open(img, "rb") as f:
-                                b64_data = base64.b64encode(f.read()).decode("utf-8")
-                        except Exception as e:
-                            print(f"[LMStudioClient] Error reading image file {img}: {e}")
-                    else:
-                        b64_data = img
-                
-                if b64_data:
-                    if "," in b64_data:
-                        b64_data = b64_data.split(",")[-1]
-                    data_url = f"data:image/jpeg;base64,{b64_data}"
-                    new_content.append({
-                        "type": "image_url",
-                        "image_url": {
-                            "url": data_url
-                        }
-                    })
+            msg_dict = {"role": role}
             
-            converted_messages.append({
-                "role": role,
-                "content": new_content
-            })
+            if role == "user" and images:
+                new_content = []
+                if content:
+                    new_content.append({"type": "text", "text": content})
+                for img in images:
+                    b64_data = None
+                    if isinstance(img, str):
+                        if os.path.exists(img):
+                            try:
+                                with open(img, "rb") as f:
+                                    b64_data = base64.b64encode(f.read()).decode("utf-8")
+                            except Exception as e:
+                                print(f"[LMStudioClient] Error reading image file {img}: {e}")
+                        else:
+                            b64_data = img
+                    elif isinstance(img, bytes):
+                        b64_data = base64.b64encode(img).decode("utf-8")
+                    
+                    if b64_data:
+                        if "," in b64_data:
+                            b64_data = b64_data.split(",")[-1]
+                        data_url = f"data:image/jpeg;base64,{b64_data}"
+                        new_content.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": data_url
+                            }
+                        })
+                msg_dict["content"] = new_content
+            else:
+                msg_dict["content"] = content
+            
+            # Handle assistant tool calls
+            if role == "assistant":
+                tool_calls = msg.get("tool_calls")
+                if tool_calls:
+                    formatted_calls = []
+                    for tc in tool_calls:
+                        if isinstance(tc, dict):
+                            formatted_calls.append(tc)
+                        else:
+                            arguments_str = tc.function.arguments
+                            if isinstance(arguments_str, dict):
+                                arguments_str = json.dumps(arguments_str)
+                            formatted_calls.append({
+                                "id": getattr(tc, "id", None) or f"call_{tc.function.name}",
+                                "type": "function",
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": arguments_str
+                                }
+                            })
+                    msg_dict["tool_calls"] = formatted_calls
+            
+            # Handle tool response message
+            if role == "tool":
+                msg_dict["name"] = msg.get("name")
+                msg_dict["tool_call_id"] = msg.get("tool_call_id") or msg.get("name")
+                
+            converted_messages.append(msg_dict)
 
         payload = {
             "model": model,
@@ -403,13 +447,14 @@ class LMStudioClient:
                 for idx, tc in sorted(tool_calls_data.items()):
                     tc_name = tc["name"]
                     tc_args_str = tc["arguments"]
+                    tc_id = tc.get("id") or f"call_{idx}_{int(time.time())}"
                     tc_args = {}
                     if tc_args_str:
                         try:
                             tc_args = json.loads(tc_args_str)
                         except Exception as e:
                             print(f"[LMStudioClient] Failed to parse tool call args: {tc_args_str} - {e}")
-                    parsed_tool_calls.append(ToolCall(tc_name, tc_args))
+                    parsed_tool_calls.append(ToolCall(tc_name, tc_args, id=tc_id))
                 
                 duration_ns = int((time.perf_counter() - start_time) * 1e9)
                 yield ChatResponseChunk(
@@ -445,6 +490,7 @@ class LMStudioClient:
             tc_fn = tc.get("function", {})
             tc_name = tc_fn.get("name")
             tc_args_str = tc_fn.get("arguments") or "{}"
+            tc_id = tc.get("id") or f"call_{len(parsed_tool_calls)}_{int(time.time())}"
             tc_args = {}
             if isinstance(tc_args_str, dict):
                 tc_args = tc_args_str
@@ -453,7 +499,7 @@ class LMStudioClient:
                     tc_args = json.loads(tc_args_str)
                 except Exception:
                     pass
-            parsed_tool_calls.append(ToolCall(tc_name, tc_args))
+            parsed_tool_calls.append(ToolCall(tc_name, tc_args, id=tc_id))
 
         usage = data.get("usage", {})
         prompt_tokens = usage.get("prompt_tokens", 0)

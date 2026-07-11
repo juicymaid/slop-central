@@ -4,7 +4,7 @@ import random
 from fastapi import FastAPI, HTTPException, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
-from routes import images, rec, tags, boards, phashes, scan_images, scoring, tagger, models, comments, webui, chats, rate, comics, ai_search, stories, assistant, posts, ai_settings, hentai, lmstudio, mcp
+from routes import images, rec, tags, boards, phashes, scan_images, scoring, tagger, models, comments, webui, chats, rate, comics, ai_search, stories, assistant, posts, ai_settings, hentai, lmstudio, mcp, rag, skills
 from fastapi.staticfiles import StaticFiles
 from utils import (
     images_data, all_images, clicks_data, boards_data,
@@ -97,6 +97,8 @@ app.include_router(ai_settings.router)
 app.include_router(hentai.router)
 app.include_router(lmstudio.router)
 app.include_router(mcp.router)
+app.include_router(rag.router)
+app.include_router(skills.router)
 print("routes loaded")
 
 
@@ -147,9 +149,20 @@ async def _startup_init():
     except Exception as e:
         print(f"Failed to start background data load: {e}")
 
+    # Start RAG background indexing (after a small delay to let image DB load first)
+    def _delayed_rag_index():
+        import time as _time
+        _time.sleep(10)  # Give image DB time to load
+        try:
+            rag.start_background_indexing()
+        except Exception as e:
+            print(f"[RAG] Failed to start background indexing: {e}")
+
+    import threading
+    threading.Thread(target=_delayed_rag_index, daemon=True, name="rag-startup").start()
+
     # Start frontend autostart in background so it never blocks API startup.
     if os.getenv("DISABLE_FRONTEND_AUTOSTART") != "1":
-        import threading
         threading.Thread(target=ensure_frontend_running, daemon=True).start()
 
 
