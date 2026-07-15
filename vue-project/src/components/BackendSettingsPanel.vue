@@ -9,6 +9,7 @@ import {
   setActiveBackend,
 } from '@/backends'
 import { apiUrl } from '@/api'
+import { themes, applyTheme } from '@/theme'
 
 const isLoaded = ref(false)
 const saveState = ref('idle')
@@ -120,6 +121,40 @@ const showCustomVisionModel = ref(false)
 const showCustomAssistantModel = ref(false)
 const showCustomAutocompleteModel = ref(false)
 
+const currentThemeKey = ref('classic')
+const customColors = ref({
+  obsidian: '#0D0D12',
+  champagne: '#C9A84C',
+  ivory: '#FAF8F5',
+  slate: '#2A2A35',
+  panel: '#1A1A24',
+  'dark-input': '#14141A'
+})
+
+function selectTheme(key) {
+  currentThemeKey.value = key
+  localStorage.setItem('selectedThemeKey', key)
+  if (key === 'custom') {
+    applyTheme(customColors.value)
+    localStorage.setItem('customTheme', JSON.stringify(customColors.value))
+  } else {
+    const themeColors = themes[key]
+    customColors.value = { ...themeColors }
+    applyTheme(themeColors)
+    localStorage.setItem('customTheme', JSON.stringify(themeColors))
+  }
+}
+
+function updateCustomColor(colorKey, value) {
+  customColors.value[colorKey] = value
+  if (currentThemeKey.value !== 'custom') {
+    currentThemeKey.value = 'custom'
+    localStorage.setItem('selectedThemeKey', 'custom')
+  }
+  applyTheme(customColors.value)
+  localStorage.setItem('customTheme', JSON.stringify(customColors.value))
+}
+
 async function loadAvailableModels() {
   try {
     const res = await fetch(`${apiUrl}/lmstudio/models`)
@@ -137,6 +172,17 @@ onMounted(async () => {
   await loadAvailableModels()
   isLoaded.value = true
   ensureActiveConfig()
+
+  const saved = localStorage.getItem('customTheme')
+  const savedKey = localStorage.getItem('selectedThemeKey') || 'classic'
+  currentThemeKey.value = savedKey
+  if (savedKey === 'custom' && saved) {
+    try {
+      customColors.value = { ...customColors.value, ...JSON.parse(saved) }
+    } catch(e) {}
+  } else if (themes[savedKey]) {
+    customColors.value = { ...themes[savedKey] }
+  }
 })
 
 watch(activeBackendId, ensureActiveConfig)
@@ -436,6 +482,94 @@ watch(backendState, scheduleSave, { deep: true })
         </div>
       </div>
     </div>
+
+    <!-- Color Scheme Settings -->
+    <div class="space-y-1.5">
+      <div class="text-[10px] uppercase tracking-[0.25em] text-gray-600 px-0.5">Color Scheme Customizer</div>
+      <div class="rounded-2xl border border-slate bg-panel overflow-hidden p-4 space-y-4">
+        <!-- Preset Theme Selector -->
+        <div class="space-y-2">
+          <label class="text-sm font-medium text-gray-300 block">Active Theme</label>
+          <select :value="currentThemeKey" @change="selectTheme($event.target.value)"
+            class="w-full rounded-xl border border-slate bg-dark-input px-3 py-2.5 text-sm text-ivory focus:border-champagne focus:ring-1 focus:ring-champagne/20 focus:outline-none transition-all font-sans">
+            <option v-for="(theme, key) in themes" :key="key" :value="key">
+              {{ theme.name }}
+            </option>
+            <option value="custom">Custom Palette</option>
+          </select>
+        </div>
+
+        <!-- Color Customizer Matrix -->
+        <div class="grid grid-cols-2 gap-3 pt-2 border-t border-slate">
+          <div class="space-y-1">
+            <div class="text-[10px] uppercase tracking-wider text-gray-500 flex justify-between items-center">
+              <span>Main Background</span>
+              <span class="font-mono text-[9px]">{{ customColors.obsidian }}</span>
+            </div>
+            <div class="flex gap-2 items-center">
+              <input type="color" :value="customColors.obsidian" @input="updateCustomColor('obsidian', $event.target.value)" class="w-8 h-8 rounded border-none bg-transparent cursor-pointer" />
+              <span class="text-xs text-gray-300">Obsidian</span>
+            </div>
+          </div>
+          
+          <div class="space-y-1">
+            <div class="text-[10px] uppercase tracking-wider text-gray-500 flex justify-between items-center">
+              <span>Accent Color</span>
+              <span class="font-mono text-[9px]">{{ customColors.champagne }}</span>
+            </div>
+            <div class="flex gap-2 items-center">
+              <input type="color" :value="customColors.champagne" @input="updateCustomColor('champagne', $event.target.value)" class="w-8 h-8 rounded border-none bg-transparent cursor-pointer" />
+              <span class="text-xs text-gray-300">Champagne</span>
+            </div>
+          </div>
+
+          <div class="space-y-1">
+            <div class="text-[10px] uppercase tracking-wider text-gray-500 flex justify-between items-center">
+              <span>Foreground Text</span>
+              <span class="font-mono text-[9px]">{{ customColors.ivory }}</span>
+            </div>
+            <div class="flex gap-2 items-center">
+              <input type="color" :value="customColors.ivory" @input="updateCustomColor('ivory', $event.target.value)" class="w-8 h-8 rounded border-none bg-transparent cursor-pointer" />
+              <span class="text-xs text-gray-300">Ivory</span>
+            </div>
+          </div>
+
+          <div class="space-y-1">
+            <div class="text-[10px] uppercase tracking-wider text-gray-500 flex justify-between items-center">
+              <span>Borders & Cards</span>
+              <span class="font-mono text-[9px]">{{ customColors.slate }}</span>
+            </div>
+            <div class="flex gap-2 items-center">
+              <input type="color" :value="customColors.slate" @input="updateCustomColor('slate', $event.target.value)" class="w-8 h-8 rounded border-none bg-transparent cursor-pointer" />
+              <span class="text-xs text-gray-300">Slate</span>
+            </div>
+          </div>
+
+          <div class="space-y-1">
+            <div class="text-[10px] uppercase tracking-wider text-gray-500 flex justify-between items-center">
+              <span>Inner Panels</span>
+              <span class="font-mono text-[9px]">{{ customColors.panel }}</span>
+            </div>
+            <div class="flex gap-2 items-center">
+              <input type="color" :value="customColors.panel" @input="updateCustomColor('panel', $event.target.value)" class="w-8 h-8 rounded border-none bg-transparent cursor-pointer" />
+              <span class="text-xs text-gray-300">Panel Background</span>
+            </div>
+          </div>
+
+          <div class="space-y-1">
+            <div class="text-[10px] uppercase tracking-wider text-gray-500 flex justify-between items-center">
+              <span>Inputs & Forms</span>
+              <span class="font-mono text-[9px]">{{ customColors['dark-input'] }}</span>
+            </div>
+            <div class="flex gap-2 items-center">
+              <input type="color" :value="customColors['dark-input']" @input="updateCustomColor('dark-input', $event.target.value)" class="w-8 h-8 rounded border-none bg-transparent cursor-pointer" />
+              <span class="text-xs text-gray-300">Input Background</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
 
   </div>
 </template>

@@ -51,6 +51,17 @@ const urls = [
     "/files/comfyui/RMBGVID/vid_00023.webm",
     "/files/comfyui/RMBGVID/vid_00024.webm",
     "/files/comfyui/RMBGVID/vid_00025.webm",
+    "/files/comfyui/RMBGVID/vid_00026.webm",
+    "/files/comfyui/RMBGVID/vid_00027.webm",
+    "/files/comfyui/RMBGVID/vid_00028.webm",
+    "/files/comfyui/RMBGVID/vid_00029.webm",
+    "/files/comfyui/RMBGVID/vid_00030.webm",
+    "/files/comfyui/RMBGVID/vid_00031.webm",
+    "/files/comfyui/RMBGVID/vid_00032.webm",
+    "/files/comfyui/RMBGVID/vid_00033.webm",
+    "/files/comfyui/RMBGVID/vid_00034.png",
+    "/files/comfyui/RMBGVID/vid_00035.png",
+
 
 
 

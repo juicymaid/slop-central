@@ -12,13 +12,14 @@ const emit = defineEmits(['load-more'])
 const isResizing = ref(false)
 const startX = ref(0)
 const startWidth = ref(0)
+let scrollTimeout = null
 
 const columnCount = computed(() => {
   const isMobile = windowWidth.value < 768
   const activeSidebarWidth = (isMobile || webState.sidebarWidth === 0) ? 0 : webState.sidebarWidth
   const width = Math.max(300, windowWidth.value - activeSidebarWidth)
   const calculated = Math.ceil(((width / scale.value * 0.9) - 320) / 400)
-  return Math.max(1, calculated)
+  return Math.max(2, calculated) // Enforce at least 2 columns
 })
 
 // Multi-select state
@@ -110,16 +111,23 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleKeydown)
   document.removeEventListener('mousemove', handleResize)
   document.removeEventListener('mouseup', stopResize)
+  if (scrollTimeout) {
+    cancelAnimationFrame(scrollTimeout)
+  }
 })
 function updateWindowWidth() {
   windowWidth.value = window.innerWidth
 }
 
 function handleScroll() {
-  const { scrollTop, scrollHeight, clientHeight } = document.documentElement
-  if (scrollTop + clientHeight >= scrollHeight - 100) {
-    emit('load-more')
-  }
+  if (scrollTimeout) return
+  scrollTimeout = requestAnimationFrame(() => {
+    const { scrollTop, scrollHeight, clientHeight } = document.documentElement
+    if (scrollTop + clientHeight >= scrollHeight - 300) {
+      emit('load-more')
+    }
+    scrollTimeout = null
+  })
 }
 
 //pins from props
@@ -139,7 +147,7 @@ const props = defineProps({
 
 <template>
   <!-- Responsive grid layout for images -->
-  <div class="w-full flex gap-2">
+  <div class="w-full flex gap-1 md:gap-2">
     <!-- Resize handle for sidebar - hidden on mobile -->
     <div 
       v-if="windowWidth >= 768"
@@ -178,7 +186,7 @@ const props = defineProps({
 
     <div class="w-full" v-for="ci in columnCount" :key="ci">
       <Image v-for="pin in pins.filter((p, pi) => ((pi + 1 - ci) % columnCount) === 0)"
-        :key="pin.Id" :pin="pin" class="mb-2"
+        :key="pin.Id" :pin="pin" class="mb-1 md:mb-2"
         :isSelected="selectedIds.has(pin.Id)"
         :board="inBoard"
         @toggle-select="toggleSelect" />

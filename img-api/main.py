@@ -168,6 +168,16 @@ async def _startup_init():
     import threading
     threading.Thread(target=_delayed_rag_index, daemon=True, name="rag-startup").start()
 
+    # Start background file hashing (after a small delay to let image DB load first)
+    def _delayed_hashing():
+        import time as _time
+        _time.sleep(12)  # Give image DB time to load
+        try:
+            utils.start_background_file_hashing()
+        except Exception as e:
+            print(f"[Hash Engine] Failed to start background file hashing: {e}")
+
+    threading.Thread(target=_delayed_hashing, daemon=True, name="hashing-startup").start()
     # Start frontend autostart in background so it never blocks API startup.
     if os.getenv("DISABLE_FRONTEND_AUTOSTART") != "1":
         threading.Thread(target=ensure_frontend_running, daemon=True).start()

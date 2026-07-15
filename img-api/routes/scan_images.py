@@ -6,7 +6,6 @@ import utils
 from sd_parsers import ParserManager
 import asyncio
 from fastapi import BackgroundTasks
-import main
 import httpx
 from routes import models
 
@@ -26,6 +25,12 @@ files_found = 0
 error = False
 active_connections = []
 
+# Prompt update states
+update_inprogress = False
+update_total = 0
+update_processed = 0
+update_successful = 0
+update_error = False
 @router.websocket("/ws/scan")
 async def websocket_scan(websocket: WebSocket):
     global scan_inprogress, active_connections
@@ -97,6 +102,12 @@ async def _websocket_scan_images_sync(websocket: WebSocket):
             "total_files": len(images_to_scan)
         })
 
+        # Load existing images once at start of scan
+        all_images = []
+        if os.path.exists(utils.IMAGES_FILE):
+            with open(utils.IMAGES_FILE, "r", encoding="utf-8") as f:
+                all_images = json.load(f)
+
         processed_count = 0
         success_count = 0
 
@@ -117,7 +128,10 @@ async def _websocket_scan_images_sync(websocket: WebSocket):
 
                 if metadata:
                     success_count += 1
-                    scanned_images.append(metadata)
+                    # Check if this image has been moved
+                    was_moved = find_and_update_moved_image(metadata, all_images)
+                    if not was_moved:
+                        scanned_images.append(metadata)
 
                     await websocket.send_json({
                         "type": "image_discovered",
@@ -147,8 +161,8 @@ async def _websocket_scan_images_sync(websocket: WebSocket):
                     })
 
         highest_id = 0
-        if utils.all_images:
-            highest_id = max(image["Id"] for image in utils.all_images)
+        if all_images:
+            highest_id = max(image["Id"] for image in all_images)
 
         for index, metadata in enumerate(scanned_images):
             metadata["Id"] = highest_id + 1 + index
@@ -156,18 +170,10 @@ async def _websocket_scan_images_sync(websocket: WebSocket):
         await websocket.send_json({
             "type": "status",
             "status": "saving",
-            "message": f"Saving {len(scanned_images)} new images..."
+            "message": f"Saving new and updated images..."
         })
 
-        all_images = []
-        if os.path.exists(utils.IMAGES_FILE):
-            with open(utils.IMAGES_FILE, "r", encoding="utf-8") as f:
-                all_images = json.load(f)
-
-        start_id = 0
-        if all_images:
-            start_id = max(image["Id"] for image in all_images)
-
+        start_id = highest_id
         all_images.extend(scanned_images)
         with open(utils.IMAGES_FILE, "w", encoding="utf-8") as f:
             json.dump(all_images, f, indent=2)
@@ -220,6 +226,12 @@ async def background_scan_images():
         retrieved_unscanned_images = True
         print(f"Found {len(images_to_scan)} unscanned images")
 
+        # Load existing images once at start of scan
+        all_images = []
+        if os.path.exists(utils.IMAGES_FILE):
+            with open(utils.IMAGES_FILE, "r", encoding="utf-8") as f:
+                all_images = json.load(f)
+
         async def scan_single_image(image_path):
             try:
                 print(f"[{len(scanned_images)}/{len(images_to_scan)}] Scanning image:", image_path)
@@ -234,21 +246,19 @@ async def background_scan_images():
         tasks = [asyncio.create_task(scan_single_image(image_path)) for image_path in images_to_scan]
         results = await asyncio.gather(*tasks)
 
-        highest_id = 0
-        if utils.all_images:
-            highest_id = max(image["Id"] for image in utils.all_images)
-
         for metadata in results:
             if metadata:
-                metadata["Id"] = highest_id + 1
-                highest_id += 1
-                scanned_images.append(metadata)
-                print(f"[{len(scanned_images)}/{len(images_to_scan)}] Prompt:  {metadata['Prompt']}")
+                was_moved = find_and_update_moved_image(metadata, all_images)
+                if not was_moved:
+                    scanned_images.append(metadata)
 
-        all_images = []
-        if os.path.exists(utils.IMAGES_FILE):
-            with open(utils.IMAGES_FILE, "r", encoding="utf-8") as f:
-                all_images = json.load(f)
+        highest_id = 0
+        if all_images:
+            highest_id = max(image["Id"] for image in all_images)
+
+        for index, metadata in enumerate(scanned_images):
+            metadata["Id"] = highest_id + 1 + index
+            print(f"[{index + 1}/{len(scanned_images)}] Prompt:  {metadata['Prompt']}")
 
         all_images.extend(scanned_images)
         with open(utils.IMAGES_FILE, "w", encoding="utf-8") as f:
@@ -314,6 +324,197 @@ async def get_all_unscanned_images():
 
 parser_manager = ParserManager()
 
+def extract_comfy_prompts(prompt_json):
+    if not isinstance(prompt_json, dict):
+        return None, None
+        
+    sampler_nodes = []
+    for node_id, node in prompt_json.items():
+        class_type = node.get("class_type", "")
+        if "KSampler" in class_type:
+            sampler_nodes.append(node)
+            
+    if not sampler_nodes:
+        clip_texts = []
+        for node_id, node in prompt_json.items():
+            if node.get("class_type") == "CLIPTextEncode":
+                txt = node.get("inputs", {}).get("text")
+                if txt and isinstance(txt, str):
+                    clip_texts.append(txt)
+        if len(clip_texts) >= 2:
+            return clip_texts[0], clip_texts[1]
+        elif len(clip_texts) == 1:
+            return clip_texts[0], ""
+        return None, None
+
+    sampler = sampler_nodes[0]
+    inputs = sampler.get("inputs", {})
+    
+    def trace_text(link_or_val):
+        if isinstance(link_or_val, list) and len(link_or_val) >= 2:
+            source_id = str(link_or_val[0])
+            source_node = prompt_json.get(source_id)
+            if not source_node:
+                return ""
+            class_type = source_node.get("class_type", "")
+            if class_type == "ConditioningZeroOut":
+                return ""
+            node_inputs = source_node.get("inputs", {})
+            if class_type == "CLIPTextEncode":
+                txt = node_inputs.get("text", "")
+                if isinstance(txt, list):
+                    return trace_text(txt)
+                return txt
+            elif class_type in ("ConditioningSetMask", "ConditioningCombine"):
+                for k, v in node_inputs.items():
+                    if k in ("conditioning", "conditioning_to", "conditioning_from"):
+                        res = trace_text(v)
+                        if res:
+                            return res
+            if "text" in node_inputs:
+                txt = node_inputs["text"]
+                if isinstance(txt, list):
+                    return trace_text(txt)
+                return str(txt)
+            for k, v in node_inputs.items():
+                if isinstance(v, list) and len(v) >= 2:
+                    res = trace_text(v)
+                    if res:
+                        return res
+        elif isinstance(link_or_val, str):
+            return link_or_val
+        return ""
+
+    pos_link = inputs.get("positive")
+    neg_link = inputs.get("negative")
+    
+    pos_prompt = trace_text(pos_link) if pos_link else ""
+    neg_prompt = trace_text(neg_link) if neg_link else ""
+    
+    return pos_prompt, neg_prompt
+
+
+def extract_comfyui_metadata(file_path):
+    from PIL import Image
+    import json
+    try:
+        with Image.open(file_path) as img:
+            info = img.info
+            prompt_str = info.get("prompt")
+            workflow_str = info.get("workflow")
+            
+            if not prompt_str:
+                return None
+                
+            prompt_json = json.loads(prompt_str)
+            
+            pos_prompt, neg_prompt = extract_comfy_prompts(prompt_json)
+            
+            sampler_node = None
+            for node_id, node in prompt_json.items():
+                if "KSampler" in node.get("class_type", ""):
+                    sampler_node = node
+                    break
+                    
+            sampler_name = "unknown"
+            steps = 0
+            cfg = 0
+            seed = 0
+            model = None
+            
+            if sampler_node:
+                inputs = sampler_node.get("inputs", {})
+                sampler_name = inputs.get("sampler_name", "unknown")
+                steps = int(inputs.get("steps", 0))
+                cfg = float(inputs.get("cfg", 0))
+                seed = float(inputs.get("seed") or inputs.get("noise_seed") or 0)
+                model = inputs.get("model")
+                
+            return {
+                "Prompt": pos_prompt or "",
+                "NegativePrompt": neg_prompt or "",
+                "Sampler": sampler_name,
+                "Model": model,
+                "CFGScale": cfg,
+                "Steps": steps,
+                "Seed": seed,
+                "Workflow": workflow_str,
+            }
+    except Exception as e:
+        print(f"Error in extract_comfyui_metadata for {file_path}: {e}")
+        return None
+
+
+def find_and_update_moved_image(metadata, all_images):
+    file_hash = metadata.get("FileHash")
+    new_path = metadata.get("Path")
+    if not new_path:
+        return False
+
+    # 1. Search by FileHash
+    if file_hash:
+        for img in all_images:
+            if img.get("FileHash") == file_hash:
+                img["Path"] = new_path
+                img["CreatedDate"] = metadata.get("CreatedDate", img.get("CreatedDate"))
+                img["ModifiedDate"] = metadata.get("ModifiedDate", img.get("ModifiedDate"))
+                if metadata.get("Prompt"):
+                    img["Prompt"] = metadata["Prompt"]
+                if metadata.get("NegativePrompt"):
+                    img["NegativePrompt"] = metadata["NegativePrompt"]
+                if metadata.get("Sampler"):
+                    img["Sampler"] = metadata["Sampler"]
+                if metadata.get("Model"):
+                    img["Model"] = metadata["Model"]
+                if metadata.get("ModelHash"):
+                    img["ModelHash"] = metadata["ModelHash"]
+                if metadata.get("Width"):
+                    img["Width"] = metadata["Width"]
+                if metadata.get("Height"):
+                    img["Height"] = metadata["Height"]
+                if metadata.get("Workflow"):
+                    img["Workflow"] = metadata["Workflow"]
+                return True
+
+    # 2. Fallback: Search by same filename if the old path is broken (does not exist)
+    new_filename = os.path.basename(new_path)
+    for img in all_images:
+        old_path = img.get("Path")
+        if not old_path:
+            continue
+        
+        old_abs = old_path
+        if old_abs.startswith("/files/"):
+            old_abs = old_abs.replace("/files", utils.api_file_root)
+            
+        if not os.path.exists(old_abs):
+            old_filename = os.path.basename(old_path)
+            if old_filename == new_filename:
+                img["Path"] = new_path
+                if file_hash:
+                    img["FileHash"] = file_hash
+                img["CreatedDate"] = metadata.get("CreatedDate", img.get("CreatedDate"))
+                img["ModifiedDate"] = metadata.get("ModifiedDate", img.get("ModifiedDate"))
+                if metadata.get("Prompt"):
+                    img["Prompt"] = metadata["Prompt"]
+                if metadata.get("NegativePrompt"):
+                    img["NegativePrompt"] = metadata["NegativePrompt"]
+                if metadata.get("Sampler"):
+                    img["Sampler"] = metadata["Sampler"]
+                if metadata.get("Model"):
+                    img["Model"] = metadata["Model"]
+                if metadata.get("ModelHash"):
+                    img["ModelHash"] = metadata["ModelHash"]
+                if metadata.get("Width"):
+                    img["Width"] = metadata["Width"]
+                if metadata.get("Height"):
+                    img["Height"] = metadata["Height"]
+                if metadata.get("Workflow"):
+                    img["Workflow"] = metadata["Workflow"]
+                return True
+
+    return False
+
 def convert_metadata(automatic_metadata):
     if(not automatic_metadata):
         return {
@@ -377,6 +578,29 @@ async def get_metadata(file_path):
         relative_path = file_path.replace("\\", "/").replace(api_root, "")
         metadata = convert_metadata(prompt_info)
         metadata["Path"] = relative_path
+
+        # Parse ComfyUI metadata as a fallback or to override default behavior
+        if not prompt_info or (hasattr(prompt_info, "raw_parameters") and "prompt" in prompt_info.raw_parameters):
+            try:
+                comfy_meta = extract_comfyui_metadata(file_path)
+                if comfy_meta:
+                    for k, v in comfy_meta.items():
+                        if v is not None:
+                            metadata[k] = v
+            except Exception as comfy_err:
+                print(f"Failed to extract ComfyUI metadata for {file_path}: {comfy_err}")
+
+        # Compute FileHash
+        import hashlib
+        h = hashlib.sha256()
+        try:
+            with open(file_path, 'rb') as fh:
+                while chunk := fh.read(8192):
+                    h.update(chunk)
+            metadata["FileHash"] = h.hexdigest()
+        except Exception as hash_error:
+            print(f"Error hashing file {file_path}: {hash_error}")
+            metadata["FileHash"] = None
 
         if os.path.exists(file_path):
             created_time_unix = os.path.getctime(file_path)
@@ -664,3 +888,124 @@ async def prune_images():
 
 
 
+
+@router.post("/update-missing-prompts")
+def start_update_missing_prompts(background_tasks: BackgroundTasks):
+    global update_inprogress
+    if update_inprogress:
+        raise HTTPException(status_code=400, detail="Prompt update already in progress")
+    background_tasks.add_task(background_update_missing_prompts)
+    return {"message": "Prompt update started in background"}
+
+@router.get("/prompt-update-status")
+def get_prompt_update_status():
+    return {
+        "update_inprogress": update_inprogress,
+        "update_total": update_total,
+        "update_processed": update_processed,
+        "update_successful": update_successful,
+        "update_error": update_error
+    }
+
+async def background_update_missing_prompts():
+    global update_inprogress, update_total, update_processed, update_successful, update_error
+    update_inprogress = True
+    update_error = False
+    update_total = 0
+    update_processed = 0
+    update_successful = 0
+    
+    try:
+        # Load images from images.json
+        all_images = []
+        if os.path.exists(utils.IMAGES_FILE):
+            with open(utils.IMAGES_FILE, "r", encoding="utf-8") as f:
+                all_images = json.load(f)
+                
+        # Filter images needing update
+        target_images = []
+        for img in all_images:
+            if not img.get("Prompt") or img.get("GeneratedPrompt") == True:
+                target_images.append(img)
+                
+        update_total = len(target_images)
+        print(f"[Prompt Update] Found {update_total} images to update.")
+        
+        batch_size = 10
+        total_batches = (update_total + batch_size - 1) // batch_size
+        
+        for batch_idx in range(total_batches):
+            start_idx = batch_idx * batch_size
+            end_idx = min(start_idx + batch_size, update_total)
+            batch = target_images[start_idx:end_idx]
+            
+            async def process_one(img):
+                path = img.get("Path")
+                if not path:
+                    return False
+                abs_path = path
+                if abs_path.startswith("/files/"):
+                    abs_path = abs_path.replace("/files", utils.api_file_root)
+                if not os.path.exists(abs_path):
+                    return False
+                    
+                try:
+                    # Parse metadata
+                    meta = extract_comfyui_metadata(abs_path)
+                    if not meta:
+                        try:
+                            prompt_info = parser_manager.parse(abs_path)
+                            if prompt_info:
+                                meta = convert_metadata(prompt_info)
+                        except Exception as pe:
+                            print(f"[Prompt Update] Error parsing {abs_path}: {pe}")
+                            
+                    if meta and meta.get("Prompt"):
+                        img["Prompt"] = meta["Prompt"]
+                        if meta.get("NegativePrompt"):
+                            img["NegativePrompt"] = meta["NegativePrompt"]
+                        if meta.get("Sampler"):
+                            img["Sampler"] = meta["Sampler"]
+                        if meta.get("Model"):
+                            img["Model"] = meta["Model"]
+                        if meta.get("ModelHash"):
+                            img["ModelHash"] = meta["ModelHash"]
+                        if meta.get("CFGScale"):
+                            img["CFGScale"] = meta["CFGScale"]
+                        if meta.get("Steps"):
+                            img["Steps"] = meta["Steps"]
+                        if meta.get("Seed"):
+                            img["Seed"] = meta["Seed"]
+                        if meta.get("Workflow"):
+                            img["Workflow"] = meta["Workflow"]
+                        
+                        if "GeneratedPrompt" in img:
+                            del img["GeneratedPrompt"]
+                        return True
+                except Exception as ex:
+                    print(f"[Prompt Update] Failed processing {abs_path}: {ex}")
+                return False
+                
+            tasks = [process_one(img) for img in batch]
+            results = await asyncio.gather(*tasks)
+            
+            update_processed += len(batch)
+            update_successful += sum(1 for r in results if r)
+            
+            print(f"[Prompt Update] Progress: {update_processed}/{update_total} (successful={update_successful})")
+            
+            if update_processed % 50 == 0 or update_processed == update_total:
+                with open(utils.IMAGES_FILE, "w", encoding="utf-8") as f:
+                    json.dump(all_images, f, indent=2)
+                utils.load_images()
+                
+        with open(utils.IMAGES_FILE, "w", encoding="utf-8") as f:
+            json.dump(all_images, f, indent=2)
+        utils.load_images()
+        print(f"[Prompt Update] Completed! Successfully updated {update_successful} images.")
+        
+    except Exception as e:
+        update_error = True
+        print(f"[Prompt Update] Error: {e}")
+    finally:
+        update_inprogress = False

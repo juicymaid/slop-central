@@ -1,11 +1,11 @@
 <template>
     <div class="max-w-[1200px] mx-auto px-6 mb-12">
-        <h1 class="text-3xl font-serif font-bold italic mb-8 mt-12 text-[#FAF8F5] drop-shadow-md">Image Scanner</h1>
+        <h1 class="text-3xl font-serif font-bold italic mb-8 mt-12 text-ivory drop-shadow-md">Image Scanner</h1>
 
         <!-- Scan Button -->
         <div class="flex flex-wrap justify-start gap-4 mb-12">
             <button @click="startScan"
-                class="magnetic-button bg-[#2A2A35] hover:bg-[#1A1A24] text-[#C9A84C] py-3 px-8 rounded-full text-sm font-sans font-semibold border border-[#C9A84C]/30 flex items-center gap-2 transition-all shadow-[0_0_15px_rgba(201,168,76,0.1)]"
+                class="magnetic-button bg-slate hover:bg-panel text-champagne py-3 px-8 rounded-full text-sm font-sans font-semibold border border-champagne/30 flex items-center gap-2 transition-all shadow-[0_0_15px_rgba(201,168,76,0.1)]"
                 :disabled="isScanning">
                 <svg v-if="!isScanning" class="w-5 h-5 relative z-10" fill="none" stroke="currentColor"
                     viewBox="0 0 24 24">
@@ -22,7 +22,7 @@
                 <span class="relative z-10">{{ isScanning ? 'Scanning...' : 'Start Scan' }}</span>
             </button>
             <button @click="startphash"
-                class="magnetic-button bg-[#1A1A24] hover:bg-[#2A2A35] text-[#FAF8F5]/80 py-3 px-8 rounded-full text-sm font-sans font-semibold border border-[#2A2A35] flex items-center gap-2 transition-all"
+                class="magnetic-button bg-panel hover:bg-slate text-ivory/80 py-3 px-8 rounded-full text-sm font-sans font-semibold border border-slate flex items-center gap-2 transition-all"
                 :disabled="phasInProgress">
                 <svg v-if="!phasInProgress" class="w-5 h-5 relative z-10" fill="none" stroke="currentColor"
                     viewBox="0 0 24 24">
@@ -40,7 +40,7 @@
             </button>
             <!-- Prune Images Button -->
             <button @click="pruneImages"
-                class="magnetic-button bg-[#1A1A24] hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/30 text-[#FAF8F5]/80 py-3 px-8 rounded-full text-sm font-sans font-semibold border border-[#2A2A35] flex items-center gap-2 transition-all"
+                class="magnetic-button bg-panel hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/30 text-ivory/80 py-3 px-8 rounded-full text-sm font-sans font-semibold border border-slate flex items-center gap-2 transition-all"
                 :disabled="isPruning">
                 <svg v-if="!isPruning" class="w-5 h-5 relative z-10" fill="none" stroke="currentColor"
                     viewBox="0 0 24 24">
@@ -56,8 +56,26 @@
                 </svg>
                 <span class="relative z-10">{{ isPruning ? 'Pruning...' : 'Prune Images' }}</span>
             </button>
+            <!-- Update Prompts Button -->
+            <button @click="triggerPromptUpdate"
+                class="magnetic-button bg-panel hover:bg-slate text-ivory/80 py-3 px-8 rounded-full text-sm font-sans font-semibold border border-slate flex items-center gap-2 transition-all"
+                :disabled="promptUpdateStatus.update_inprogress">
+                <svg v-if="!promptUpdateStatus.update_inprogress" class="w-5 h-5 relative z-10" fill="none" stroke="currentColor"
+                    viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H17">
+                    </path>
+                </svg>
+                <svg v-else class="w-5 h-5 animate-spin relative z-10" viewBox="0 0 24 24" fill="none">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
+                    </path>
+                </svg>
+                <span class="relative z-10">{{ promptUpdateStatus.update_inprogress ? 'Updating...' : 'Update Prompts' }}</span>
+            </button>
             <RouterLink to="/trash"
-                class="magnetic-button bg-[#1A1A24] hover:bg-[#2A2A35] text-[#FAF8F5]/80 py-3 px-8 rounded-full text-sm font-sans font-semibold border border-[#2A2A35] flex items-center gap-2 transition-all">
+                class="magnetic-button bg-panel hover:bg-slate text-ivory/80 py-3 px-8 rounded-full text-sm font-sans font-semibold border border-slate flex items-center gap-2 transition-all">
                 <svg class="w-5 h-5 relative z-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                         d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16">
@@ -68,20 +86,20 @@
         </div>
 
         <!-- SigLIP 2 Embeddings Panel -->
-        <div class="mb-12 p-6 rounded-[2rem] bg-[#14141A] border border-[#2A2A35]">
+        <div class="mb-12 p-6 rounded-[2rem] bg-dark-input border border-slate">
             <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
                 <div>
-                    <h2 class="text-xl font-sans font-semibold text-[#FAF8F5]">Neural Search & Recommendations (SigLIP 2)</h2>
-                    <p class="text-sm text-[#FAF8F5]/60 mt-1">Generates 768-dimensional deep visual embeddings to power similarity search and recommendations.</p>
+                    <h2 class="text-xl font-sans font-semibold text-ivory">Neural Search & Recommendations (SigLIP 2)</h2>
+                    <p class="text-sm text-ivory/60 mt-1">Generates 768-dimensional deep visual embeddings to power similarity search and recommendations.</p>
                 </div>
                 <div class="flex gap-3">
                     <button @click="startSiglipIndexing(false)"
-                        class="magnetic-button bg-[#2A2A35] hover:bg-[#1A1A24] text-[#FAF8F5] py-2 px-6 rounded-full text-xs font-sans font-semibold border border-[#2A2A35] flex items-center gap-2 transition-all cursor-pointer"
+                        class="magnetic-button bg-slate hover:bg-panel text-ivory py-2 px-6 rounded-full text-xs font-sans font-semibold border border-slate flex items-center gap-2 transition-all cursor-pointer"
                         :disabled="siglipStatus.status === 'running'">
                         {{ siglipStatus.status === 'running' ? 'Indexing...' : 'Update Embeddings' }}
                     </button>
                     <button @click="startSiglipIndexing(true)"
-                        class="magnetic-button bg-[#1A1A24] hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/30 text-[#FAF8F5]/60 py-2 px-6 rounded-full text-xs font-sans font-semibold border border-[#2A2A35] flex items-center gap-2 transition-all cursor-pointer"
+                        class="magnetic-button bg-panel hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/30 text-ivory/60 py-2 px-6 rounded-full text-xs font-sans font-semibold border border-slate flex items-center gap-2 transition-all cursor-pointer"
                         :disabled="siglipStatus.status === 'running'">
                         Force Rebuild All
                     </button>
@@ -89,14 +107,14 @@
             </div>
 
             <!-- Status info -->
-            <div class="flex flex-col gap-2 font-mono text-xs uppercase tracking-widest text-[#FAF8F5]/60">
+            <div class="flex flex-col gap-2 font-mono text-xs uppercase tracking-widest text-ivory/60">
                 <div class="flex justify-between">
                     <span>Status:</span>
-                    <span :class="siglipStatus.status === 'running' ? 'text-[#C9A84C]' : 'text-green-500'">{{ siglipStatus.status }}</span>
+                    <span :class="siglipStatus.status === 'running' ? 'text-champagne' : 'text-green-500'">{{ siglipStatus.status }}</span>
                 </div>
                 <div v-if="siglipStatus.status === 'running'" class="w-full mt-2">
-                    <div class="h-1 w-full bg-[#0D0D12] overflow-hidden mb-2">
-                        <div class="h-full bg-[#C9A84C] transition-all duration-300 ease-out"
+                    <div class="h-1 w-full bg-obsidian overflow-hidden mb-2">
+                        <div class="h-full bg-champagne transition-all duration-300 ease-out"
                             :style="{ width: `${siglipProgress}%` }"></div>
                     </div>
                     <div class="flex justify-between">
@@ -110,27 +128,68 @@
                 </div>
             </div>
         </div>
+
+        <!-- Prompt Update Panel -->
+        <div class="mb-12 p-6 rounded-[2rem] bg-dark-input border border-slate">
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+                <div>
+                    <h2 class="text-xl font-sans font-semibold text-ivory">Metadata & Prompt Restoration</h2>
+                    <p class="text-sm text-ivory/60 mt-1">Re-scans files missing prompts or marked with generated tags to recover full parameters from embedded PNG metadata.</p>
+                </div>
+                <div class="flex gap-3">
+                    <button @click="triggerPromptUpdate"
+                        class="magnetic-button bg-slate hover:bg-panel text-ivory py-2 px-6 rounded-full text-xs font-sans font-semibold border border-slate flex items-center gap-2 transition-all cursor-pointer"
+                        :disabled="promptUpdateStatus.update_inprogress">
+                        {{ promptUpdateStatus.update_inprogress ? 'Updating...' : 'Update Prompts' }}
+                    </button>
+                </div>
+            </div>
+
+            <!-- Status info -->
+            <div class="flex flex-col gap-2 font-mono text-xs uppercase tracking-widest text-ivory/60">
+                <div class="flex justify-between">
+                    <span>Status:</span>
+                    <span :class="promptUpdateStatus.update_inprogress ? 'text-champagne' : 'text-green-500'">
+                        {{ promptUpdateStatus.update_inprogress ? 'running' : 'idle' }}
+                    </span>
+                </div>
+                <div v-if="promptUpdateStatus.update_inprogress" class="w-full mt-2">
+                    <div class="h-1 w-full bg-obsidian overflow-hidden mb-2">
+                        <div class="h-full bg-champagne transition-all duration-300 ease-out"
+                            :style="{ width: `${promptUpdateProgress}%` }"></div>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>Progress:</span>
+                        <span>{{ promptUpdateStatus.update_processed }} / {{ promptUpdateStatus.update_total }} ({{ promptUpdateProgress }}%)</span>
+                    </div>
+                </div>
+                <div class="flex justify-between mt-1">
+                    <span>Successful Updates:</span>
+                    <span class="text-green-400">{{ promptUpdateStatus.update_successful }}</span>
+                </div>
+            </div>
+        </div>
         <p v-if="error" class="text-red-500 font-mono tracking-wide text-sm mt-4">{{ errorMessage }}</p>
 
         <!-- Loading Progress Bar -->
-        <div v-if="isScanning" class="mb-12 p-6 rounded-[2rem] bg-[#14141A] border border-[#2A2A35]">
+        <div v-if="isScanning" class="mb-12 p-6 rounded-[2rem] bg-dark-input border border-slate">
             <!-- Progress bar for retrieving files -->
             <div v-if="scanStatus === 'retrieving_files'" class="mb-4">
-                <div class="h-1 w-full bg-[#0D0D12] overflow-hidden">
-                    <div class="h-full bg-[#C9A84C] transition-all duration-300 ease-out indeterminate-progress"></div>
+                <div class="h-1 w-full bg-obsidian overflow-hidden">
+                    <div class="h-full bg-champagne transition-all duration-300 ease-out indeterminate-progress"></div>
                 </div>
-                <p class="text-center mt-4 text-[#FAF8F5]/60 font-mono text-sm tracking-widest uppercase">{{
+                <p class="text-center mt-4 text-ivory/60 font-mono text-sm tracking-widest uppercase">{{
                     scanStatusMessage }}</p>
             </div>
 
             <!-- Progress bar for scanning files -->
             <div v-else-if="scanStatus === 'files_found' || scanStatus === 'scanning'">
-                <div class="h-1 w-full bg-[#0D0D12] overflow-hidden">
-                    <div class="h-full bg-[#C9A84C] transition-all duration-300 ease-out"
+                <div class="h-1 w-full bg-obsidian overflow-hidden">
+                    <div class="h-full bg-champagne transition-all duration-300 ease-out"
                         :style="{ width: `${scanProgress}%` }"></div>
                 </div>
                 <div
-                    class="mt-4 flex justify-between items-center text-[#FAF8F5]/60 font-mono text-sm uppercase tracking-widest">
+                    class="mt-4 flex justify-between items-center text-ivory/60 font-mono text-sm uppercase tracking-widest">
                     <p>{{ scanStatusMessage }}</p>
                     <p v-if="scanTotal > 0">{{ scanProcessed }} / {{ scanTotal }} ({{ scanProgress }}%)</p>
                 </div>
@@ -138,10 +197,10 @@
 
             <!-- Saving status -->
             <div v-else-if="scanStatus === 'saving'" class="mb-4">
-                <div class="h-1 w-full bg-[#0D0D12] overflow-hidden">
+                <div class="h-1 w-full bg-obsidian overflow-hidden">
                     <div class="h-full bg-green-500 transition-all duration-300 ease-out indeterminate-progress"></div>
                 </div>
-                <p class="text-center mt-4 text-[#FAF8F5]/60 font-mono text-sm tracking-widest uppercase">{{
+                <p class="text-center mt-4 text-ivory/60 font-mono text-sm tracking-widest uppercase">{{
                     scanStatusMessage }}</p>
             </div>
         </div>
@@ -157,8 +216,8 @@
 
         <!-- New Images Grid -->
         <div v-if="newImages.length > 0" class="mb-10">
-            <h2 class="text-xl font-sans font-semibold mb-6 text-[#FAF8F5]">
-                Discovered Images <span class="text-[#FAF8F5]/40 font-mono text-sm">({{ newImages.length }})</span>
+            <h2 class="text-xl font-sans font-semibold mb-6 text-ivory">
+                Discovered Images <span class="text-ivory/40 font-mono text-sm">({{ newImages.length }})</span>
             </h2>
             <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
                 <div v-for="(image, index) in newImages" :key="image.Path || index" class="relative group">
@@ -170,7 +229,7 @@
                         <img :src="apiUrl + image.Path" alt="Image"
                             class="w-full h-64 object-cover rounded-[2rem] shadow-md" />
                         <div
-                            class="absolute inset-0 bg-[#0D0D12]/60 backdrop-blur-sm rounded-[2rem] flex items-center justify-center text-[#C9A84C] font-mono tracking-widest uppercase text-xs">
+                            class="absolute inset-0 bg-obsidian/60 backdrop-blur-sm rounded-[2rem] flex items-center justify-center text-champagne font-mono tracking-widest uppercase text-xs">
                             Processing...
                         </div>
                     </div>
@@ -181,7 +240,7 @@
         <!-- Empty State -->
         <div v-else-if="!isScanning && scanStatus !== 'completed'" class="text-center py-24">
             <ClearArt class="max-h-[50vh] mx-auto" />
-            <p class="mt-4 text-[#FAF8F5]/40 font-mono text-sm tracking-widest uppercase">[ System Ready for Scan ]
+            <p class="mt-4 text-ivory/40 font-mono text-sm tracking-widest uppercase">[ System Ready for Scan ]
             </p>
         </div>
     </div>
@@ -224,6 +283,54 @@ const siglipProgress = computed(() => {
     }
     return 0;
 });
+
+// State for Prompt Restoration
+const promptUpdateStatus = ref({ update_inprogress: false, update_total: 0, update_processed: 0, update_successful: 0, update_error: false });
+const promptUpdateInterval = ref(null);
+const promptUpdateProgress = computed(() => {
+    if (promptUpdateStatus.value.update_total > 0) {
+        return Math.round((promptUpdateStatus.value.update_processed / promptUpdateStatus.value.update_total) * 100);
+    }
+    return 0;
+});
+
+const fetchPromptUpdateStatus = async () => {
+    try {
+        const res = await GetFromApi("prompt-update-status");
+        if (res) {
+            promptUpdateStatus.value = res;
+        }
+    } catch (e) {
+        console.error("Error fetching prompt update status:", e);
+    }
+};
+
+const triggerPromptUpdate = async () => {
+    try {
+        await PostToApi("update-missing-prompts");
+        await fetchPromptUpdateStatus();
+        startPromptUpdatePolling();
+    } catch (e) {
+        console.error("Error starting prompt update:", e);
+    }
+};
+
+const startPromptUpdatePolling = () => {
+    if (promptUpdateInterval.value) return;
+    promptUpdateInterval.value = setInterval(async () => {
+        await fetchPromptUpdateStatus();
+        if (!promptUpdateStatus.value.update_inprogress) {
+            stopPromptUpdatePolling();
+        }
+    }, 1000);
+};
+
+const stopPromptUpdatePolling = () => {
+    if (promptUpdateInterval.value) {
+        clearInterval(promptUpdateInterval.value);
+        promptUpdateInterval.value = null;
+    }
+};
 
 const fetchSiglipStatus = async () => {
     try {
@@ -447,10 +554,16 @@ onMounted(async () => {
     if (siglipStatus.value.status === 'running') {
         startSiglipPolling();
     }
+    // Load current Prompt Update status
+    await fetchPromptUpdateStatus();
+    if (promptUpdateStatus.value.update_inprogress) {
+        startPromptUpdatePolling();
+    }
 });
 
 onBeforeUnmount(() => {
     stopSiglipPolling();
+    stopPromptUpdatePolling();
     // Close WebSocket connection when component is unmounted
     if (websocket.value && websocket.value.readyState !== WebSocket.CLOSED) {
         websocket.value.close();

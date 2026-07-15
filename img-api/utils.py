@@ -203,7 +203,7 @@ def save_images():
         raise ValueError("No images to save.")
 
     _runtime_fields = {"tags_set", "pHash", "Likes", "Dislikes", "Rating", "Clicks", "Shows"}
-    clean = [{k: v for k, v in img.items() if k not in _runtime_fields} for img in raw_all_images]
+    clean = [{k: v for k, v in img.items() if k not in _runtime_fields and not k.startswith("_")} for img in raw_all_images]
 
     with open(IMAGES_FILE, "w", encoding="utf-8") as f:
         json.dump(clean, f, indent=2)
@@ -784,3 +784,66 @@ def unload_lm_studio_models_sync(base_url="http://127.0.0.1:1234"):
     except Exception as e:
         print(f"[VRAM] Error unloading LM Studio models: {e}")
         return False
+
+_hashing_thread_started = False
+_hashing_thread_lock = threading.Lock()
+
+def start_background_file_hashing():
+    global _hashing_thread_started
+    with _hashing_thread_lock:
+        if _hashing_thread_started:
+            return
+        _hashing_thread_started = True
+
+    def _run_hashing():
+        import hashlib
+        print("[Hash Engine] Starting background file hashing...")
+        images_to_hash = []
+        with _data_lock:
+            images_to_hash = list(raw_all_images)
+
+        updated_any = False
+        count = 0
+        for img in images_to_hash:
+            if "FileHash" not in img:
+                path = img.get("Path")
+                if not path:
+                    continue
+                abs_path = path
+                if abs_path.startswith("/files/"):
+                    abs_path = abs_path.replace("/files", api_file_root)
+                if os.path.exists(abs_path):
+                    h = hashlib.sha256()
+                    try:
+                        with open(abs_path, 'rb') as file:
+                            while chunk := file.read(8192):
+                                h.update(chunk)
+                        file_hash = h.hexdigest()
+                        img["FileHash"] = file_hash
+                        updated_any = True
+                        count += 1
+                    except Exception:
+                        pass
+                time.sleep(0.005)
+
+                if count > 0 and count % 500 == 0:
+                    print(f"[Hash Engine] Populated {count} file hashes, writing database...")
+                    try:
+                        save_images()
+                    except Exception as se:
+                        print(f"[Hash Engine] Error saving images during background hash: {se}")
+
+        if updated_any:
+            print(f"[Hash Engine] Background hashing complete. Populated {count} hashes. Saving database...")
+            try:
+                save_images()
+            except Exception as se:
+                print(f"[Hash Engine] Error saving database at completion: {se}")
+        else:
+            print("[Hash Engine] No missing hashes to populate.")
+
+        global _hashing_thread_started
+        with _hashing_thread_lock:
+            _hashing_thread_started = False
+
+    threading.Thread(target=_run_hashing, daemon=True, name="bg-file-hashing").start()

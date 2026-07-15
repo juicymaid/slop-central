@@ -1,4 +1,8 @@
 import './assets/main.css'
+import { initTheme } from './theme'
+
+// Initialize customized theme colors immediately to prevent flash
+initTheme()
 
 import { createApp } from 'vue'
 import App from './App.vue'

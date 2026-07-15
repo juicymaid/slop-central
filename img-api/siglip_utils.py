@@ -300,14 +300,85 @@ def start_siglip_indexing(force=False, background_tasks=None):
         
     return {"status": "started", "message": "SigLIP embedding generation started in the background."}
 
+def generate_image_embedding(image_id: int):
+    """
+    Generate a SigLIP embedding for a single image, append it to the cache and save it to disk.
+    Returns True if successful, False otherwise.
+    """
+    global siglip_vectors, siglip_ids, siglip_id_to_index
+    
+    img = utils.images_data.get(image_id)
+    if not img:
+        return False
+        
+    local_path = get_local_path(img.get("Path"))
+    if not local_path or not os.path.exists(local_path):
+        return False
+        
+    try:
+        pil_img = Image.open(local_path)
+        if pil_img.mode != "RGB":
+            pil_img = pil_img.convert("RGB")
+        if pil_img.width > 16384 or pil_img.height > 16384:
+            pil_img.thumbnail((2048, 2048))
+    except Exception as e:
+        print(f"Failed to open image for single embedding generation: {e}")
+        return False
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    try:
+        model = AutoModel.from_pretrained(MODEL_NAME).to(device)
+        processor = AutoProcessor.from_pretrained(MODEL_NAME)
+        
+        inputs = processor(images=[pil_img], return_tensors="pt").to(device)
+        with torch.no_grad():
+            features = model.get_image_features(**inputs)
+            features = features / features.norm(dim=-1, keepdim=True)
+            features_np = features.cpu().numpy().astype(np.float32)
+            
+        # Add to local cache and disk
+        if siglip_vectors is None or len(siglip_ids) == 0:
+            siglip_vectors = features_np
+            siglip_ids = [image_id]
+        else:
+            # If it somehow already existed, remove old one first to prevent duplicates
+            if image_id in siglip_id_to_index:
+                idx = siglip_id_to_index[image_id]
+                siglip_vectors = np.delete(siglip_vectors, idx, axis=0)
+                siglip_ids.pop(idx)
+            
+            siglip_vectors = np.vstack([siglip_vectors, features_np])
+            siglip_ids.append(image_id)
+            
+        save_siglip_embeddings(siglip_ids, siglip_vectors)
+        siglip_id_to_index = {iid: idx for idx, iid in enumerate(siglip_ids)}
+        return True
+    except Exception as e:
+        print(f"Failed to generate single embedding: {e}")
+        return False
+    finally:
+        # VRAM cleanup
+        if 'model' in locals():
+            del model
+        if 'processor' in locals():
+            del processor
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
 def get_similar_images_by_siglip(image_id: int, top_k: int = 20):
     """Return a list of (image_id, similarity_score) sorted by highest similarity."""
     global siglip_vectors, siglip_ids, siglip_id_to_index
     
+    # Force load embeddings if not loaded yet
     if siglip_vectors is None or len(siglip_ids) == 0:
-        return []
+        load_siglip_embeddings()
         
     if image_id not in siglip_id_to_index:
+        # Try to generate it on the fly
+        print(f"Embedding not found for image {image_id}. Generating on the fly...")
+        generate_image_embedding(image_id)
+        
+    if siglip_vectors is None or len(siglip_ids) == 0 or image_id not in siglip_id_to_index:
         return []
         
     idx = siglip_id_to_index[image_id]

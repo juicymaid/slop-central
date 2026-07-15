@@ -285,7 +285,7 @@ def get_image_thumbnail(image_id: int, size: int = Query(128)):
 def get_all_images(
     page: int = 1,
     per_page: int = 10,
-    sort: str = Query("new", description="Sort order: old, new, top, random, home, predict, nsfw, sfw")
+    sort: str = Query("new", description="Sort order: old, new, top, random, home, predict, nsfw, sfw, most_viewed, least_viewed")
 ):
     start = (page - 1) * per_page
     end = start + per_page
@@ -324,6 +324,25 @@ def get_all_images(
             selected = sorted(utils.all_images, key=_nsfw_sort_key, reverse=True)[start:end]
         elif sort == "sfw":
             selected = sorted(utils.all_images, key=_sfw_sort_key, reverse=True)[start:end]
+        elif sort == "most_viewed":
+            selected = sorted(
+                utils.all_images,
+                key=lambda x: (
+                    (x.get("Clicks", 0) or 0) + (x.get("Shows", 0) or 0),
+                    x.get("CreatedDate", 0) or 0,
+                    x.get("Id", 0)
+                ),
+                reverse=True
+            )[start:end]
+        elif sort == "least_viewed":
+            selected = sorted(
+                utils.all_images,
+                key=lambda x: (
+                    (x.get("Clicks", 0) or 0) + (x.get("Shows", 0) or 0),
+                    - (x.get("CreatedDate", 0) or 0),
+                    - x.get("Id", 0)
+                )
+            )[start:end]
         else:
             selected = sorted(utils.all_images, key=lambda x: x.get("CreatedDate", 0), reverse=True)[start:end]
 

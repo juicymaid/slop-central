@@ -2,7 +2,7 @@
   <div>
     <!-- Enhanced button-based sorting controls -->
     <div class="sort-container mb-6 mt-4">
-      <div class="flex flex-wrap justify-center sm:justify-start gap-4 px-6 max-w-[1200px] mx-auto">
+      <div class="flex flex-wrap justify-center sm:justify-start gap-3 md:gap-4 px-2 md:px-6 max-w-[1200px] mx-auto">
         <button v-for="sort in sortOptions" :key="sort.value" @click="changeSort(sort.value)" :class="[
           'magnetic-button px-5 py-2.5 rounded-full transition-all duration-300 font-sans text-sm font-semibold border',
           currentSort === sort.value
@@ -14,7 +14,7 @@
       </div>
     </div>
 
-    <div class="px-6  mx-auto">
+    <div class="px-2 md:px-6  mx-auto">
       <ImageMasonry :pins="pins" />
     </div>
 

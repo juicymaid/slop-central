@@ -10,7 +10,7 @@ import { useRoute, useRouter } from 'vue-router'
 import ImageMasonry from '@/components/ImageMasonry.vue'
 import Stories from '@/components/Stories.vue'
 import ClearArt from '@/components/ClearArt.vue'
-
+import { ChevronDown, SlidersHorizontal } from 'lucide-vue-next'
 const windowWidth = ref(window.innerWidth)
 
 
@@ -31,12 +31,32 @@ const sortOptions = [
   { label: 'Random', value: 'random' },
   { label: 'Top', value: 'top' },
   { label: 'Hot', value: 'predict' },
+  { label: 'Most Viewed', value: 'most_viewed' },
+  { label: 'Least Viewed', value: 'least_viewed' },
   { label: 'Lewd', value: 'nsfw' },
   { label: 'Safe', value: 'sfw' }
 ]
 
+const isSortOpen = ref(false)
+const sortDropdownRef = ref(null)
+
+const activeSortOption = computed(() => {
+  return sortOptions.find(opt => opt.value === currentSort.value) || sortOptions[0]
+})
+
+const selectSort = (value) => {
+  updateSort(value)
+  isSortOpen.value = false
+}
+
+const handleClickOutside = (event) => {
+  if (sortDropdownRef.value && !sortDropdownRef.value.contains(event.target)) {
+    isSortOpen.value = false
+  }
+}
+
 // Initialize sort and page from URL or default values
-const currentSort = ref(route.query.sort || 'random')
+const currentSort = ref(route.query.sort || 'home')
 let page = parseInt(route.query.page) || 1
 
 // Computed property to ensure reactivity
@@ -123,10 +143,12 @@ onMounted(async () => {
   // Initial data fetch on mount
   await fetchCurrentPage()
   window.addEventListener('scroll', handleScroll)
+  document.addEventListener('click', handleClickOutside)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('scroll', handleScroll)
+  document.removeEventListener('click', handleClickOutside)
 })
 
 // Single watcher for route changes
@@ -160,21 +182,31 @@ watch(() => route.query, (newQuery) => {
   <Stories />
 
   <div>
-    <!-- Enhanced button-based sorting controls -->
-    <div class="sort-container mb-6 mt-8">
-      <div class="flex flex-wrap justify-center sm:justify-start gap-4 px-6 max-w-[1200px] mx-auto">
-        <button v-for="option in sortOptions" :key="option.value" @click="updateSort(option.value)" :class="[
-          'magnetic-button px-5 py-2.5 rounded-full transition-all duration-300 font-sans text-sm font-semibold border',
-          currentSort === option.value
-            ? 'bg-[#2A2A35] text-[#C9A84C] border-[#C9A84C]/30 shadow-[0_0_15px_rgba(201,168,76,0.1)]'
-            : 'bg-[#14141A] text-[#FAF8F5]/60 border-[#2A2A35]/50 hover:bg-[#1A1A24] hover:text-[#FAF8F5] hover:border-[#2A2A35]'
-        ]">
-          <span class="relative z-10">{{ option.label }}</span>
-        </button>
+    <!-- Enhanced sorting controls -->
+    <div class="sort-container mb-6 mt-8" ref="sortDropdownRef">
+      <div class="flex items-center justify-center sm:justify-start px-2 md:px-6 max-w-[1200px] mx-auto">
+        <div class="relative inline-block text-left">
+          <button @click.stop="isSortOpen = !isSortOpen" class="flex items-center gap-2.5 px-5 py-2.5 rounded-full transition-all duration-300 font-sans text-sm font-semibold border bg-[#14141A] text-[#FAF8F5]/90 border-[#2A2A35]/50 hover:bg-[#1A1A24] hover:text-[#FAF8F5] hover:border-[#2A2A35]">
+            <SlidersHorizontal class="w-4 h-4 text-[#C9A84C]" />
+            <span>Sort: {{ activeSortOption.label }}</span>
+            <ChevronDown class="w-4 h-4 text-[#FAF8F5]/60 transition-transform duration-300" :class="{ 'rotate-180': isSortOpen }" />
+          </button>
+          
+          <div v-if="isSortOpen" class="absolute left-1/2 -translate-x-1/2 sm:left-0 sm:translate-x-0 mt-2 w-56 rounded-2xl bg-[#14141A]/95 backdrop-blur-md border border-[#2A2A35]/80 shadow-[0_10px_30px_rgba(0,0,0,0.5)] z-50 py-2 overflow-hidden">
+            <button v-for="option in sortOptions" :key="option.value" @click="selectSort(option.value)" :class="[
+              'w-full text-left px-4 py-2.5 text-sm font-sans font-medium transition-colors duration-200 block',
+              currentSort === option.value
+                ? 'text-[#C9A84C] bg-[#2A2A35]/30'
+                : 'text-[#FAF8F5]/70 hover:text-[#FAF8F5] hover:bg-[#1A1A24]'
+            ]">
+              {{ option.label }}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
-    <div class="px-6  mx-auto">
+    <div class="px-2 md:px-6 mx-auto">
       <ImageMasonry :pins="pins" />
     </div>
 

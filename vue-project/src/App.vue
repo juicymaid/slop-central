@@ -195,20 +195,20 @@ async function GetSuggestions() {
 
 <template>
   <CreateSidebar />
-  <div class="min-h-screen transition-colors duration-300 bg-[#0D0D12]">
+  <div class="min-h-screen transition-colors duration-300 bg-obsidian">
     <!-- Navigation Header - Floating Island -->
     <nav v-if="!hideNav" id="app-header"
-      class="app-header fixed top-4 left-1/2 -translate-x-1/2 transition-colors duration-200 bg-[#0D0D12]/60 backdrop-blur-xl border border-[#2A2A35] rounded-full shadow-lg z-40 px-6 py-3"
+      class="app-header fixed top-4 left-1/2 -translate-x-1/2 transition-colors duration-200 bg-obsidian/60 backdrop-blur-xl border border-slate rounded-full shadow-lg z-40 px-6 py-3"
       :style="isMobile ? { width: 'calc(100% - 2rem)', maxWidth: '1200px' } : { marginLeft: webState.sidebarWidth > 0 ? (webState.sidebarWidth / 2) + 'px' : '0px', width: `calc(100% - ${webState.sidebarWidth}px - 2rem)`, maxWidth: '1200px' }">
       <div class="flex items-center justify-between w-full mx-auto">
         <!-- Logo -->
         <RouterLink to="/" class="flex items-center group">
-          <svg class="w-8 h-8 text-[#C9A84C] transition-transform duration-300 group-hover:scale-105"
+          <svg class="w-8 h-8 text-champagne transition-transform duration-300 group-hover:scale-105"
             fill="currentColor" viewBox="0 0 24 24">
             <path
               d="M12 0a12 12 0 0 0-4.5 23.1c-.1-.9-.2-2.4 0-3.4.2-.9 1.4-5.7 1.4-5.7s-.4-.7-.4-1.8c0-1.7 1-3 2.2-3 1 0 1.5.8 1.5 1.7 0 1-.7 2.5-1 3.9-.3 1.2.6 2.2 1.8 2.2 2.2 0 3.8-2.3 3.8-5.6 0-2.9-2.1-5-5.2-5-3.5 0-5.6 2.6-5.6 5.3 0 1 .4 2.1.9 2.7.1.1.1.2 0 .3l-.3 1.3c-.1.2-.2.3-.4.2-1.5-.7-2.4-2.9-2.4-4.6 0-3.8 2.8-7.3 7.9-7.3 4.2 0 7.4 3 7.4 7 0 4.2-2.7 7.5-6.4 7.5-1.3 0-2.5-.7-2.9-1.5 0 0-.6 2.3-.8 2.9-.3 1-1 2.3-1.5 3.1a12 12 0 1 0 4.5-23.1z" />
           </svg>
-          <span class="hidden md:inline-block ml-3 font-semibold font-sans text-lg tracking-tight text-[#FAF8F5]">Slop
+          <span class="hidden md:inline-block ml-3 font-semibold font-sans text-lg tracking-tight text-ivory">Slop
             Central</span>
         </RouterLink>
 
@@ -218,42 +218,41 @@ async function GetSuggestions() {
             <form @submit="handleSearch">
               <input type="text" v-model="searchQuery" @focus="onInputFocus" @blur="handleBlur" @keydown="handleKeydown"
                 @input="GetSuggestions()"
-                class="w-full pl-12 pr-4 py-2.5 bg-[#14141A] text-[#FAF8F5] font-mono text-sm rounded-full border border-[#2A2A35] hover:border-[#C9A84C]/50 focus:border-[#C9A84C] focus:outline-none focus:ring-1 focus:ring-[#C9A84C] shadow-sm transition-all duration-300"
+                class="w-full pl-12 pr-4 py-2.5 bg-dark-input text-ivory font-mono text-sm rounded-full border border-slate hover:border-champagne/50 focus:border-champagne focus:outline-none focus:ring-1 focus:ring-champagne shadow-sm transition-all duration-300"
                 placeholder="Search database...">
             </form>
             <Search
-              class="w-4 h-4 absolute left-4 top-1/2 transform -translate-y-1/2 text-[#FAF8F5]/50 group-focus-within:text-[#C9A84C] transition-colors duration-300" />
-
+              class="w-4 h-4 absolute left-4 top-1/2 transform -translate-y-1/2 text-ivory/50 group-focus-within:text-champagne transition-colors duration-300" />
             <!-- Suggestions Dropdown -->
             <div v-if="showSuggestions && suggestions.length && searchQuery"
-              class="absolute w-full mt-2 bg-[#1A1A24]/95 backdrop-blur-xl rounded-2xl shadow-[0_8px_30px_rgba(0,0,0,0.5)] border border-[#2A2A35] py-2 max-h-[400px] overflow-y-auto z-50 overflow-hidden">
+              class="absolute w-full mt-2 bg-panel/95 backdrop-blur-xl rounded-2xl shadow-[0_8px_30px_rgba(0,0,0,0.5)] border border-slate py-2 max-h-[400px] overflow-y-auto z-50 overflow-hidden">
               <div v-for="(suggestion, index) in suggestions" :key="suggestion" :class="[
                 'px-4 py-3 cursor-pointer flex items-center gap-3 transition-colors',
                 index === selectedIndex
-                  ? 'bg-[#2A2A35] suggestion-selected'
-                  : 'hover:bg-[#2A2A35]/50'
+                  ? 'bg-slate suggestion-selected'
+                  : 'hover:bg-slate/50'
               ]" @mouseenter="selectedIndex = index" @click="selectSuggestion(suggestion.tag)">
-                <Search class="w-4 h-4 text-[#FAF8F5]/40" />
+                <Search class="w-4 h-4 text-ivory/40" />
                 <div>
-                  <span class="text-[#FAF8F5] font-sans">{{ suggestion.tag }}</span>
-                  <span class="text-xs font-mono text-[#FAF8F5]/40 ml-2">{{ suggestion.count }}</span>
+                  <span class="text-ivory font-sans">{{ suggestion.tag }}</span>
+                  <span class="text-xs font-mono text-ivory/40 ml-2">{{ suggestion.count }}</span>
                 </div>
               </div>
             </div>
             <div v-else-if="showSuggestions"
-              class="absolute w-full mt-2 bg-[#1A1A24]/95 backdrop-blur-xl rounded-2xl shadow-[0_8px_30px_rgba(0,0,0,0.5)] border border-[#2A2A35] py-4 max-h-[400px] overflow-y-auto z-50">
+              class="absolute w-full mt-2 bg-panel/95 backdrop-blur-xl rounded-2xl shadow-[0_8px_30px_rgba(0,0,0,0.5)] border border-slate py-4 max-h-[400px] overflow-y-auto z-50">
               <div class="px-4 py-2">
-                <h3 class="text-xs uppercase tracking-wider font-semibold text-[#FAF8F5]/50 font-sans mb-3">Popular Tags
+                <h3 class="text-xs uppercase tracking-wider font-semibold text-ivory/50 font-sans mb-3">Popular Tags
                 </h3>
 
                 <div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));">
 
                   <div v-for="tag in tags.top_tags.slice(0, 8)" :key="tag.tag"
-                    class="group flex items-center gap-3 cursor-pointer hover:bg-[#2A2A35]/50 transition-colors p-2 rounded-xl"
+                    class="group flex items-center gap-3 cursor-pointer hover:bg-slate/50 transition-colors p-2 rounded-xl"
                     @click="selectSuggestion(tag.tag)">
 
                     <div class="w-12 h-12 flex-shrink-0 overflow-hidden rounded-lg relative">
-                      <div class="absolute inset-0 bg-[#0D0D12]/20 group-hover:bg-transparent transition-colors z-10">
+                      <div class="absolute inset-0 bg-obsidian/20 group-hover:bg-transparent transition-colors z-10">
                       </div>
                       <img :src="ImageSrc(tag.cover_image)"
                         class="w-full h-full object-cover grayscale opacity-80 group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-300">
@@ -261,10 +260,10 @@ async function GetSuggestions() {
 
                     <div class="overflow-hidden">
                       <p
-                        class="text-sm font-semibold text-[#FAF8F5] font-sans truncate group-hover:text-[#C9A84C] transition-colors">
+                        class="text-sm font-semibold text-ivory font-sans truncate group-hover:text-champagne transition-colors">
                         {{ tag.tag }}
                       </p>
-                      <p class="text-xs font-mono text-[#FAF8F5]/40 truncate mt-0.5">
+                      <p class="text-xs font-mono text-ivory/40 truncate mt-0.5">
                         {{ tag.count }} pins
                       </p>
                     </div>
@@ -272,16 +271,16 @@ async function GetSuggestions() {
                   </div>
                 </div>
 
-                <h3 class="text-xs uppercase tracking-wider font-semibold text-[#FAF8F5]/50 font-sans mt-6 mb-3">Ideas
+                <h3 class="text-xs uppercase tracking-wider font-semibold text-ivory/50 font-sans mt-6 mb-3">Ideas
                   for you</h3>
                 <div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));">
 
                   <div v-for="tag in tags.recommended_tags.slice(0, 8)" :key="tag.tag"
-                    class="group flex items-center gap-3 cursor-pointer hover:bg-[#2A2A35]/50 transition-colors p-2 rounded-xl"
+                    class="group flex items-center gap-3 cursor-pointer hover:bg-slate/50 transition-colors p-2 rounded-xl"
                     @click="selectSuggestion(tag.tag)">
 
                     <div class="w-12 h-12 flex-shrink-0 overflow-hidden rounded-lg relative">
-                      <div class="absolute inset-0 bg-[#0D0D12]/20 group-hover:bg-transparent transition-colors z-10">
+                      <div class="absolute inset-0 bg-obsidian/20 group-hover:bg-transparent transition-colors z-10">
                       </div>
                       <img :src="ImageSrc(tag.cover_image)"
                         class="w-full h-full object-cover grayscale opacity-80 group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-300">
@@ -289,10 +288,10 @@ async function GetSuggestions() {
 
                     <div class="overflow-hidden">
                       <p
-                        class="text-sm font-semibold text-[#FAF8F5] font-sans truncate group-hover:text-[#C9A84C] transition-colors">
+                        class="text-sm font-semibold text-ivory font-sans truncate group-hover:text-champagne transition-colors">
                         {{ tag.tag }}
                       </p>
-                      <p class="text-xs font-mono text-[#FAF8F5]/40 truncate mt-0.5">
+                      <p class="text-xs font-mono text-ivory/40 truncate mt-0.5">
                         {{ tag.count }} pins
                       </p>
                     </div>
@@ -310,16 +309,16 @@ async function GetSuggestions() {
 
         <!-- Theme Toggle on Mobile -->
         <button @click="toggleDarkMode"
-          class="md:hidden p-2 text-[#FAF8F5]/80 hover:text-[#FAF8F5] transition-colors cursor-pointer mr-1"
+          class="md:hidden p-2 text-ivory/80 hover:text-ivory transition-colors cursor-pointer mr-1"
           aria-label="Toggle Theme">
-          <component :is="isDarkMode ? Sun : Moon" class="w-5 h-5 text-[#FAF8F5]/80" />
+          <component :is="isDarkMode ? Sun : Moon" class="w-5 h-5 text-ivory/80" />
         </button>
 
         <!-- Navigation Items - Hidden on Mobile -->
         <div class="hidden md:flex items-center space-x-1 sm:space-x-2">
           <!-- Generate -->
           <button @click="webState.sidebarWidth = webState.sidebarWidth === 0 ? 500 : 0;"
-            class="magnetic-button text-[#0D0D12] bg-[#C9A84C] rounded-full flex items-center space-x-2 px-5 py-2.5 font-sans font-medium text-sm transition-colors cursor-pointer shadow-[0_0_15px_rgba(201,168,76,0.15)]">
+            class="magnetic-button text-obsidian bg-champagne rounded-full flex items-center space-x-2 px-5 py-2.5 font-sans font-medium text-sm transition-colors cursor-pointer shadow-[0_0_15px_rgba(201,168,76,0.15)]">
             <svg class="w-4 h-4 relative z-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                 d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
@@ -330,7 +329,7 @@ async function GetSuggestions() {
           <!-- New: Models link -->
           <RouterLink to="/models">
             <button
-              class="magnetic-button px-4 py-2.5 rounded-full text-sm font-sans font-medium text-[#FAF8F5]/80 hover:text-[#FAF8F5] transition-colors"
+              class="magnetic-button px-4 py-2.5 rounded-full text-sm font-sans font-medium text-ivory/80 hover:text-ivory transition-colors"
               aria-label="Models">
               <span class="relative z-10">Models</span>
             </button>
@@ -340,7 +339,7 @@ async function GetSuggestions() {
           <!-- New: Extras link -->
           <RouterLink to="/extras">
             <button
-              class="magnetic-button px-4 py-2.5 rounded-full text-sm font-sans font-medium text-[#FAF8F5]/80 hover:text-[#FAF8F5] transition-colors"
+              class="magnetic-button px-4 py-2.5 rounded-full text-sm font-sans font-medium text-ivory/80 hover:text-ivory transition-colors"
               aria-label="Extras">
               <span class="relative z-10">Extras</span>
             </button>
@@ -349,7 +348,7 @@ async function GetSuggestions() {
           <!-- Posts link -->
           <RouterLink to="/posts">
             <button
-              class="magnetic-button px-4 py-2.5 rounded-full text-sm font-sans font-medium text-[#FAF8F5]/80 hover:text-[#FAF8F5] transition-colors cursor-pointer"
+              class="magnetic-button px-4 py-2.5 rounded-full text-sm font-sans font-medium text-ivory/80 hover:text-ivory transition-colors cursor-pointer"
               aria-label="Posts">
               <span class="relative z-10">Posts</span>
             </button>
@@ -358,7 +357,7 @@ async function GetSuggestions() {
           <!-- Map link -->
           <RouterLink to="/map">
             <button
-              class="magnetic-button px-4 py-2.5 rounded-full text-sm font-sans font-medium text-[#FAF8F5]/80 hover:text-[#FAF8F5] transition-colors cursor-pointer"
+              class="magnetic-button px-4 py-2.5 rounded-full text-sm font-sans font-medium text-ivory/80 hover:text-ivory transition-colors cursor-pointer"
               aria-label="Map">
               <span class="relative z-10">Map</span>
             </button>
@@ -368,7 +367,7 @@ async function GetSuggestions() {
           <!-- Scan -->
           <RouterLink to="/scan">
             <button
-              class="magnetic-button p-2.5 text-[#FAF8F5]/80 hover:text-[#FAF8F5] rounded-full transition-colors flex items-center justify-center">
+              class="magnetic-button p-2.5 text-ivory/80 hover:text-ivory rounded-full transition-colors flex items-center justify-center">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5"
                 stroke="currentColor" class="w-5 h-5 relative z-10">
                 <path stroke-linecap="round" stroke-linejoin="round"
@@ -380,7 +379,7 @@ async function GetSuggestions() {
           <!-- Profile -->
           <RouterLink to="/profile" class="cursor-pointer">
             <button
-              class="magnetic-button p-2.5 text-[#FAF8F5]/80 hover:text-[#FAF8F5] rounded-full transition-colors flex items-center justify-center">
+              class="magnetic-button p-2.5 text-ivory/80 hover:text-ivory rounded-full transition-colors flex items-center justify-center">
               <svg class="w-5 h-5 relative z-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                   d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
@@ -393,16 +392,16 @@ async function GetSuggestions() {
 
     <!-- Main Content -->
     <div :class="['flex pb-20 md:pb-0', hideNav ? '' : 'pt-20']">
-      <main class="flex-grow px-6" :style="{ marginLeft: isMobile ? '0px' : webState.sidebarWidth + 'px' }">
+      <main class="flex-grow px-2 md:px-6" :style="{ marginLeft: isMobile ? '0px' : webState.sidebarWidth + 'px' }">
         <RouterView />
       </main>
     </div>
 
     <!-- Bottom Navigation Bar for Mobile -->
     <nav v-if="!hideNav && isMobile"
-      class="fixed bottom-0 left-0 right-0 bg-[#0D0D12]/90 backdrop-blur-xl border-t border-[#2A2A35] py-2 px-6 flex items-center justify-between z-40 shadow-lg">
+      class="fixed bottom-0 left-0 right-0 bg-obsidian/90 backdrop-blur-xl border-t border-slate py-2 px-6 flex items-center justify-between z-40 shadow-lg">
       <RouterLink to="/"
-        class="flex flex-col items-center gap-1 text-[#FAF8F5]/70 hover:text-[#FAF8F5] transition-colors">
+        class="flex flex-col items-center gap-1 text-ivory/70 hover:text-ivory transition-colors">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
             d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
@@ -411,7 +410,7 @@ async function GetSuggestions() {
       </RouterLink>
 
       <button @click="webState.sidebarWidth = webState.sidebarWidth === 0 ? 500 : 0;"
-        class="flex flex-col items-center gap-1 text-[#C9A84C] hover:text-[#FAF8F5] transition-colors cursor-pointer bg-transparent border-none">
+        class="flex flex-col items-center gap-1 text-champagne hover:text-ivory transition-colors cursor-pointer bg-transparent border-none">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
         </svg>
@@ -419,7 +418,7 @@ async function GetSuggestions() {
       </button>
 
       <RouterLink to="/posts"
-        class="flex flex-col items-center gap-1 text-[#FAF8F5]/70 hover:text-[#FAF8F5] transition-colors">
+        class="flex flex-col items-center gap-1 text-ivory/70 hover:text-ivory transition-colors">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
             d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012-2h10a2 2 0 012 2v1m2 4a2 2 0 00-2-2v3m2-3V9m0 0l-9 9m9-9h-4m4 0v4" />
@@ -428,7 +427,7 @@ async function GetSuggestions() {
       </RouterLink>
 
       <RouterLink to="/scan"
-        class="flex flex-col items-center gap-1 text-[#FAF8F5]/70 hover:text-[#FAF8F5] transition-colors">
+        class="flex flex-col items-center gap-1 text-ivory/70 hover:text-ivory transition-colors">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
             d="M9 13h6m-3-3v6m-9 1V4a2 2 0 012-2h6l2 2h6a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
@@ -437,7 +436,7 @@ async function GetSuggestions() {
       </RouterLink>
 
       <RouterLink to="/profile"
-        class="flex flex-col items-center gap-1 text-[#FAF8F5]/70 hover:text-[#FAF8F5] transition-colors">
+        class="flex flex-col items-center gap-1 text-ivory/70 hover:text-ivory transition-colors">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
             d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />

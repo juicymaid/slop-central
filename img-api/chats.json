@@ -719,5 +719,16 @@
       "character_id": "kobeni"
     },
     "is_character_chat": true
+  },
+  "aria": {
+    "chat_id": "aria",
+    "messages": [],
+    "character": {
+      "character_name": "Aria",
+      "short_description": "{{char}}is a shy and nerdy schoolgirl who has become a prostitute after running away from home. She has a very erotic curvy body, but a plain face with big clunky glasses and dark hair in pigtail brai",
+      "avatar": "https://avatars.charhub.io/avatars/FanService/aria-36d1e893/chara_card_v2.png?nocache=2023-09-11T20:05:31Z",
+      "character_id": "aria"
+    },
+    "is_character_chat": true
   }
 }

@@ -18,57 +18,57 @@
                         <!-- Add a subtle text shadow for readability -->
                         <h3 class="text-[#FAF8F5] font-sans font-medium drop-shadow-md">{{ }}</h3>
                     </div>
-                    <div class="absolute bottom-0 right-0 p-4 flex gap-3">
+                    <div class="absolute bottom-0 right-0 p-2 md:p-4 flex gap-2 md:gap-3">
                         <div
-                            class="p-2.5 bg-[#FAF8F5]/10 rounded-full hover:bg-[#FAF8F5]/20  cursor-pointer flex items-center gap-1.5 transition-colors border border-[#FAF8F5]/10">
+                            class="p-1.5 md:p-2.5 bg-[#FAF8F5]/10 rounded-full hover:bg-[#FAF8F5]/20  cursor-pointer flex items-center gap-1 md:gap-1.5 transition-colors border border-[#FAF8F5]/10">
                             <div class="flex" @click.prevent.stop="">
                                 <Star v-for="star in 5" :key="star"
-                                    class="w-4 h-4 text-white cursor-pointer transition-colors duration-150" :class="{
+                                    class="w-3 h-3 md:w-4 md:h-4 text-white cursor-pointer transition-colors duration-150" :class="{
                                         'fill-yellow-400 text-yellow-400': star <= (pin.Rating || 0),
                                         'hover:fill-yellow-200 hover:text-yellow-200': star <= hoverRating
                                     }" @click.prevent.stop="rateImage(star)" @mouseenter="hoverRating = star"
                                     @mouseleave="hoverRating = 0" />
                             </div>
-                            <p v-if="pin.Rating > 0" class="text-[#FAF8F5] font-mono text-sm ml-1">{{
+                            <p v-if="pin.Rating > 0" class="text-[#FAF8F5] font-mono text-xs md:text-sm ml-0.5 md:ml-1">{{
                                 pin.Rating.toFixed(0) }}</p>
                         </div>
                         <button
-                            class="p-2.5 bg-red-500/20 text-red-400 rounded-full hover:bg-red-500/40 hover:text-red-300  flex transition-colors border border-red-500/20"
+                            class="p-2 md:p-2.5 bg-red-500/20 text-red-400 rounded-full hover:bg-red-500/40 hover:text-red-300  flex transition-colors border border-red-500/20"
                             @click.prevent.stop="deletePin(pin.Id)">
-                            <Trash class="w-4 h-4" />
+                            <Trash class="w-3.5 h-3.5 md:w-4 md:h-4" />
                         </button>
                     </div>
                     <div
-                        class="absolute bottom-0 left-0 p-4 bg-[#0D0D12]/40 backdrop-blur-md rounded-tr-[2rem] flex items-center border-t border-r border-[#FAF8F5]/10 gap-3">
+                        class="absolute bottom-0 left-0 p-2 md:p-4 bg-[#0D0D12]/40 backdrop-blur-md rounded-tr-[1.5rem] md:rounded-tr-[2rem] flex items-center border-t border-r border-[#FAF8F5]/10 gap-2 md:gap-3">
                         <div class="flex items-center gap-1" title="Views">
-                            <Eye class="w-4 h-4 text-[#C9A84C]" />
-                            <p class="text-[#FAF8F5] font-mono text-sm">{{ pin.Clicks }}</p>
+                            <Eye class="w-3.5 h-3.5 md:w-4 md:h-4 text-[#C9A84C]" />
+                            <p class="text-[#FAF8F5] font-mono text-xs md:text-sm">{{ pin.Clicks }}</p>
                         </div>
                         <div class="flex items-center gap-1" title="Feed Displays">
-                            <Tv class="w-4 h-4 text-[#C9A84C]/80" />
-                            <p class="text-[#FAF8F5] font-mono text-sm">{{ pin.Shows || 0 }}</p>
+                            <Tv class="w-3.5 h-3.5 md:w-4 md:h-4 text-[#C9A84C]/80" />
+                            <p class="text-[#FAF8F5] font-mono text-xs md:text-sm">{{ pin.Shows || 0 }}</p>
                         </div>
                     </div>
                     <div v-if="pin.recommended_boards && !board"
-                        class="absolute top-0 left-0 right-0 p-4 flex items-center justify-between cursor-pointer">
+                        class="absolute top-0 left-0 right-0 p-2 md:p-4 flex items-center justify-between cursor-pointer gap-1 md:gap-2">
                         <div v-if="pin.in_boards.length == 0" ref="dropdownTrigger"
-                            class="rounded-full px-4 py-2 cursor-pointer font-sans font-medium text-sm text-[#FAF8F5] flex items-center bg-[#1A1A24]/60 backdrop-blur-md hover:bg-[#2A2A35]/80 transition-colors border border-[#FAF8F5]/10"
+                            class="rounded-full px-2 py-1 md:px-4 md:py-2 cursor-pointer font-sans font-medium text-xs md:text-sm text-[#FAF8F5] flex items-center bg-[#1A1A24]/60 backdrop-blur-md hover:bg-[#2A2A35]/80 transition-colors border border-[#FAF8F5]/10 truncate max-w-[120px] md:max-w-none"
                             @click.prevent.stop="toggleDropdown($event)">
-                            {{ pin.recommended_boards[selectedBoard].name || '' }}
-                            <ChevronDown class="w-4 h-4 text-[#FAF8F5]/60 ml-2" />
+                            <span class="truncate">{{ pin.recommended_boards[selectedBoard].name || '' }}</span>
+                            <ChevronDown class="w-3 h-3 md:w-4 md:h-4 text-[#FAF8F5]/60 ml-1 md:ml-2 flex-shrink-0" />
                         </div>
                         <RouterLink :to="'/board/' + pin.in_boards[0].id" v-else
-                            class="rounded-full px-4 py-2 cursor-pointer font-sans font-medium text-sm text-[#FAF8F5] flex items-center bg-[#C9A84C]/20 text-[#C9A84C] backdrop-blur-md hover:bg-[#C9A84C]/30 transition-colors border border-[#C9A84C]/20">
-                            {{ pin.in_boards[0].name || '' }}
+                            class="rounded-full px-2 py-1 md:px-4 md:py-2 cursor-pointer font-sans font-medium text-xs md:text-sm text-[#FAF8F5] flex items-center bg-[#C9A84C]/20 text-[#C9A84C] backdrop-blur-md hover:bg-[#C9A84C]/30 transition-colors border border-[#C9A84C]/20 truncate max-w-[120px] md:max-w-none">
+                            <span class="truncate">{{ pin.in_boards[0].name || '' }}</span>
                         </RouterLink>
 
                         <button v-if="pin.in_boards.length == 0"
-                            class="px-5 py-2 bg-[#C9A84C] text-[#0D0D12] font-sans font-semibold text-sm rounded-full hover:bg-[#C9A84C]/90 shadow-[0_0_15px_rgba(201,168,76,0.2)] transition-colors magnetic-button inline-flex items-center"
+                            class="px-2.5 py-1 md:px-5 md:py-2 bg-[#C9A84C] text-[#0D0D12] font-sans font-semibold text-xs md:text-sm rounded-full hover:bg-[#C9A84C]/90 shadow-[0_0_15px_rgba(201,168,76,0.2)] transition-colors magnetic-button inline-flex items-center flex-shrink-0"
                             @click.prevent.stop="saveToBoard(pin.recommended_boards[selectedBoard].id)">
                             <span class="relative z-10">Save</span>
                         </button>
                         <button v-else
-                            class="px-5 py-2 bg-[#1A1A24] text-[#FAF8F5]/60 font-sans font-semibold text-sm rounded-full border border-[#2A2A35]"
+                            class="px-2.5 py-1 md:px-5 md:py-2 bg-[#1A1A24] text-[#FAF8F5]/60 font-sans font-semibold text-xs md:text-sm rounded-full border border-[#2A2A35] flex-shrink-0"
                             @click.prevent.stop="removeFromBoard(pin.recommended_boards[selectedBoard].id)">
                             Saved
                         </button>
