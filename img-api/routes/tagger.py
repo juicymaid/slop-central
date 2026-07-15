@@ -242,10 +242,9 @@ def generate_prompt_for_image(image_id: int):
     try:
         result = process_image(path=path)
 
-        # read images.json
-        images_json = {}
-        with open("images.json", "r", encoding="utf-8") as f:
-            images_json = json.load(f)
+        # read images from SQLite
+        utils.ensure_loaded()
+        images_json = utils.raw_all_images.copy()
 
         print(result["tag_string"])
 
@@ -257,8 +256,8 @@ def generate_prompt_for_image(image_id: int):
                 break
 
         # Save the updated images.json
-        with open("images.json", "w", encoding="utf-8") as f:
-            json.dump(images_json, f, indent=2)
+        utils.raw_all_images = images_json
+        utils.save_images()
         # Update the image data in memory
         utils.load_images()
         # Return the generated prompt
@@ -292,10 +291,9 @@ def generate_tagger_prompt_for_image(image_id: int):
     try:
         result = process_image(path=path)
 
-        # read images.json
-        images_json = {}
-        with open("images.json", "r", encoding="utf-8") as f:
-            images_json = json.load(f)
+        # read images from SQLite
+        utils.ensure_loaded()
+        images_json = utils.raw_all_images.copy()
 
         print(result)
 
@@ -307,8 +305,8 @@ def generate_tagger_prompt_for_image(image_id: int):
                 break
 
         # Save the updated images.json
-        with open("images.json", "w", encoding="utf-8") as f:
-            json.dump(images_json, f, indent=2)
+        utils.raw_all_images = images_json
+        utils.save_images()
         # Update the image data in memory
         utils.load_images()
         # Return the generated prompt
@@ -381,9 +379,8 @@ def tag_all_images():
     """
     Process all images in the database and generate tags for them.
     """
-    images_json = {}
-    with open("images.json", "r", encoding="utf-8") as f:
-        images_json = json.load(f)
+    utils.ensure_loaded()
+    images_json = utils.raw_all_images.copy()
 
     _tag_all_cancel.clear()
 
@@ -426,8 +423,8 @@ def tag_all_images():
             print(f"Error processing image ID {img['Id']}: {str(e)}")
 
         if changed_since_save and save_every and (idx - last_save_idx) >= save_every:
-            with open("images.json", "w", encoding="utf-8") as f:
-                json.dump(images_json, f, indent=2)
+            utils.raw_all_images = images_json
+            utils.save_images()
             last_save_idx = idx
             changed_since_save = False
 
@@ -444,8 +441,8 @@ def tag_all_images():
             )
 
     if changed_since_save:
-        with open("images.json", "w", encoding="utf-8") as f:
-            json.dump(images_json, f, indent=2)
+        utils.raw_all_images = images_json
+        utils.save_images()
 
     utils.load_images()
     status = "cancelled" if cancelled else "completed"

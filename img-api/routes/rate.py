@@ -122,26 +122,34 @@ def _rating_to_dict(r: trueskill.Rating) -> dict:
 
 def _save_ratings_to_file() -> None:
     try:
-        data = {str(k): _rating_to_dict(v) for k, v in ratings.items()}
-        RATINGS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        # best-effort persistence
-        pass
+        conn = utils.get_db_connection()
+        cursor = conn.cursor()
+        for k, v in ratings.items():
+            cursor.execute(
+                "INSERT OR REPLACE INTO trueskill_ratings (image_id, mu, sigma) VALUES (?, ?, ?)",
+                (int(k), v.mu, v.sigma)
+            )
+            cursor.execute(
+                "UPDATE images SET rating = ? WHERE id = ?",
+                (v.mu, int(k))
+            )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("Error saving ratings to SQLite:", e)
 
 def _load_ratings_from_file() -> None:
     global ratings
-    # Avoid full reload unless necessary
     _ensure_images_loaded()
     try:
-        if RATINGS_FILE.exists():
-            data = json.loads(RATINGS_FILE.read_text(encoding="utf-8"))
-            ratings = {
-                int(k): env.create_rating(mu=v.get("mu", env.mu), sigma=v.get("sigma", env.sigma))
-                for k, v in data.items()
-            }
-    except Exception:
-        # ignore corrupted file or parse errors
-        ratings = ratings  # no-op to be explicit
+        conn = utils.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT image_id, mu, sigma FROM trueskill_ratings")
+        for row in cursor.fetchall():
+            ratings[int(row["image_id"])] = env.create_rating(mu=row["mu"], sigma=row["sigma"])
+        conn.close()
+    except Exception as e:
+        print("Error loading ratings from SQLite:", e)
     # keep caches consistent
     _recompute_rated_cache()
 

@@ -103,10 +103,8 @@ async def _websocket_scan_images_sync(websocket: WebSocket):
         })
 
         # Load existing images once at start of scan
-        all_images = []
-        if os.path.exists(utils.IMAGES_FILE):
-            with open(utils.IMAGES_FILE, "r", encoding="utf-8") as f:
-                all_images = json.load(f)
+        utils.ensure_loaded()
+        all_images = utils.raw_all_images.copy()
 
         processed_count = 0
         success_count = 0
@@ -175,9 +173,8 @@ async def _websocket_scan_images_sync(websocket: WebSocket):
 
         start_id = highest_id
         all_images.extend(scanned_images)
-        with open(utils.IMAGES_FILE, "w", encoding="utf-8") as f:
-            json.dump(all_images, f, indent=2)
-
+        utils.raw_all_images = all_images
+        utils.save_images()
         utils.load_images()
 
         await websocket.send_json({
@@ -227,10 +224,8 @@ async def background_scan_images():
         print(f"Found {len(images_to_scan)} unscanned images")
 
         # Load existing images once at start of scan
-        all_images = []
-        if os.path.exists(utils.IMAGES_FILE):
-            with open(utils.IMAGES_FILE, "r", encoding="utf-8") as f:
-                all_images = json.load(f)
+        utils.ensure_loaded()
+        all_images = utils.raw_all_images.copy()
 
         async def scan_single_image(image_path):
             try:
@@ -261,10 +256,10 @@ async def background_scan_images():
             print(f"[{index + 1}/{len(scanned_images)}] Prompt:  {metadata['Prompt']}")
 
         all_images.extend(scanned_images)
-        with open(utils.IMAGES_FILE, "w", encoding="utf-8") as f:
-            json.dump(all_images, f, indent=2)
+        utils.raw_all_images = all_images
+        utils.save_images()
 
-        print("Scan completed. Images saved to images.json")
+        print("Scan completed. Images saved to SQLite database")
         utils.load_images()
         print("Images reloaded into memory")
 
@@ -627,11 +622,8 @@ async def get_metadata(file_path):
 @router.post("/fix-image-resolutions")
 def fix_resolutions():
     global all_images
-    if not os.path.exists(utils.IMAGES_FILE):
-        raise HTTPException(status_code=404, detail="images.json not found")
-
-    with open(utils.IMAGES_FILE, "r", encoding="utf-8") as f:
-        all_images = json.load(f)
+    utils.ensure_loaded()
+    all_images = utils.raw_all_images.copy()
 
     for image in all_images:
         if image["Width"] == 0 or image["Height"] == 0 or image["Width"] == 1 or image["Height"] == 1:
@@ -648,8 +640,8 @@ def fix_resolutions():
                 image["Width"] = 1  
                 image["Height"] = 1
 
-    with open(utils.IMAGES_FILE, "w", encoding="utf-8") as f:
-        json.dump(all_images, f, indent=2)
+    utils.raw_all_images = all_images
+    utils.save_images()
 
     utils.load_images()
 
@@ -812,14 +804,9 @@ async def prune_images():
     _models = models.load_models()
     print(f"Prune: loaded {len(_models)} models")
 
-    all_images = []
-    if os.path.exists(utils.IMAGES_FILE):
-        print(f"Prune: loading images from {utils.IMAGES_FILE} ...")
-        with open(utils.IMAGES_FILE, "r", encoding="utf-8") as f:
-            all_images = json.load(f)
-        print(f"Prune: loaded {len(all_images)} images")
-    else:
-        raise HTTPException(status_code=404, detail="images.json not found")
+    utils.ensure_loaded()
+    all_images = utils.raw_all_images.copy()
+    print(f"Prune: loaded {len(all_images)} images from SQLite")
     
     files_removed = 0
     missing_removed = 0
@@ -871,8 +858,8 @@ async def prune_images():
 
     all_images = list(unique_images.values())
 
-    with open(utils.IMAGES_FILE, "w", encoding="utf-8") as f:
-        json.dump(all_images, f, indent=2)
+    utils.raw_all_images = all_images
+    utils.save_images()
 
     utils.load_images()
 
@@ -916,11 +903,8 @@ async def background_update_missing_prompts():
     update_successful = 0
     
     try:
-        # Load images from images.json
-        all_images = []
-        if os.path.exists(utils.IMAGES_FILE):
-            with open(utils.IMAGES_FILE, "r", encoding="utf-8") as f:
-                all_images = json.load(f)
+        utils.ensure_loaded()
+        all_images = utils.raw_all_images.copy()
                 
         # Filter images needing update
         target_images = []
@@ -995,12 +979,12 @@ async def background_update_missing_prompts():
             print(f"[Prompt Update] Progress: {update_processed}/{update_total} (successful={update_successful})")
             
             if update_processed % 50 == 0 or update_processed == update_total:
-                with open(utils.IMAGES_FILE, "w", encoding="utf-8") as f:
-                    json.dump(all_images, f, indent=2)
+                utils.raw_all_images = all_images
+                utils.save_images()
                 utils.load_images()
                 
-        with open(utils.IMAGES_FILE, "w", encoding="utf-8") as f:
-            json.dump(all_images, f, indent=2)
+        utils.raw_all_images = all_images
+        utils.save_images()
         utils.load_images()
         print(f"[Prompt Update] Completed! Successfully updated {update_successful} images.")
         

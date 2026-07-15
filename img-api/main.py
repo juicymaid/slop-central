@@ -7,8 +7,7 @@ from fastapi.responses import FileResponse, Response
 from routes import images, rec, tags, boards, phashes, scan_images, scoring, tagger, models, comments, webui, chats, rate, comics, ai_search, stories, assistant, posts, ai_settings, hentai, lmstudio, mcp, rag, skills
 from fastapi.staticfiles import StaticFiles
 from utils import (
-    images_data, all_images, clicks_data, boards_data,
-    IMAGES_FILE, LIKES_FILE, CLICKS_FILE, BOARDS_FILE
+    images_data, all_images, clicks_data, boards_data
 )
 from fastapi import UploadFile
 import requests
@@ -143,6 +142,13 @@ def ensure_frontend_running():
 
 @app.on_event("startup")
 async def _startup_init():
+    # Run SQLite migration first
+    try:
+        import db_migrator
+        db_migrator.migrate_json_to_sqlite()
+    except Exception as e:
+        print(f"Failed to migrate database to SQLite: {e}")
+
     # Start loading the heavy JSON data in the background so the server can accept connections immediately.
     try:
         utils.ensure_loaded(block=False)

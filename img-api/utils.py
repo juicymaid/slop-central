@@ -1,4 +1,5 @@
 from datetime import datetime
+import sqlite3
 import json
 import os
 import random
@@ -10,6 +11,12 @@ import GPUtil
 
 
 router = APIRouter()
+DB_FILE = "pinthesis.db"
+
+def get_db_connection():
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 # Data file constants.
 IMAGES_FILE = "images.json"
@@ -56,23 +63,35 @@ def _embedding_text(img):
 
 def load_embeddings():
     global image_embeddings
-    if os.path.exists(EMBEDDINGS_FILE):
-        try:
-            with open(EMBEDDINGS_FILE, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-            # restore {id: {"vec": [...], "norm": float}}
-            image_embeddings = {
-                int(k): {"vec": v["vec"], "norm": v.get("norm", (sum(x*x for x in v["vec"])) ** 0.5)}
-                for k, v in raw.items()
+    image_embeddings = {}
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT image_id, vector, norm FROM embeddings")
+        for row in cursor.fetchall():
+            vector = json.loads(row["vector"] or "[]")
+            image_embeddings[int(row["image_id"])] = {
+                "vec": vector,
+                "norm": row["norm"] or (sum(x*x for x in vector)) ** 0.5
             }
-        except Exception:
-            image_embeddings = {}
+        conn.close()
+    except Exception as e:
+        print("Error loading embeddings from SQLite:", e)
+        image_embeddings = {}
 
 def save_embeddings():
-    out = {str(k): v for k, v in image_embeddings.items()}
-    with open(EMBEDDINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(out, f)
-
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        for k, v in image_embeddings.items():
+            cursor.execute(
+                "INSERT OR REPLACE INTO embeddings (image_id, vector, norm) VALUES (?, ?, ?)",
+                (int(k), json.dumps(v["vec"]), v.get("norm", 1.0))
+            )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("Error saving embeddings to SQLite:", e)
 def build_image_embeddings(
     model_name="nomic-embed-text",
     force=False,
@@ -134,144 +153,210 @@ def build_image_embeddings(
 def load_trash():
     global trash_data
     trash_data = {}
-    if os.path.exists(TRASH_FILE):
-        with open(TRASH_FILE, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-        trash_data = {int(k): v for k, v in raw.items()}
-
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT image_id, trashed_at FROM trash")
+        for row in cursor.fetchall():
+            trash_data[int(row["image_id"])] = {"TrashedAt": row["trashed_at"]}
+        conn.close()
+    except Exception as e:
+        print("Error loading trash from SQLite:", e)
 
 def save_trash():
-    out = {str(k): v for k, v in trash_data.items()}
-    with open(TRASH_FILE, "w", encoding="utf-8") as f:
-        json.dump(out, f, indent=2)
-
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM trash")
+        for k, v in trash_data.items():
+            trashed_at = v.get("TrashedAt", v.get("trashed_at", 0)) if isinstance(v, dict) else v
+            cursor.execute("INSERT OR REPLACE INTO trash (image_id, trashed_at) VALUES (?, ?)", (int(k), trashed_at))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("Error saving trash to SQLite:", e)
 
 def load_images():
     global images_data, all_images, raw_all_images
-    # Make reload safe/idempotent
     images_data = {}
     all_images = []
     raw_all_images = []
-    if not os.path.exists(IMAGES_FILE):
-        raise FileNotFoundError(f"{IMAGES_FILE} not found.")
-
-    # Load trash first so we can exclude trashed images from all_images
+    
     load_trash()
 
-    with open(IMAGES_FILE, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, path, prompt, tagger_prompt, description, width, height, file_size, 
+                   model_hash, negative_prompt, sampler, clicks, shows, likes, dislikes, 
+                   rating, phash, metadata FROM images
+        """)
+        rows = cursor.fetchall()
+        conn.close()
+    except Exception as e:
+        print("Error reading images from SQLite:", e)
+        rows = []
 
-    raw_all_images = data.copy()  # Store the original data before modifications
-
-    for image in data:
-        if "Id" not in image or "Path" not in image:
-            continue
-
-        # Default to empty string if "Prompt" is None.
+    for row in rows:
+        img_id = row["id"]
+        meta = {}
+        if row["metadata"]:
+            try:
+                meta = json.loads(row["metadata"])
+            except Exception:
+                pass
+        
+        image = {
+            "Id": img_id,
+            "Path": row["path"],
+            "Prompt": row["prompt"] or "",
+            "taggerPrompt": row["tagger_prompt"] or "",
+            "description": row["description"] or "",
+            "Width": row["width"],
+            "Height": row["height"],
+            "FileSize": row["file_size"],
+            "ModelHash": row["model_hash"],
+            "NegativePrompt": row["negative_prompt"],
+            "Sampler": row["sampler"],
+            "Clicks": row["clicks"] or 0,
+            "Shows": row["shows"] or 0,
+            "Likes": row["likes"] or 0,
+            "Dislikes": row["dislikes"] or 0,
+            "Rating": row["rating"] or 0.0,
+            "pHash": row["phash"]
+        }
+        
+        for k, v in meta.items():
+            if k not in image:
+                image[k] = v
+                
         prompt = image.get("Prompt") or ""
         tags_set = {tag.strip().lower() for tag in prompt.split(",") if tag.strip()}
         image["tags_set"] = tags_set
-
-        # Initialize vote counts, clicks, and shows.
-        if "Likes" not in image:
-            image["Likes"] = 0
-        if "Dislikes" not in image:
-            image["Dislikes"] = 0
-        image["Clicks"] = 0
-        image["Shows"] = 0
-        images_data[image["Id"]] = image
-        # Exclude trashed images from the active list
-        if image["Id"] not in trash_data:
+        
+        images_data[img_id] = image
+        raw_all_images.append(image)
+        
+        if img_id not in trash_data:
             all_images.append(image)
-    # 
-    #load phashes from hashes.json if it exists
-    if os.path.exists("hashes.json"):
-        with open("hashes.json", "r", encoding="utf-8") as f:
-            phashes = json.load(f)
-        for img_id, phash in phashes.items():
-            img = images_data.get(int(img_id))
-            if img:
-                img["pHash"] = phash
-
-    load_votes()
-    load_clicks()
-    load_shows()
 
 def save_images():
-
     if not raw_all_images:
         raise ValueError("No images to save.")
 
-    _runtime_fields = {"tags_set", "pHash", "Likes", "Dislikes", "Rating", "Clicks", "Shows"}
-    clean = [{k: v for k, v in img.items() if k not in _runtime_fields and not k.startswith("_")} for img in raw_all_images]
-
-    with open(IMAGES_FILE, "w", encoding="utf-8") as f:
-        json.dump(clean, f, indent=2)
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        for img in raw_all_images:
+            img_id = img.get("Id")
+            if img_id is None:
+                continue
+            
+            path = img.get("Path")
+            prompt = str(img.get("Prompt") or "")
+            tagger_prompt = str(img.get("taggerPrompt") or "")
+            description = str(img.get("description") or "")
+            width = img.get("Width")
+            height = img.get("Height")
+            file_size = img.get("FileSize")
+            model_hash = str(img.get("ModelHash")) if img.get("ModelHash") is not None else None
+            negative_prompt = str(img.get("NegativePrompt")) if img.get("NegativePrompt") is not None else None
+            sampler = str(img.get("Sampler")) if img.get("Sampler") is not None else None
+            clicks = img.get("Clicks", 0)
+            shows = img.get("Shows", 0)
+            likes = img.get("Likes", 0)
+            dislikes = img.get("Dislikes", 0)
+            rating = img.get("Rating", 0.0)
+            phash = img.get("pHash")
+            
+            _runtime_fields = {"tags_set", "pHash", "Likes", "Dislikes", "Rating", "Clicks", "Shows", "Id", "Path", "Prompt", "taggerPrompt", "description", "Width", "Height", "FileSize", "ModelHash", "NegativePrompt", "Sampler"}
+            clean_metadata = {k: v for k, v in img.items() if k not in _runtime_fields and not k.startswith("_")}
+            metadata_str = json.dumps(clean_metadata)
+            
+            cursor.execute("""
+                INSERT OR REPLACE INTO images (
+                    id, path, prompt, tagger_prompt, description, width, height, file_size, 
+                    model_hash, negative_prompt, sampler, clicks, shows, likes, dislikes, 
+                    rating, phash, metadata
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                img_id, path, prompt, tagger_prompt, description, width, height, file_size,
+                model_hash, negative_prompt, sampler, clicks, shows, likes, dislikes,
+                rating, phash, metadata_str
+            ))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("Error saving images to SQLite:", e)
 
 def load_votes():
-    if os.path.exists(LIKES_FILE):
-        with open(LIKES_FILE, "r", encoding="utf-8") as f:
-            votes = json.load(f)
-        for img_id, vote in votes.items():
-            img = images_data.get(int(img_id))
-            if img:
-                img["Likes"] = vote.get("Likes", img.get("Likes", 0))
-                img["Dislikes"] = vote.get("Dislikes", img.get("Dislikes", 0))
-                img["Rating"] = vote.get("Rating", img.get("Rating", 0))
+    pass
+
 def save_votes():
-    votes = {}
-    for img_id, img in images_data.items():
-        votes[str(img_id)] = {"Likes": img.get("Likes", 0), "Dislikes": img.get("Dislikes", 0), "Rating": img.get("Rating", 0)}
-    with open(LIKES_FILE, "w", encoding="utf-8") as f:
-        json.dump(votes, f, indent=2)
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        for img_id, img in images_data.items():
+            cursor.execute(
+                "UPDATE images SET likes = ?, dislikes = ?, rating = ? WHERE id = ?",
+                (img.get("Likes", 0), img.get("Dislikes", 0), img.get("Rating", 0.0), img_id)
+            )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("Error saving votes to SQLite:", e)
 
 def load_clicks():
-    global clicks_data
-    if os.path.exists(CLICKS_FILE):
-        with open(CLICKS_FILE, "r", encoding="utf-8") as f:
-            clicks_data = json.load(f)
-        for img_id, click in clicks_data.items():
-            img = images_data.get(int(img_id))
-            if img:
-                img["Clicks"] = click
+    pass
 
 def save_clicks():
-    clicks = {}
-    for img_id, img in images_data.items():
-        clicks[str(img_id)] = img.get("Clicks", 0)
-    with open(CLICKS_FILE, "w", encoding="utf-8") as f:
-        json.dump(clicks, f, indent=2)
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        for img_id, img in images_data.items():
+            cursor.execute(
+                "UPDATE images SET clicks = ? WHERE id = ?",
+                (img.get("Clicks", 0), img_id)
+            )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("Error saving clicks to SQLite:", e)
 
 def load_shows():
-    global shows_data
-    if os.path.exists(SHOWS_FILE):
-        try:
-            with open(SHOWS_FILE, "r", encoding="utf-8") as f:
-                shows_data = json.load(f)
-        except Exception as e:
-            print(f"Error loading {SHOWS_FILE}: {e}")
-            shows_data = {}
-        for img_id, show in shows_data.items():
-            img = images_data.get(int(img_id))
-            if img:
-                img["Shows"] = show
+    pass
 
 def save_shows():
-    shows = {}
-    for img_id, img in images_data.items():
-        shows[str(img_id)] = img.get("Shows", 0)
     try:
-        with open(SHOWS_FILE, "w", encoding="utf-8") as f:
-            json.dump(shows, f, indent=2)
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        for img_id, img in images_data.items():
+            cursor.execute(
+                "UPDATE images SET shows = ? WHERE id = ?",
+                (img.get("Shows", 0), img_id)
+            )
+        conn.commit()
+        conn.close()
     except Exception as e:
-        print(f"Error saving {SHOWS_FILE}: {e}")
+        print("Error saving shows to SQLite:", e)
 
 def load_boards():
     global boards_data
-    if os.path.exists(BOARDS_FILE):
-        with open(BOARDS_FILE, "r", encoding="utf-8") as f:
-            boards_data = json.load(f)
-        boards_data = {int(k): v for k, v in boards_data.items()}
+    boards_data = {}
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name, images FROM boards")
+        for row in cursor.fetchall():
+            boards_data[int(row["id"])] = {
+                "id": int(row["id"]),
+                "name": row["name"],
+                "images": json.loads(row["images"] or "[]")
+            }
+        conn.close()
+    except Exception as e:
+        print("Error loading boards from SQLite:", e)
 
 
 def ensure_loaded(block: bool = True) -> bool:
@@ -351,9 +436,19 @@ def get_load_state() -> dict:
     }
 
 def save_boards():
-    with open(BOARDS_FILE, "w", encoding="utf-8") as f:
-        json.dump(boards_data, f, indent=2)
-
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM boards")
+        for k, v in boards_data.items():
+            cursor.execute(
+                "INSERT OR REPLACE INTO boards (id, name, images) VALUES (?, ?, ?)",
+                (int(k), v.get("name"), json.dumps(v.get("images", [])))
+            )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("Error saving boards to SQLite:", e)
 def hamming_distance(hash1: str, hash2: str) -> int:
     if(not hash1 or not hash2):
         return float('inf')

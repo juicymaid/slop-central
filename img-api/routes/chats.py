@@ -262,19 +262,35 @@ def get_all_chats():
 
 
 def save_chats():
-    if not all_chats:
-        raise ValueError("No chats to save.")
-    
-    with open("chats.json", "w", encoding="utf-8") as f:
-        json.dump(all_chats, f, indent=2)
+    try:
+        conn = utils.get_db_connection()
+        cursor = conn.cursor()
+        for k, v in all_chats.items():
+            cursor.execute(
+                "INSERT OR REPLACE INTO chats (chat_id, messages) VALUES (?, ?)",
+                (k, json.dumps(v.get("messages", v) if isinstance(v, dict) else v))
+            )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("Error saving chats to SQLite:", e)
 
 def load_chats():
     global all_chats
-    if not os.path.exists("chats.json"):
-        return  # No chats to load
-
-    with open("chats.json", "r", encoding="utf-8") as f:
-        all_chats = json.load(f)
-
+    all_chats = {}
+    try:
+        conn = utils.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT chat_id, messages FROM chats")
+        for row in cursor.fetchall():
+            chat_id = row["chat_id"]
+            messages = json.loads(row["messages"] or "[]")
+            all_chats[chat_id] = {
+                "chat_id": chat_id,
+                "messages": messages
+            }
+        conn.close()
+    except Exception as e:
+        print("Error loading chats from SQLite:", e)
 
 load_chats()

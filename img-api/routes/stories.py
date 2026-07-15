@@ -9,16 +9,33 @@ router = APIRouter()
 STORIES_FILE = Path(__file__).parent.parent / "stories.json"
 
 def _load_stories() -> Dict[str, Any]:
-    if STORIES_FILE.exists():
-        with open(STORIES_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+    stories = {}
+    try:
+        conn = utils.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, data FROM stories")
+        for row in cursor.fetchall():
+            stories[str(row["id"])] = json.loads(row["data"] or "{}")
+        conn.close()
+    except Exception as e:
+        print("Error loading stories from SQLite:", e)
+    return stories
 
 
 def _save_stories(data: Dict[str, Any]):
-    with open(STORIES_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-
+    try:
+        conn = utils.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM stories")
+        for k, v in data.items():
+            cursor.execute(
+                "INSERT OR REPLACE INTO stories (id, data) VALUES (?, ?)",
+                (int(k), json.dumps(v))
+            )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("Error saving stories to SQLite:", e)
 
 def _json_safe(value):
     if isinstance(value, (str, int, float, bool)) or value is None:

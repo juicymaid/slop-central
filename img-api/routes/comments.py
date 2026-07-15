@@ -326,16 +326,32 @@ all_comments = {}
 all_users = {}
 
 def save_users_to_file():
-    with open("users.json", "w") as f:
-        json.dump(all_users, f)
+    try:
+        conn = utils.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM users")
+        for k, v in all_users.items():
+            cursor.execute(
+                "INSERT OR REPLACE INTO users (username, data) VALUES (?, ?)",
+                (k, json.dumps(v))
+            )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("Error saving users to SQLite:", e)
 
 def load_users_from_file():
     global all_users
+    all_users = {}
     try:
-        with open("users.json", "r") as f:
-            all_users = json.load(f)
-    except FileNotFoundError:
-        all_users = {}
+        conn = utils.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT username, data FROM users")
+        for row in cursor.fetchall():
+            all_users[row["username"]] = json.loads(row["data"] or "{}")
+        conn.close()
+    except Exception as e:
+        print("Error loading users from SQLite:", e)
     return all_users
 
 @router.get("/users")
@@ -1014,48 +1030,70 @@ def new_random_prompt(reference_count: int = Query(10, description="Number of re
 
 # save comments to file
 def save_comments_to_file():
-    with open("comments.json", "w") as f:
-        json.dump(all_comments, f)
+    try:
+        conn = utils.get_db_connection()
+        cursor = conn.cursor()
+        for k, v in all_comments.items():
+            cursor.execute(
+                "INSERT OR REPLACE INTO comments (image_id, comments) VALUES (?, ?)",
+                (int(k), json.dumps(v))
+            )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("Error saving comments to SQLite:", e)
 
 
 def load_comments_from_file():
     global all_comments
-    if os.path.exists("comments.json"):
-        with open("comments.json", "r") as f:
-            all_comments = json.load(f)
-    else:
-        all_comments = {}
+    all_comments = {}
+    try:
+        conn = utils.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT image_id, comments FROM comments")
+        for row in cursor.fetchall():
+            all_comments[str(row["image_id"])] = json.loads(row["comments"] or "[]")
+        conn.close()
+    except Exception as e:
+        print("Error loading comments from SQLite:", e)
     return all_comments
 
 
 def save_descriptions():
-    descriptions = {}
-    for img_id, img in utils.images_data.items():
-        if "description" in img:
-            descriptions[img_id] = {
-                "description": img["description"],
-                "op_user": img.get("op_user")
-            }
-
-    with open("descriptions.json", "w") as f:
-        json.dump(descriptions, f)
+    try:
+        conn = utils.get_db_connection()
+        cursor = conn.cursor()
+        for img_id, img in utils.images_data.items():
+            if "description" in img:
+                cursor.execute(
+                    "INSERT OR REPLACE INTO descriptions (image_id, description, op_user) VALUES (?, ?, ?)",
+                    (img_id, img["description"], img.get("op_user"))
+                )
+                cursor.execute(
+                    "UPDATE images SET description = ? WHERE id = ?",
+                    (img["description"], img_id)
+                )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("Error saving descriptions to SQLite:", e)
 
 
 def load_descriptions():
-    if os.path.exists("descriptions.json"):
-        with open("descriptions.json", "r") as f:
-            descriptions = json.load(f)
-        for img_id, data in descriptions.items():
-            img = utils.images_data.get(int(img_id))
+    try:
+        conn = utils.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT image_id, description, op_user FROM descriptions")
+        for row in cursor.fetchall():
+            img_id = row["image_id"]
+            img = utils.images_data.get(img_id)
             if img is not None:
-                if isinstance(data, dict):
-                    img["description"] = data.get("description", "")
-                    if data.get("op_user"):
-                        img["op_user"] = data.get("op_user")
-                else:
-                    img["description"] = data
-    else:
-        print("No descriptions file found, skipping load.")
+                img["description"] = row["description"] or ""
+                if row["op_user"]:
+                    img["op_user"] = row["op_user"]
+        conn.close()
+    except Exception as e:
+        print("Error loading descriptions from SQLite:", e)
 
 @router.post("/ollama/unload-models")
 async def ollama_unload_models():

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Query, HTTPException
+import utils
 from hhaven import Client
 from hhaven.exceptions import HHavenNotFound
 import random
@@ -287,18 +288,31 @@ async def get_genre_hentais(
 HENTAI_STATUS_FILE = "hentai_status.json"
 
 def load_hentai_status():
-    if os.path.exists(HENTAI_STATUS_FILE):
-        try:
-            with open(HENTAI_STATUS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {"likes": [], "dislikes": [], "progress": {}}
+    status = {"likes": [], "dislikes": [], "progress": {}}
+    try:
+        conn = utils.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT key, value FROM hentai_status")
+        for row in cursor.fetchall():
+            status[row["key"]] = json.loads(row["value"] or "null")
+        conn.close()
+    except Exception as e:
+        print("Error loading hentai status from SQLite:", e)
+    return status
 
 def save_hentai_status(status):
-    with open(HENTAI_STATUS_FILE, "w", encoding="utf-8") as f:
-        json.dump(status, f, indent=2)
-
+    try:
+        conn = utils.get_db_connection()
+        cursor = conn.cursor()
+        for k, v in status.items():
+            cursor.execute(
+                "INSERT OR REPLACE INTO hentai_status (key, value) VALUES (?, ?)",
+                (k, json.dumps(v))
+            )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("Error saving hentai status to SQLite:", e)
 class ProgressUpdate(BaseModel):
     id: str
     title: str

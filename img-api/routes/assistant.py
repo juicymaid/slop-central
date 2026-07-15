@@ -38,22 +38,32 @@ assistant_chats: Dict[str, List[dict]] = {}
 
 def load_assistant_chats():
     global assistant_chats
-    if os.path.exists(ASSISTANT_CHATS_FILE):
-        try:
-            with open(ASSISTANT_CHATS_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            # basic validation
-            if isinstance(data, dict):
-                assistant_chats = {sid: msgs for sid, msgs in data.items() if isinstance(msgs, list)}
-        except Exception:
-            assistant_chats = {}
+    assistant_chats = {}
+    try:
+        conn = utils.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT session_id, messages FROM assistant_chats")
+        for row in cursor.fetchall():
+            session_id = row["session_id"]
+            messages = json.loads(row["messages"] or "[]")
+            assistant_chats[session_id] = messages
+        conn.close()
+    except Exception as e:
+        print("Error loading assistant chats from SQLite:", e)
 
 def save_assistant_chats():
     try:
-        with open(ASSISTANT_CHATS_FILE, "w", encoding="utf-8") as f:
-            json.dump(assistant_chats, f, indent=2)
+        conn = utils.get_db_connection()
+        cursor = conn.cursor()
+        for k, v in assistant_chats.items():
+            cursor.execute(
+                "INSERT OR REPLACE INTO assistant_chats (session_id, messages) VALUES (?, ?)",
+                (k, json.dumps(v))
+            )
+        conn.commit()
+        conn.close()
     except Exception as e:
-        print(f"Failed to save assistant chats: {e}")
+        print("Error saving assistant chats to SQLite:", e)
 
 load_assistant_chats()
 

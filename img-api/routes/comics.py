@@ -10,6 +10,29 @@ from routes import comments
 from routes.comments import ChatResponse
 
 router = APIRouter()
+def _load_all_comics():
+    conn = utils.get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, title, data FROM comics ORDER BY id ASC")
+    rows = cursor.fetchall()
+    conn.close()
+    comics_data = []
+    for row in rows:
+        try:
+            comics_data.append(json.loads(row["data"]))
+        except Exception:
+            pass
+    return comics_data
+
+def _save_all_comics(comics_data):
+    conn = utils.get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM comics")
+    for item in comics_data:
+        title = item.get("title", "")
+        cursor.execute("INSERT INTO comics (title, data) VALUES (?, ?)", (title, json.dumps(item)))
+    conn.commit()
+    conn.close()
 
 
 @router.get("/comics")
@@ -17,9 +40,7 @@ def list_comics():
     """
     List all comics with only title, topic and a cover image (the first available image).
     """
-    comics_file_path = Path(__file__).parent.parent / "comics.json"
-    with open(comics_file_path, "r", encoding="utf-8") as f:
-        comics_data = json.load(f)
+    comics_data = _load_all_comics()
 
     files_root = Path(__file__).parent.parent / "files" / "comics"
     results: List[Dict[str, Any]] = []
@@ -77,10 +98,7 @@ def get_comic(comic_index: int):
     """
     Get a comic by its index.
     """
-    # Load the comics data from the JSON file
-    comics_file_path = Path(__file__).parent.parent / "comics.json"
-    with open(comics_file_path, "r", encoding="utf-8") as f:
-        comics_data = json.load(f)
+    comics_data = _load_all_comics()
 
     # Check if the comic_index is valid
     if comic_index < 0 or comic_index >= len(comics_data):
@@ -111,10 +129,7 @@ def save_comic(comic_index: int, comic_data: Dict[str, Any] = Body(...)):
         if "texts" not in panel or not isinstance(panel["texts"], list):
             panel["texts"] = []
 
-    # Load the comics data from the JSON file
-    comics_file_path = Path(__file__).parent.parent / "comics.json"
-    with open(comics_file_path, "r", encoding="utf-8") as f:
-        comics_data = json.load(f)
+    comics_data = _load_all_comics()
 
     if comic_index == -1:
         # Append new comic
@@ -127,9 +142,7 @@ def save_comic(comic_index: int, comic_data: Dict[str, Any] = Body(...)):
     # Update the comic data
     comics_data[comic_index] = comic_data
 
-    # Save the updated comics data back to the JSON file
-    with open(comics_file_path, "w", encoding="utf-8") as f:
-        json.dump(comics_data, f, indent=4)
+    _save_all_comics(comics_data)
 
     return {"message": "Comic updated successfully", "comic_index": comic_index}
 
@@ -163,9 +176,7 @@ async def upload_panel_image(
         )
 
     # Validate indices
-    comics_file_path = Path(__file__).parent.parent / "comics.json"
-    with open(comics_file_path, "r", encoding="utf-8") as f:
-        comics_data = json.load(f)
+    comics_data = _load_all_comics()
     if comic_index < 0 or comic_index >= len(comics_data):
         raise HTTPException(status_code=404, detail="Comic not found")
     panels = comics_data[comic_index].get("panels", [])
