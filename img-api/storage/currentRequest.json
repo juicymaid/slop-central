@@ -1,1 +1,0 @@
-{"prompt":"","negative_prompt":"","styles":[],"seed":-1,"sampler_name":"DPM++ 2M","batch_size":1,"n_iter":1,"steps":"26","cfg_scale":7,"width":1024,"height":1024,"send_images":true,"save_images":true,"do_not_save_grid":true,"resize_mode":1,"clip_skip":"2"}

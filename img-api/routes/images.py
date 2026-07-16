@@ -180,8 +180,7 @@ def get_image_details(image_id: str):
         if not image:
             raise HTTPException(status_code=404, detail="Image not found")
     
-    image["Clicks"] = image.get("Clicks", 0) + 1
-    utils.save_clicks()
+    utils.increment_click(image["Id"])
     copy_img = image.copy()
     copy_img.pop("tags_set", None)
     
@@ -353,19 +352,16 @@ def get_all_images(
         orig_img = utils.images_data.get(iid)
         
         if orig_img:
-            orig_img["Shows"] = orig_img.get("Shows", 0) + 1
-            # Sync the updated count to the dictionary being returned to the client
+            utils.increment_show(iid)
             img["Shows"] = orig_img["Shows"]
+            img["last_shown"] = orig_img.get("last_shown")
         else:
-            # Fallback if not found in images_data
             img["Shows"] = img.get("Shows", 0) + 1
             
         copy_img = img.copy()
         copy_img.pop("tags_set", None)
-        # Add boards info to the image data.
         copy_img = add_boards_info(copy_img)
         result.append(_sanitize_image_dict(copy_img))
-    utils.save_shows()
     return result
 
 @router.get("/similar-images/{image_id}")
@@ -384,13 +380,12 @@ def get_similar_images(image_id: int, page: int = 1, per_page: int = 5, mode: st
             img = utils.images_data.get(iid)
             if not img:
                 continue
-            img["Shows"] = img.get("Shows", 0) + 1
+            utils.increment_show(iid)
             copy_img = img.copy()
             copy_img.pop("tags_set", None)
             copy_img["similarity_score"] = round(score, 3)
             copy_img = add_boards_info(copy_img)
             result.append(_sanitize_image_dict(copy_img))
-        utils.save_shows()
         return result
 
     candidates = []
@@ -408,13 +403,12 @@ def get_similar_images(image_id: int, page: int = 1, per_page: int = 5, mode: st
     start = (page - 1) * per_page
     result = []
     for score, img in best_candidates[start:]:
-        img["Shows"] = img.get("Shows", 0) + 1
+        utils.increment_show(img["Id"])
         copy_img = img.copy()
         copy_img.pop("tags_set", None)
         copy_img["similarity_score"] = round(score, 3)
         copy_img = add_boards_info(copy_img)
         result.append(_sanitize_image_dict(copy_img))
-    utils.save_shows()
     return result
 # Lightweight in-memory search index for faster queries
 _SEARCH_INDEX = {
@@ -912,6 +906,14 @@ def _trash_image(image_id: int):
     if image_id in utils.trash_data:
         return  # already trashed
 
+    utils.trash_data[image_id] = {"TrashedAt": int(_time.time())}
+    # Remove from active list
+    try:
+        utils.all_images.remove(image)
+    except ValueError:
+        pass
+    utils.save_trash()
+
 class CloudImageRequest(BaseModel):
     image_base64: str
     prompt: str = ""
@@ -987,13 +989,6 @@ def save_cloud_image(req: CloudImageRequest):
     safe_img = new_img.copy()
     safe_img.pop("tags_set", None)
     return _sanitize_image_dict(safe_img)
-    utils.trash_data[image_id] = {"TrashedAt": int(_time.time())}
-    # Remove from active list
-    try:
-        utils.all_images.remove(image)
-    except ValueError:
-        pass
-    utils.save_trash()
 
 
 @router.post("/delete/{image_id}")

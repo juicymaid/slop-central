@@ -1,6 +1,6 @@
 import { reactive } from 'vue'
 import { saveToFile, loadFromFile } from '@/storage'
-import { current_model, defaultStyles } from '@/api'
+import { current_model, defaultStyles, apiUrl } from '@/api'
 import { comfyState, buildComfyPrompt, getActiveWorkflow } from './comfyui'
 
 const BACKEND_SETTINGS_FILE = 'backendSettings.json'
@@ -126,7 +126,7 @@ export const backendState = reactive({
   configs: { ...defaultConfigs },
 })
 
-let backendSettingsLoaded = false
+let loadBackendSettingsPromise = null
 
 const normalizeBaseUrl = (value) => {
   if (!value) return ''
@@ -196,31 +196,47 @@ export const updateBackendConfig = (backendId, patch) => {
 }
 
 export const loadBackendSettings = async () => {
-  if (backendSettingsLoaded) return
-  backendSettingsLoaded = true
+  if (loadBackendSettingsPromise) return loadBackendSettingsPromise
 
-  const stored = await loadFromFile(BACKEND_SETTINGS_FILE)
-  if (!stored) return
+  loadBackendSettingsPromise = (async () => {
+    try {
+      const response = await fetch(`${apiUrl}/backend-settings`)
+      if (!response.ok) return
+      const stored = await response.json()
+      if (!stored) return
 
-  if (stored.activeId && backendDefinitions[stored.activeId]) {
-    backendState.activeId = stored.activeId
-  }
+      if (stored.activeId && backendDefinitions[stored.activeId]) {
+        backendState.activeId = stored.activeId
+      }
 
-  if (stored.configs && typeof stored.configs === 'object') {
-    backendOptions.forEach((backend) => {
-      backendState.configs[backend.id] = mergeBackendConfig(backend.id, stored.configs[backend.id])
-    })
-  }
+      if (stored.configs && typeof stored.configs === 'object') {
+        backendOptions.forEach((backend) => {
+          if (stored.configs[backend.id]) {
+            backendState.configs[backend.id] = mergeBackendConfig(backend.id, stored.configs[backend.id])
+          }
+        })
+      }
+    } catch (e) {
+      console.error('Failed to load backend settings from database:', e)
+    }
+  })()
+
+  return loadBackendSettingsPromise
 }
 
 export const saveBackendSettings = async () => {
-  await saveToFile(
-    {
-      activeId: backendState.activeId,
-      configs: backendState.configs,
-    },
-    BACKEND_SETTINGS_FILE
-  )
+  try {
+    await fetch(`${apiUrl}/backend-settings`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        activeId: backendState.activeId,
+        configs: backendState.configs,
+      }),
+    })
+  } catch (e) {
+    console.error('Failed to save backend settings to database:', e)
+  }
 }
 
 const mapSamplerName = (backendId, samplerName) => {

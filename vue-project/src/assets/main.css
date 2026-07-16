@@ -8,12 +8,19 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme {
-  --color-obsidian: var(--color-theme-obsidian, #0D0D12);
-  --color-champagne: var(--color-theme-champagne, #C9A84C);
-  --color-ivory: var(--color-theme-ivory, #FAF8F5);
-  --color-slate: var(--color-theme-slate, #2A2A35);
+  --color-obsidian: var(--color-theme-background, #0D0D12);
+  --color-champagne: var(--color-theme-accent, #C9A84C);
+  --color-ivory: var(--color-theme-text, #FAF8F5);
+  --color-slate: var(--color-theme-border, #2A2A35);
   --color-panel: var(--color-theme-panel, #1A1A24);
-  --color-dark-input: var(--color-theme-dark-input, #14141A);
+  --color-dark-input: var(--color-theme-input, #14141A);
+
+  --color-background-theme: var(--color-theme-background, #0D0D12);
+  --color-accent: var(--color-theme-accent, #C9A84C);
+  --color-text-theme: var(--color-theme-text, #FAF8F5);
+  --color-border-theme: var(--color-theme-border, #2A2A35);
+  --color-input: var(--color-theme-input, #14141A);
+
   --font-sans: "Inter", "sans-serif";
   --font-mono: "JetBrains Mono", "monospace";
   --font-serif: "Playfair Display", "serif";

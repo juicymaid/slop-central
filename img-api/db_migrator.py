@@ -34,9 +34,21 @@ def init_db():
         dislikes INTEGER DEFAULT 0,
         rating REAL DEFAULT 0.0,
         phash TEXT,
+        last_viewed REAL,
+        last_shown REAL,
         metadata TEXT
     )
     """)
+
+    # Alter table to add columns to existing installations
+    try:
+        cursor.execute("ALTER TABLE images ADD COLUMN last_viewed REAL")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE images ADD COLUMN last_shown REAL")
+    except sqlite3.OperationalError:
+        pass
     
     # Boards table
     cursor.execute("""
@@ -134,6 +146,14 @@ def init_db():
     # Hentai status table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS hentai_status (
+        key TEXT PRIMARY KEY,
+        value TEXT
+    )
+    """)
+    
+    # Settings table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT
     )
@@ -380,6 +400,94 @@ def migrate_json_to_sqlite():
             )
         conn.commit()
         shutil.move("hentai_status.json", "hentai_status.json.bak")
+        
+    # 14. Migrate AI Settings
+    ai_settings_file = "storage/ai_settings.json"
+    if os.path.exists(ai_settings_file):
+        print("Migrating ai_settings.json...")
+        try:
+            with open(ai_settings_file, "r", encoding="utf-8") as f:
+                ai_data = json.load(f)
+            for k, v in ai_data.items():
+                cursor.execute(
+                    "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                    (k, json.dumps(v))
+                )
+            conn.commit()
+            shutil.move(ai_settings_file, ai_settings_file + ".bak")
+        except Exception as e:
+            print(f"Error migrating ai_settings: {e}")
+
+    # 15. Migrate Backend Settings
+    backend_settings_file = "storage/backendSettings.json"
+    if os.path.exists(backend_settings_file):
+        print("Migrating backendSettings.json...")
+        try:
+            with open(backend_settings_file, "r", encoding="utf-8") as f:
+                b_data = json.load(f)
+            if "activeId" in b_data:
+                cursor.execute(
+                    "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                    ("backend_active_id", json.dumps(b_data["activeId"]))
+                )
+            if "configs" in b_data and isinstance(b_data["configs"], dict):
+                for backend_id, config in b_data["configs"].items():
+                    cursor.execute(
+                        "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                        (f"backend_config_{backend_id}", json.dumps(config))
+                    )
+            conn.commit()
+            shutil.move(backend_settings_file, backend_settings_file + ".bak")
+        except Exception as e:
+            print(f"Error migrating backendSettings: {e}")
+        
+    # 16. Migrate Default Styles
+    default_styles_file = "storage/defaultStyles.json"
+    if os.path.exists(default_styles_file):
+        print("Migrating defaultStyles.json...")
+        try:
+            with open(default_styles_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            cursor.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                ("default_styles", json.dumps(data))
+            )
+            conn.commit()
+            shutil.move(default_styles_file, default_styles_file + ".bak")
+        except Exception as e:
+            print(f"Error migrating defaultStyles: {e}")
+
+    # 17. Migrate Current Request
+    current_request_file = "storage/currentRequest.json"
+    if os.path.exists(current_request_file):
+        print("Migrating currentRequest.json...")
+        try:
+            with open(current_request_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            cursor.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                ("current_request", json.dumps(data))
+            )
+            conn.commit()
+            shutil.move(current_request_file, current_request_file + ".bak")
+        except Exception as e:
+            print(f"Error migrating currentRequest: {e}")
+
+    # 18. Migrate Current Model
+    current_model_file = "storage/currentModel.json"
+    if os.path.exists(current_model_file):
+        print("Migrating currentModel.json...")
+        try:
+            with open(current_model_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            cursor.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                ("current_model", json.dumps(data))
+            )
+            conn.commit()
+            shutil.move(current_model_file, current_model_file + ".bak")
+        except Exception as e:
+            print(f"Error migrating currentModel: {e}")
         
     conn.close()
     print("Migration to SQLite completed successfully.")

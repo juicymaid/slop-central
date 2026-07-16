@@ -1,4 +1,4 @@
-import { reactive } from "vue"
+import { reactive, ref } from "vue"
 
 const hostname = typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1'
 export const apiUrl = `http://${hostname}:8000`
@@ -131,7 +131,7 @@ export function ImageSrc(path) {
     return `${apiUrl}${path}`
 }
 
-export const defaultStyles = reactive({})
+export const defaultStyles = ref({})
 
 export function formatRequest(prompt = null) {
     // Unproxy the request object to a plain JS object

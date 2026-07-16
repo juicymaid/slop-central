@@ -18,7 +18,7 @@ graph TD
     Frontend -->|HTTP / JSON API| Backend[FastAPI Backend: Port 8000]
     Frontend -->|WebSocket: VRAM Stream| Backend
     Frontend -->|WebSocket: Chat Assistant| Backend
-    Backend -->|Flat JSON Files| Storage[(Flat JSON Databases)]
+    Backend -->|SQLite DB: pinthesis.db| Storage[(SQLite Database)]
     Backend -->|HTTP / Tool Calls| LMStudio[LM Studio: Port 1234]
     Backend -->|HTTP / SDAPI Proxy| SDWebUI[SD WebUI / Forge: Port 7860]
     Backend -->|HTTP / WS Connection| ComfyUI[ComfyUI: Port 8188]
@@ -116,10 +116,10 @@ except Exception as e:
   * `webState`: Tracks active generator backend engine, sidebar layout variables, and WebSocket VRAM telemetry.
   * `request`: Serves as the central repository for image generation parameters (prompts, size, steps).
   * `current_model`: Stores details of active checkpoints and LoRAs.
-* **Backend Datastore (Flat-File JSON)**: Data is stored in flat files in the project root (`images.json`, `likes.json`, etc.). State synchronization is managed in `img-api/utils.py`:
-  * **JIT Lazy Loading**: Files are loaded asynchronously into memory on startup via a daemon thread.
-  * **Load Middleware**: A FastAPI middleware (`_ensure_data_loaded`) intercepts incoming endpoints (excluding static, doc, or proxy targets) and blocks execution via `asyncio.to_thread` until memory load completes.
-  * **Sanitization**: Before committing data back to disk, explicit save functions sanitize runtime-only properties (e.g., stripping `tags_set`, `pHash`, `Likes`, `Dislikes`, `Rating` from the serializable image schema).
+* **Backend Datastore (SQLite Database)**: Data is stored in a local SQLite database file `pinthesis.db` in `img-api/`. State synchronization and loading are managed in `img-api/utils.py`:
+  - **JIT Lazy Loading**: Image and board configurations are loaded asynchronously into memory on startup via a daemon thread.
+  - **Load Middleware**: A FastAPI middleware (`_ensure_data_loaded`) intercepts incoming endpoints (excluding static, doc, or proxy targets) and blocks execution via `asyncio.to_thread` until memory load completes.
+  - **Sanitization**: Before committing metadata changes back to the `images` table, explicit save functions sanitize runtime-only properties (e.g., stripping `tags_set`, `pHash`, `Likes`, `Dislikes`, `Rating` from the serializable metadata JSON structure).
 
 ---
 

@@ -28,11 +28,15 @@ const aiSettings = ref({
   temperature: 0.7,
 })
 const aiSaveState = ref('idle')
-
+let lastSavedAiSettings = {}
 async function loadAiSettings() {
   try {
     const res = await fetch(`${apiUrl}/ai-settings`)
-    if (res.ok) aiSettings.value = await res.json()
+    if (res.ok) {
+      const data = await res.json()
+      aiSettings.value = data
+      lastSavedAiSettings = { ...data }
+    }
   } catch (e) {
     console.error('Failed to load AI settings:', e)
   }
@@ -45,11 +49,21 @@ function scheduleAiSave() {
   aiSaveState.value = 'saving'
   aiSaveTimer = setTimeout(async () => {
     try {
-      await fetch(`${apiUrl}/ai-settings`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(aiSettings.value),
-      })
+      const diff = {}
+      for (const key in aiSettings.value) {
+        if (aiSettings.value[key] !== lastSavedAiSettings[key]) {
+          diff[key] = aiSettings.value[key]
+        }
+      }
+
+      if (Object.keys(diff).length > 0) {
+        await fetch(`${apiUrl}/ai-settings`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(diff),
+        })
+        lastSavedAiSettings = { ...aiSettings.value }
+      }
       aiSaveState.value = 'saved'
     } catch (e) {
       console.error('Failed to save AI settings:', e)
@@ -104,16 +118,6 @@ const ensureActiveConfig = () => {
   }
 }
 
-const scheduleSave = () => {
-  if (!isLoaded.value) return
-  if (saveTimer) clearTimeout(saveTimer)
-  saveState.value = 'saving'
-  saveTimer = setTimeout(async () => {
-    await saveBackendSettings()
-    saveState.value = 'saved'
-    lastSavedAt.value = Date.now()
-  }, 300)
-}
 
 const availableModels = ref([])
 const showCustomDefaultModel = ref(false)
@@ -123,12 +127,12 @@ const showCustomAutocompleteModel = ref(false)
 
 const currentThemeKey = ref('classic')
 const customColors = ref({
-  obsidian: '#0D0D12',
-  champagne: '#C9A84C',
-  ivory: '#FAF8F5',
-  slate: '#2A2A35',
+  background: '#0D0D12',
+  accent: '#C9A84C',
+  text: '#FAF8F5',
+  border: '#2A2A35',
   panel: '#1A1A24',
-  'dark-input': '#14141A'
+  input: '#14141A'
 })
 
 function selectTheme(key) {
@@ -185,8 +189,56 @@ onMounted(async () => {
   }
 })
 
-watch(activeBackendId, ensureActiveConfig)
-watch(backendState, scheduleSave, { deep: true })
+watch(activeBackendId, async (newVal, oldVal) => {
+  ensureActiveConfig()
+  if (newVal === oldVal || !isLoaded.value) return
+
+  saveState.value = 'saving'
+  try {
+    await fetch(`${apiUrl}/backend-settings`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activeId: newVal })
+    })
+    saveState.value = 'saved'
+    lastSavedAt.value = Date.now()
+  } catch (e) {
+    console.error('Failed to save active backend:', e)
+    saveState.value = 'error'
+  }
+})
+
+let configSaveTimer = null
+watch(
+  () => backendState.configs[activeBackendId.value],
+  (newConfig) => {
+    if (!isLoaded.value) return
+    if (configSaveTimer) clearTimeout(configSaveTimer)
+
+    saveState.value = 'saving'
+    const backendId = activeBackendId.value
+
+    configSaveTimer = setTimeout(async () => {
+      try {
+        await fetch(`${apiUrl}/backend-settings`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            configs: {
+              [backendId]: newConfig
+            }
+          })
+        })
+        saveState.value = 'saved'
+        lastSavedAt.value = Date.now()
+      } catch (e) {
+        console.error('Failed to save backend config:', e)
+        saveState.value = 'error'
+      }
+    }, 300)
+  },
+  { deep: true }
+)
 </script>
 
 <template>
@@ -504,44 +556,44 @@ watch(backendState, scheduleSave, { deep: true })
           <div class="space-y-1">
             <div class="text-[10px] uppercase tracking-wider text-gray-500 flex justify-between items-center">
               <span>Main Background</span>
-              <span class="font-mono text-[9px]">{{ customColors.obsidian }}</span>
+              <span class="font-mono text-[9px]">{{ customColors.background }}</span>
             </div>
             <div class="flex gap-2 items-center">
-              <input type="color" :value="customColors.obsidian" @input="updateCustomColor('obsidian', $event.target.value)" class="w-8 h-8 rounded border-none bg-transparent cursor-pointer" />
-              <span class="text-xs text-gray-300">Obsidian</span>
+              <input type="color" :value="customColors.background" @input="updateCustomColor('background', $event.target.value)" class="w-8 h-8 rounded border-none bg-transparent cursor-pointer" />
+              <span class="text-xs text-gray-300">Background</span>
             </div>
           </div>
           
           <div class="space-y-1">
             <div class="text-[10px] uppercase tracking-wider text-gray-500 flex justify-between items-center">
               <span>Accent Color</span>
-              <span class="font-mono text-[9px]">{{ customColors.champagne }}</span>
+              <span class="font-mono text-[9px]">{{ customColors.accent }}</span>
             </div>
             <div class="flex gap-2 items-center">
-              <input type="color" :value="customColors.champagne" @input="updateCustomColor('champagne', $event.target.value)" class="w-8 h-8 rounded border-none bg-transparent cursor-pointer" />
-              <span class="text-xs text-gray-300">Champagne</span>
+              <input type="color" :value="customColors.accent" @input="updateCustomColor('accent', $event.target.value)" class="w-8 h-8 rounded border-none bg-transparent cursor-pointer" />
+              <span class="text-xs text-gray-300">Accent</span>
             </div>
           </div>
 
           <div class="space-y-1">
             <div class="text-[10px] uppercase tracking-wider text-gray-500 flex justify-between items-center">
               <span>Foreground Text</span>
-              <span class="font-mono text-[9px]">{{ customColors.ivory }}</span>
+              <span class="font-mono text-[9px]">{{ customColors.text }}</span>
             </div>
             <div class="flex gap-2 items-center">
-              <input type="color" :value="customColors.ivory" @input="updateCustomColor('ivory', $event.target.value)" class="w-8 h-8 rounded border-none bg-transparent cursor-pointer" />
-              <span class="text-xs text-gray-300">Ivory</span>
+              <input type="color" :value="customColors.text" @input="updateCustomColor('text', $event.target.value)" class="w-8 h-8 rounded border-none bg-transparent cursor-pointer" />
+              <span class="text-xs text-gray-300">Text</span>
             </div>
           </div>
 
           <div class="space-y-1">
             <div class="text-[10px] uppercase tracking-wider text-gray-500 flex justify-between items-center">
               <span>Borders & Cards</span>
-              <span class="font-mono text-[9px]">{{ customColors.slate }}</span>
+              <span class="font-mono text-[9px]">{{ customColors.border }}</span>
             </div>
             <div class="flex gap-2 items-center">
-              <input type="color" :value="customColors.slate" @input="updateCustomColor('slate', $event.target.value)" class="w-8 h-8 rounded border-none bg-transparent cursor-pointer" />
-              <span class="text-xs text-gray-300">Slate</span>
+              <input type="color" :value="customColors.border" @input="updateCustomColor('border', $event.target.value)" class="w-8 h-8 rounded border-none bg-transparent cursor-pointer" />
+              <span class="text-xs text-gray-300">Border</span>
             </div>
           </div>
 
@@ -559,10 +611,10 @@ watch(backendState, scheduleSave, { deep: true })
           <div class="space-y-1">
             <div class="text-[10px] uppercase tracking-wider text-gray-500 flex justify-between items-center">
               <span>Inputs & Forms</span>
-              <span class="font-mono text-[9px]">{{ customColors['dark-input'] }}</span>
+              <span class="font-mono text-[9px]">{{ customColors.input }}</span>
             </div>
             <div class="flex gap-2 items-center">
-              <input type="color" :value="customColors['dark-input']" @input="updateCustomColor('dark-input', $event.target.value)" class="w-8 h-8 rounded border-none bg-transparent cursor-pointer" />
+              <input type="color" :value="customColors.input" @input="updateCustomColor('input', $event.target.value)" class="w-8 h-8 rounded border-none bg-transparent cursor-pointer" />
               <span class="text-xs text-gray-300">Input Background</span>
             </div>
           </div>

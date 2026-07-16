@@ -9,6 +9,7 @@ const emit = defineEmits(['update:input'])
 const tags = ref([])
 
 const results = ref([])
+const containerRef = ref(null)
 
 const selectedIndex = ref(0)
 
@@ -31,15 +32,14 @@ const categoryMap = {
     "6": "Wildcard",
 };
 const categoryColorMap = {
-    "-1": ["red", "maroon"],
-    "0": ["lightblue", "dodgerblue"],
-    "1": ["indianred", "firebrick"],
-    "3": ["violet", "darkorchid"],
-    "4": ["lightgreen", "darkgreen"],
-    "5": ["orange", "darkorange"],
-
-    "6": ["gray", "dimgray"],
-}
+    "-1": ["#EF4444", "#991B1B"], // Red
+    "0": ["#3B82F6", "#1D4ED8"],  // Blue
+    "1": ["#EC4899", "#9D174D"],  // Pink
+    "3": ["#8B5CF6", "#5B21B6"],  // Purple
+    "4": ["#10B981", "#065F46"],  // Green
+    "5": ["#F59E0B", "#92400E"],  // Orange
+    "6": ["#6B7280", "#374151"],  // Gray
+};
 
 const props = defineProps({
     input: {
@@ -203,13 +203,27 @@ function searchForTags(searchTerm) {
 
             return matchesTag || matchesAlias
         })
-        results.value = matchingTags.slice(0, 10)
+        const finalMatches = matchingTags.slice(0, 10)
+        if (finalMatches.length === 1 && finalMatches[0].tag.toLowerCase() === searchTerm.toLowerCase()) {
+            results.value = []
+        } else {
+            results.value = finalMatches
+        }
         selectedIndex.value = 0
     }, 50)
 }
 
 watch(() => props.input, () => {
     updateCursorPosition()
+})
+
+watch(selectedIndex, (index) => {
+    if (containerRef.value) {
+        const children = containerRef.value.children
+        if (children && children[index]) {
+            children[index].scrollIntoView({ block: 'nearest' })
+        }
+    }
 })
 
 function handleKeyDown(e) {
@@ -262,21 +276,21 @@ function ApplyTag(result) {
 </script>
 
 <template>
-    <div v-if="results.length > 0"
-        class="absolute z-50 w-full bg-[#1A1A24]/90 backdrop-blur-xl  border border-[#2A2A35] overflow-y-auto p-3 max-h-64 top-full mt-2 shadow-[0_8px_30px_rgb(0,0,0,0.5)]">
+    <div v-if="results.length > 0" ref="containerRef"
+        class="absolute z-50 w-full bg-[#13131A]/95 backdrop-blur-xl border border-[#2A2A35] rounded-2xl overflow-y-auto p-2 max-h-64 top-full mt-2 shadow-[0_12px_40px_rgba(0,0,0,0.6)]">
         <div v-for="(result, index) in results" :key="result.tag" @click="ApplyTag(result)"
-            @mouseenter="selectedIndex = index" :class="['px-4 py-2.5 rounded-2xl cursor-pointer transition-colors flex items-center mb-1 last:mb-0',
-                index === selectedIndex ? 'bg-[#2A2A35] shadow-inner' : 'hover:bg-[#2A2A35]/50']"
-            :style="{ borderLeft: `4px solid ${categoryColorMap[result.category][0]}` }">
-            <div class="flex justify-between items-center w-full ml-2">
-                <span class="font-sans font-medium text-[#FAF8F5]">{{ result.tag }}</span>
-                <span class="text-xs text-[#FAF8F5]/60 flex items-center font-mono">
+            @mouseenter="selectedIndex = index" :class="['px-3.5 py-2.5 rounded-xl cursor-pointer transition-colors flex items-center gap-3 mb-1 last:mb-0',
+                index === selectedIndex ? 'bg-[#2A2A35]/80 text-[#FAF8F5]' : 'hover:bg-[#2A2A35]/40 text-[#FAF8F5]/90']">
+            <span class="w-1.5 h-5 rounded-full shrink-0" :style="{ backgroundColor: categoryColorMap[result.category][0] }"></span>
+            <div class="flex justify-between items-center w-full">
+                <span class="font-sans font-medium text-sm">{{ result.tag }}</span>
+                <span class="text-xs text-[#FAF8F5]/60 flex items-center font-mono gap-3">
                     <span
-                        class="inline-block px-2 py-1 rounded-md text-[10px] uppercase tracking-widest mr-3 font-sans font-bold shadow-sm"
+                        class="inline-block px-2 py-0.5 rounded-md text-[9px] uppercase tracking-widest font-sans font-bold shadow-sm"
                         :style="{ backgroundColor: categoryColorMap[result.category][1], color: 'white' }">
                         {{ categoryMap[result.category] }}
                     </span>
-                    <span>{{ result.count.toLocaleString() }}</span>
+                    <span v-if="result.count > 0">{{ result.count.toLocaleString() }}</span>
                 </span>
             </div>
         </div>

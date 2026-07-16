@@ -190,7 +190,7 @@ def load_images():
         cursor.execute("""
             SELECT id, path, prompt, tagger_prompt, description, width, height, file_size, 
                    model_hash, negative_prompt, sampler, clicks, shows, likes, dislikes, 
-                   rating, phash, metadata FROM images
+                   rating, phash, last_viewed, last_shown, metadata FROM images
         """)
         rows = cursor.fetchall()
         conn.close()
@@ -224,7 +224,9 @@ def load_images():
             "Likes": row["likes"] or 0,
             "Dislikes": row["dislikes"] or 0,
             "Rating": row["rating"] or 0.0,
-            "pHash": row["phash"]
+            "pHash": row["phash"],
+            "last_viewed": row["last_viewed"],
+            "last_shown": row["last_shown"]
         }
         
         for k, v in meta.items():
@@ -269,8 +271,10 @@ def save_images():
             dislikes = img.get("Dislikes", 0)
             rating = img.get("Rating", 0.0)
             phash = img.get("pHash")
+            last_viewed = img.get("last_viewed")
+            last_shown = img.get("last_shown")
             
-            _runtime_fields = {"tags_set", "pHash", "Likes", "Dislikes", "Rating", "Clicks", "Shows", "Id", "Path", "Prompt", "taggerPrompt", "description", "Width", "Height", "FileSize", "ModelHash", "NegativePrompt", "Sampler"}
+            _runtime_fields = {"tags_set", "pHash", "Likes", "Dislikes", "Rating", "Clicks", "Shows", "Id", "Path", "Prompt", "taggerPrompt", "description", "Width", "Height", "FileSize", "ModelHash", "NegativePrompt", "Sampler", "last_viewed", "last_shown"}
             clean_metadata = {k: v for k, v in img.items() if k not in _runtime_fields and not k.startswith("_")}
             metadata_str = json.dumps(clean_metadata)
             
@@ -278,17 +282,69 @@ def save_images():
                 INSERT OR REPLACE INTO images (
                     id, path, prompt, tagger_prompt, description, width, height, file_size, 
                     model_hash, negative_prompt, sampler, clicks, shows, likes, dislikes, 
-                    rating, phash, metadata
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    rating, phash, last_viewed, last_shown, metadata
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 img_id, path, prompt, tagger_prompt, description, width, height, file_size,
                 model_hash, negative_prompt, sampler, clicks, shows, likes, dislikes,
-                rating, phash, metadata_str
+                rating, phash, last_viewed, last_shown, metadata_str
             ))
         conn.commit()
         conn.close()
     except Exception as e:
         print("Error saving images to SQLite:", e)
+
+def increment_click(image_id: int) -> bool:
+    """Increment Click count for an image if not on a 30s cooldown."""
+    img = images_data.get(image_id)
+    if not img:
+        return False
+    now = time.time()
+    last_v = img.get("last_viewed")
+    if last_v is not None and now - last_v < 30.0:
+        return False  # Cooldown active
+    img["Clicks"] = img.get("Clicks", 0) + 1
+    img["last_viewed"] = now
+    
+    # Save to DB
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE images SET clicks = ?, last_viewed = ? WHERE id = ?",
+            (img["Clicks"], now, image_id)
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("Error updating image click to SQLite:", e)
+    return True
+
+def increment_show(image_id: int) -> bool:
+    """Increment Show count for an image if not on a 30s cooldown."""
+    img = images_data.get(image_id)
+    if not img:
+        return False
+    now = time.time()
+    last_s = img.get("last_shown")
+    if last_s is not None and now - last_s < 30.0:
+        return False  # Cooldown active
+    img["Shows"] = img.get("Shows", 0) + 1
+    img["last_shown"] = now
+    
+    # Save to DB
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE images SET shows = ?, last_shown = ? WHERE id = ?",
+            (img["Shows"], now, image_id)
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("Error updating image show to SQLite:", e)
+    return True
 
 def load_votes():
     pass

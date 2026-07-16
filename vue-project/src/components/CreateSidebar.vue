@@ -1,6 +1,8 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { onUiUpdate } from '@/scripts/autoComplete'
+import '@/scripts/edit-attention.js'
+import '@/scripts/edit-order.js'
 
 import { useTextareaAutosize } from '@vueuse/core'
 import { api as viewerApi } from 'v-viewer'
@@ -722,39 +724,85 @@ window.addEventListener('keydown', (e) => {
 })
 
 
+let lastSavedRequest = {}
+let lastSavedCurrentModel = {}
+
 async function SaveCurrentSettings() {
-
-    saveToFile(request, 'currentRequest.json')
-
-    if (current_model.model != null && current_model.model.title != null) {
-        saveToFile(current_model, 'currentModel.json')
+    const requestDiff = {}
+    for (const key in request) {
+        if (request[key] !== lastSavedRequest[key]) {
+            requestDiff[key] = request[key]
+        }
     }
 
-    // Save default styles to local storage
-    saveDefaultStyles()
+    if (Object.keys(requestDiff).length > 0) {
+        try {
+            await fetch(`${apiUrl}/settings/current_request`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestDiff)
+            })
+            Object.assign(lastSavedRequest, request)
+        } catch (e) {
+            console.error('Failed to patch current request settings:', e)
+        }
+    }
+
+    const modelDiff = {}
+    if (JSON.stringify(current_model.model) !== JSON.stringify(lastSavedCurrentModel.model)) {
+        modelDiff.model = current_model.model
+    }
+    if (JSON.stringify(current_model.loras) !== JSON.stringify(lastSavedCurrentModel.loras)) {
+        modelDiff.loras = current_model.loras
+    }
+
+    if (Object.keys(modelDiff).length > 0) {
+        try {
+            await fetch(`${apiUrl}/settings/current_model`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(modelDiff)
+            })
+            lastSavedCurrentModel = JSON.parse(JSON.stringify(current_model))
+        } catch (e) {
+            console.error('Failed to patch current model settings:', e)
+        }
+    }
+
+    if (current_model.model?.model_name) {
+        saveDefaultStyles()
+    }
 
     console.log('Current settings saved successfully.')
 }
 async function loadCurrentSettings() {
-    // Load current request settings from local storage
-    const savedRequest = await loadFromFile('currentRequest.json')
-
-    if (savedRequest) {
-        Object.assign(request, savedRequest)
+    try {
+        const reqResponse = await fetch(`${apiUrl}/settings/current_request`)
+        if (reqResponse.ok) {
+            const savedRequest = await reqResponse.json()
+            if (savedRequest) {
+                Object.assign(request, savedRequest)
+                lastSavedRequest = { ...request }
+            }
+        }
+    } catch (e) {
+        console.error('Failed to load current request from database:', e)
     }
-    console.log('Current request loaded successfully:', request)
 
-    // Load current model and loras from local storage
-    const savedModel = await loadFromFile('currentModel.json')
-    if (savedModel) {
-        Object.assign(current_model, savedModel)
+    try {
+        const modelResponse = await fetch(`${apiUrl}/settings/current_model`)
+        if (modelResponse.ok) {
+            const savedModel = await modelResponse.json()
+            if (savedModel) {
+                Object.assign(current_model, savedModel)
+                lastSavedCurrentModel = JSON.parse(JSON.stringify(current_model))
+            }
+        }
+    } catch (e) {
+        console.error('Failed to load current model from database:', e)
     }
-    console.log('Current model loaded successfully:', current_model)
 
-
-    // Load default styles from local storage
-    loadDefaultStyles()
-
+    await loadDefaultStyles()
 
     console.log('Current settings loaded successfully.')
     console.log(document.getElementById('positive_prompt'))
@@ -1007,28 +1055,50 @@ watch(history, async (newHistory) => {
 }, { deep: true })
 
 
-async function saveDefaultStyles() {
-    if (!defaultStyles.value || Object.keys(defaultStyles.value).length === 0) {
-        console.warn('No default styles to save.')
+async function saveDefaultStyles(param) {
+    let modelName = current_model.model?.model_name
+    if (!modelName) {
+        console.warn('No active model name to save default styles for.')
         return
     }
+    const modelStyle = defaultStyles.value[modelName]
+    if (!modelStyle) return
 
-    saveToFile(defaultStyles.value, 'defaultStyles.json')
+    try {
+        await fetch(`${apiUrl}/settings/default_styles`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                [modelName]: modelStyle
+            })
+        })
+    } catch (e) {
+        console.error('Failed to save default style for model:', e)
+    }
 }
 async function loadDefaultStyles() {
-    const styles = await loadFromFile('defaultStyles.json')
-    if (styles) {
-        defaultStyles.value = styles
-    } else {
+    try {
+        const response = await fetch(`${apiUrl}/settings/default_styles`)
+        if (response.ok) {
+            const styles = await response.json()
+            if (styles) {
+                defaultStyles.value = styles
+            } else {
+                defaultStyles.value = {}
+            }
+        }
+    } catch (e) {
+        console.error('Failed to load default styles from database:', e)
         defaultStyles.value = {}
     }
-    if (defaultStyles.value[current_model.model.model_name] == null) {
-        defaultStyles.value[current_model.model.model_name] = {
-            prompt_prefix: "",
-            negative_prompt_prefix: ""
+    if (current_model.model && current_model.model.model_name) {
+        if (defaultStyles.value[current_model.model.model_name] == null) {
+            defaultStyles.value[current_model.model.model_name] = {
+                prompt_prefix: "",
+                negative_prompt_prefix: ""
+            }
         }
     }
-
     console.log('Default styles loaded successfully:', defaultStyles.value)
 }
 
@@ -1340,11 +1410,93 @@ async function handlePromptDrop(event) {
     showDragOverlay.value = false
 }
 
+const defaultTagColors = {
+  6: '#D3D3D3', // Other Light gray
+  0: '#ffffff', // General - White
+  1: '#337ab7', // Artist - Blue
+  3: '#f0ad4e', // Copyright - Orange
+  4: '#d9534f', // Character - Red
+  5: '#808080', // Meta - dark gray
+};
+
+const tagColors = ref(JSON.parse(localStorage.getItem('tagColors')) || { ...defaultTagColors });
+const tag_data = {};
+
+function highlightPrompt(promptText) {
+    if (!promptText) return '';
+
+    function escapeHtml(str) {
+        return str.replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+    const regex = /(<lora:[^>]+>)|(:[0-9.]+)|([()\[\]{}])|(\b[0-9.]+\b)|([,;\n]+)|([^,;\n()\[\]{}:<>]+)/g;
+    let match;
+    let html = '';
+
+    while ((match = regex.exec(promptText)) !== null) {
+        if (match[1]) {
+            html += `<span class="text-champagne font-bold">${escapeHtml(match[1])}</span>`;
+        } else if (match[2]) {
+            html += `<span class="text-orange-400 font-bold">${escapeHtml(match[2])}</span>`;
+        } else if (match[3]) {
+            html += `<span class="text-champagne font-extrabold">${escapeHtml(match[3])}</span>`;
+        } else if (match[4]) {
+            html += `<span class="text-blue-400">${escapeHtml(match[4])}</span>`;
+        } else if (match[5]) {
+            html += `<span class="text-gray-600">${escapeHtml(match[5])}</span>`;
+        } else if (match[6]) {
+            let tag = match[6];
+            let trimmed = tag.trim();
+            if (trimmed) {
+                const normalizedTag = trimmed.toLowerCase().replace(/[\s_]+/g, '_');
+                const alternateTag = trimmed.toLowerCase();
+                let tagType = tag_data[normalizedTag] || tag_data[alternateTag];
+                if (tagType === undefined) tagType = 6;
+                const color = tagColors.value[tagType] || 'inherit';
+
+                const leadingSpace = tag.match(/^\s*/)[0];
+                const trailingSpace = tag.match(/\s*$/)[0];
+                html += leadingSpace + `<span style="color: ${color};">${escapeHtml(trimmed)}</span>` + trailingSpace;
+            } else {
+                html += escapeHtml(tag);
+            }
+        }
+    }
+    return html;
+}
+
 var generationCosts = ref({
     totalCosts: 0,
 })
 
 onMounted(async () => {
+    try {
+        const response = await fetch("/tags.csv")
+        const text = await response.text()
+        const lines = text.split('\n')
+        for (let line of lines) {
+            if (!line.trim()) continue
+            let parts = line.split(',')
+            if (parts.length >= 2) {
+                const name = parts[0].toLowerCase()
+                const type = parseInt(parts[1])
+                if (!isNaN(type)) {
+                    tag_data[name] = type
+                    const nameWithoutUnderscores = name.replace(/_/g, ' ')
+                    if (nameWithoutUnderscores !== name) {
+                        tag_data[nameWithoutUnderscores] = type
+                    }
+                }
+            }
+        }
+        console.log("Loaded", Object.keys(tag_data).length, "tags for prompt highlighting")
+    } catch (error) {
+        console.error("Error loading tag data for prompt highlighting:", error)
+    }
     await loadBackendSettings()
     await loadComfyWorkflows()
     getBackendStatus()
@@ -1394,17 +1546,7 @@ onMounted(async () => {
             if (currentModel) {
                 current_model.model = { ...currentModel }
             }
-            //load default styles from browser storage
-            const styles = loadFromFile('defaultStyles.json')
-            if (styles) {
-                defaultStyles.value = JSON.parse(styles)
-            }
-            if (!defaultStyles.value[current_model.model.model_name]) {
-                defaultStyles.value[current_model.model.model_name] = {
-                    prompt_prefix: "",
-                    negative_prompt_prefix: ""
-                }
-            }
+            await loadDefaultStyles()
         }
     }
 
@@ -2598,9 +2740,9 @@ function togglePromptAutocomplete() {
     aiSettings.value.autocomplete_enabled = !aiSettings.value.autocomplete_enabled
     // Save to backend immediately
     fetch(apiUrl + '/ai-settings', {
-        method: 'PUT',
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(aiSettings.value)
+        body: JSON.stringify({ autocomplete_enabled: aiSettings.value.autocomplete_enabled })
     }).catch(e => console.error('Failed to save autocomplete toggle:', e))
 }
 
@@ -2823,7 +2965,7 @@ watch(activeTab, (newTab) => {
         <div :style="isFullscreen ? { width: `${webState.sidebarWidth}px` } : {}"
             class="flex flex-col h-full border-r border-[#222836]">
             <!-- Fixed Header with close button -->
-            <div class="flex items-center justify-between p-4 border-b border-[#222836] flex-shrink-0">
+            <div class="flex items-center justify-between p-4 border-b borderborde flex-shrink-0">
                 <!-- Fixed Tab Navigation -->
                 <div class="flex flex-shrink-0 bg-[#0D0D12] rounded-lg overflow-hidden p-1 space-x-1">
                     <button v-if="!isFullscreen" @click="activeTab = 'generate'"
@@ -3700,7 +3842,7 @@ watch(activeTab, (newTab) => {
                                 </div>
 
                                 <div
-                                    class="sidebar-card p-4 space-y-2 focus-within:border-[#C9A84C]/40 transition-colors duration-200">
+                                    class="sidebar-card p-4 space-y-2 focus-within:border-champagne/40 transition-colors duration-200">
                                     <div class="relative rounded-lg min-h-[72px]"
                                         @dragenter.prevent="(e) => { showDragOverlay = true; }" @dragover.prevent
                                         @dragleave="(e) => { showDragOverlay = false; }"
@@ -3708,16 +3850,21 @@ watch(activeTab, (newTab) => {
 
                                         <!-- Ghost Text / Inline Autocomplete Overlay (matches font and sizing of textarea) -->
                                         <div v-if="aiSettings.autocomplete_enabled && ghostText"
-                                            class="absolute inset-0 pointer-events-none text-sm leading-relaxed whitespace-pre-wrap break-words text-transparent select-none"
-                                            style="font-family: inherit; font-size: inherit; line-height: inherit; padding: 0px; margin: 0px;">
+                                            class="absolute inset-0 pointer-events-none text-sm leading-relaxed whitespace-pre-wrap break-words text-transparent select-none p-0 m-0 border-none outline-none overflow-hidden"
+                                            style="font-family: inherit; font-size: inherit; line-height: inherit;">
                                             <span class="text-transparent">{{ request.prompt }}</span><span
-                                                class="text-gray-500/60 font-medium bg-[#C9A84C]/10 rounded px-0.5 border-b border-[#C9A84C]/20">{{
+                                                class="text-gray-500/60 font-medium bg-champagne/10 rounded px-0.5 border-b border-champagne/20">{{
                                                     ghostText }}</span>
                                         </div>
+                                        <!-- Highlighted Prompt Overlay -->
+                                        <div class="absolute inset-0 pointer-events-none text-sm leading-relaxed whitespace-pre-wrap break-words z-0 select-none text-ivory/90 p-0 m-0 border-none outline-none overflow-hidden"
+                                            style="font-family: inherit !important; font-size: inherit !important; line-height: inherit !important; font-style: normal !important;"
+                                            v-html="highlightPrompt(request.prompt)" />
 
                                         <textarea id="positive_prompt" v-model="request.prompt"
                                             placeholder="Your prompt goes here..."
-                                            class="positive_prompt w-full text-sm bg-transparent text-[#E7E9F2] placeholder-gray-500 leading-relaxed resize-none focus:outline-none relative z-10"
+                                            class="positive_prompt w-full text-sm bg-transparent text-transparent caret-ivory placeholder-gray-500 leading-relaxed resize-none focus:outline-none relative z-10 p-0 m-0 border-none outline-none overflow-hidden"
+                                            style="font-family: inherit !important; font-size: inherit !important; line-height: inherit !important; font-style: normal !important;"
                                             rows="3" ref="positivePrompt" @input="autoResizeTextArea($event.target)"
                                             @keydown="handleAutocompleteKeydown" />
 
@@ -3728,34 +3875,7 @@ watch(activeTab, (newTab) => {
                                         </div>
                                     </div>
 
-                                    <!-- Copilot Status Indicator Footer -->
-                                    <div
-                                        class="flex items-center justify-between border-t border-[#232834]/50 pt-2 text-[10px] text-gray-500 select-none">
-                                        <div class="flex items-center gap-1.5">
-                                            <span class="text-gray-600">Prompt:</span>
-                                            <span class="font-mono text-gray-400">{{ request.prompt ?
-                                                request.prompt.length
-                                                : 0 }}
-                                                chars</span>
-                                        </div>
 
-
-                                        <div class="flex items-center gap-1.5 cursor-pointer hover:text-gray-300 transition-colors"
-                                            @click="togglePromptAutocomplete"
-                                            :title="aiSettings.autocomplete_enabled ? 'Click to turn off autocomplete' : 'Click to turn on autocomplete'">
-                                            <template v-if="aiSettings.autocomplete_enabled">
-                                                <span class="w-1.5 h-1.5 rounded-full bg-[#C9A84C]"
-                                                    :class="{ 'animate-pulse bg-amber-400': isFetchingAutocomplete }"></span>
-                                                <span
-                                                    class="text-[9px] bg-[#2A2F3B] text-gray-400 px-1 py-0.2 rounded border border-[#353B48]">TAB</span>
-                                            </template>
-                                            <template v-else>
-                                                <span class="w-1.5 h-1.5 rounded-full bg-gray-600"></span>
-                                                <span>copilot off</span>
-                                            </template>
-                                        </div>
-
-                                    </div>
 
                                     <!-- Trigger Words -->
                                     <div v-if="triggerWords.length > 0" class="border-t border-[#232834] pt-3">
@@ -4220,12 +4340,12 @@ watch(activeTab, (newTab) => {
                                         <div class="flex items-center space-x-3">
                                             <div
                                                 class="flex items-center bg-[#1a1a1a] border border-[#2A2A35] rounded-lg overflow-hidden shadow-sm">
-                                                <input type="number" min="1" max="12" step="1"
+                                                <input type="number" min="1" max="2" step="1"
                                                     v-model="request.clip_skip"
                                                     class="bg-transparent text-[#FAF8F5] text-center font-medium w-12 py-2 px-1 focus:outline-none focus:bg-[#1A1A24] transition-colors" />
                                                 <div class="flex flex-col border-l border-[#2A2A35]">
                                                     <button type="button"
-                                                        @click="request.clip_skip = Math.min((request.clip_skip || 1) + 1, 12)"
+                                                        @click="request.clip_skip = Math.min((request.clip_skip || 1) + 1, 2)"
                                                         class="px-2 py-1 text-xs text-gray-400 hover:text-[#FAF8F5] hover:bg-[#1A1A24] transition-colors">
                                                         <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
                                                             <path fill-rule="evenodd"
@@ -4248,7 +4368,7 @@ watch(activeTab, (newTab) => {
                                             <div class="flex-1 relative">
                                                 <input type="range" min="1" max="2" step="1" v-model="request.clip_skip"
                                                     class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer slider focus:outline-none mb-1"
-                                                    :style="{ background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${((request.clip_skip || 1) - 1) / 11 * 100}%, #4b5563 ${((request.clip_skip || 1) - 1) / 11 * 100}%, #4b5563 100%)` }">
+                                                    :style="{ background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${((request.clip_skip || 1) - 1) / 1 * 100}%, #4b5563 ${((request.clip_skip || 1) - 1) / 11 * 100}%, #4b5563 100%)` }">
                                             </div>
                                         </div>
                                     </div>
@@ -4326,20 +4446,22 @@ watch(activeTab, (newTab) => {
                         </div>
 
                         <!--Preview-->
-                        <div class="sidebar-card p-4">
-                            <h3 class="text-sm font-medium text-gray-300 mb-2">Preview</h3>
+                        <div class="sidebar-card flex flex-col flex-1">
 
-                            <img @click="showFullscreen([resolveImageSrc(history[history.length - 1].images[0])])"
-                                v-if="generationState.current_image || history.length > 0" :src="generationState.current_image
-                                    ? resolveImageSrc(generationState.current_image)
-                                    : resolveImageSrc(history[history.length - 1].images[0])"
-                                :alt="generationState.current_image ? 'Generated Preview' : 'Image URL Preview'"
-                                class="h-96 w-full object-contain rounded-lg" />
-
-                            <div v-else class="flex flex-col items-center justify-center min-h-48 py-4">
-                                <ClearArt class="max-h-80 max-w-full rounded-lg mb-2" />
-                                <span class="text-gray-400 text-xs">No preview available</span>
+                            <div class="flex-1 relative">
+                                <span class="absolute top-2 left-2 bg-black/50 text-white text-xs px-2 py-1 rounded z-10">Preview</span>
+                                <img @click="showFullscreen([resolveImageSrc(history[history.length - 1].images[0])])"
+                                    v-if="generationState.current_image || history.length > 0" :src="generationState.current_image
+                                        ? resolveImageSrc(generationState.current_image)
+                                        : resolveImageSrc(history[history.length - 1].images[0])"
+                                    :alt="generationState.current_image ? 'Generated Preview' : 'Image URL Preview'"
+                                    class="w-full h-full object-contain rounded-lg" />
+                                    <div v-else class="flex flex-col items-center justify-center flex-1 py-4">
+                                        <ClearArt class="max-h-80 max-w-full rounded-lg mb-2" />
+                                        <span class="text-gray-400 text-xs">No preview available</span>
+                                    </div>
                             </div>
+
                         </div>
 
                     </div>

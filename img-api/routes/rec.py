@@ -166,7 +166,7 @@ def get_recommended_images():
         elif rating == 4:
             score = 0.5
         elif rating == 3:
-            score = 0.0
+            score = 0.15
         elif rating == 2:
             score = -0.5
         elif rating == 1:

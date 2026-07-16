@@ -96,6 +96,7 @@
             <div class="flex gap-2 items-center text-ivory/60">
               <Eye class="w-5 h-5" />
               <p class="font-mono text-sm uppercase tracking-widest">{{ currentPin.Clicks }}</p>
+              <Tv class="w-5 h-5" />
             </div>
             <div v-if="currentPin.in_boards.length == 0" class="flex items-center gap-3">
               <div
@@ -150,8 +151,8 @@
           </div>
 
           <h1 v-if="activeTab === 'generated' || currentPin.GeneratedPrompt"
-            class="text-2xl font-serif leading-relaxed mb-6 text-ivory/90"
-            v-html="formatPromptText(displayPromptText)" @click="showTaggerTags = !showTaggerTags"></h1>
+            class="text-2xl font-serif leading-relaxed mb-6 text-ivory/90" v-html="formatPromptText(displayPromptText)"
+            @click="showTaggerTags = !showTaggerTags"></h1>
           <h1 v-else class="text-2xl font-serif leading-relaxed mb-6 text-ivory/90"
             v-html="formatPromptText(displayPromptText)"></h1>
 
@@ -195,8 +196,8 @@
                 .reduce((obj, [key, val]) => ({ ...obj, [key]: val }), {})" :key="tag" class="flex items-center">
                 <span class="w-24 text-sm truncate text-ivory/50">{{ tag }}</span>
                 <div class="flex-1 bg-slate rounded-full h-2 overflow-hidden">
-                  <div class="h-full rounded-full bg-champagne/70"
-                    :style="{ width: `${Math.round(value * 100)}%` }"></div>
+                  <div class="h-full rounded-full bg-champagne/70" :style="{ width: `${Math.round(value * 100)}%` }">
+                  </div>
                 </div>
                 <span class="ml-2 text-xs text-ivory/40 w-12 text-right">
                   {{ Math.round(value * 100) }}%
@@ -214,8 +215,8 @@
                   .reduce((obj, [key, val]) => ({ ...obj, [key]: val }), {})" :key="tag" class="flex items-center">
                   <span class="w-24 text-sm truncate text-ivory/50">{{ tag }}</span>
                   <div class="flex-1 bg-slate rounded-full h-2 overflow-hidden">
-                    <div class="h-full rounded-full bg-champagne/70"
-                      :style="{ width: `${Math.round(value * 100)}%` }"></div>
+                    <div class="h-full rounded-full bg-champagne/70" :style="{ width: `${Math.round(value * 100)}%` }">
+                    </div>
                   </div>
                   <span class="ml-2 text-xs text-ivory/40 w-12 text-right">
                     {{ Math.round(value * 100) }}%
@@ -263,8 +264,11 @@
             <RouterLink :to="'/models/' + currentPin.ModelHash">
               <div class="group">
                 <p class="text-ivory/60 font-mono text-xs uppercase tracking-widest mb-1">Model</p>
-                <p v-if="Array.isArray(currentPin.Model)" class="text-ivory font-sans font-semibold group-hover:text-champagne transition-colors">
-                  {{ JSON.parse(currentPin.Workflow ?? '{}')?.nodes?.filter((node) => node.id === parseFloat(currentPin.Model?.[0] ?? ''))?.[0]?.['widgets_values']?.[currentPin.Model?.[1] ?? 0].replace(".safetensors","") }}
+                <p v-if="Array.isArray(currentPin.Model)"
+                  class="text-ivory font-sans font-semibold group-hover:text-champagne transition-colors">
+                  {{JSON.parse(currentPin.Workflow ?? '{}')?.nodes?.filter((node) => node.id ===
+                    parseFloat(currentPin.Model?.[0] ?? ''))?.[0]?.['widgets_values']?.[currentPin.Model?.[1] ??
+                  0].replace(".safetensors","") }}
 
                 </p>
                 <p v-else class="text-ivory font-sans font-semibold group-hover:text-champagne transition-colors">
@@ -290,31 +294,20 @@
 
           <div v-if="currentPin.NegativePrompt" class="mb-4">
             <p class="text-ivory/40 font-mono text-xs uppercase tracking-widest mb-2">Negative Prompt</p>
-            <p class="text-ivory/60 font-serif text-sm leading-relaxed mb-6 line-clamp-4">{{ currentPin.NegativePrompt }}</p>
+            <p class="text-ivory/60 font-serif text-sm leading-relaxed mb-6 line-clamp-4">{{ currentPin.NegativePrompt
+              }}</p>
           </div>
 
-          <div v-if="currentPin.variations.length > 0" class="mt-8">
-            <h2 class="text-2xl font-serif font-bold italic mb-6 text-ivory">Variations</h2>
-            <div class="columns-2 md:columns-3 lg:columns-4 gap-4 space-y-4">
-              <Image v-for="pin in currentPin.variations" :key="pin.Id" :pin="pin" />
-            </div>
-          </div>
-          <div v-if="currentPin.identical_images.length > 0" class="mt-8">
-            <h2 class="text-2xl font-serif font-bold italic mb-6 text-ivory">Identical Images</h2>
-            <div class="columns-2 md:columns-3 lg:columns-4 gap-4 space-y-4">
-              <Image v-for="pin in currentPin.identical_images" :key="pin.Id" :pin="pin" />
-            </div>
-          </div>
+
 
           <!-- Comments Expand Accordion -->
           <div class="flex justify-between items-center mt-6" @click="showComments = !showComments; GetComments()">
             <div class="flex items-center">
               <h2 class="text-xl font-bold mb-4 text-ivory">Comments</h2>
-              <button v-if="showComments"
-                class="ml-3 mb-3 p-1.5 rounded-full hover:bg-slate transition-colors"
+              <button v-if="showComments" class="ml-3 mb-3 p-1.5 rounded-full hover:bg-slate transition-colors"
                 @click.stop="GetComments(true)">
-                <svg class="w-4 h-4 text-ivory/50" fill="none" stroke="currentColor"
-                  viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <svg class="w-4 h-4 text-ivory/50" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                  xmlns="http://www.w3.org/2000/svg">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                     d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
                   </path>
@@ -353,12 +346,12 @@
               <div v-for="(comment, index) in comments" :key="comment.Id" class="flex items-start space-x-3">
 
                 <RouterLink :to="'/user/' + (comment.character_id || comment.username)">
-                  <img
-                    :src="comment.avatar || `${apiUrl}/random-image-file?user=${comment.username}`"
+                  <img :src="comment.avatar || `${apiUrl}/random-image-file?user=${comment.username}`"
                     :alt="`${comment.username}'s avatar`" class="w-10 h-10 rounded-full object-cover" />
                 </RouterLink>
                 <div class="w-full">
-                  <RouterLink :to="'/user/' + (comment.character_id || comment.username)" class="hover:text-champagne transition-colors">
+                  <RouterLink :to="'/user/' + (comment.character_id || comment.username)"
+                    class="hover:text-champagne transition-colors">
                     <p class="text-ivory font-semibold">{{ comment.username }}</p>
                   </RouterLink>
                   <p class="text-ivory/70">{{ comment.content }}</p>
@@ -366,8 +359,7 @@
                   <div v-if="comment.replies && comment.replies.length > 0"
                     class="mt-3 pl-4 border-l-2 border-slate space-y-3">
                     <div v-for="reply in comment.replies" :key="reply.Id" class="flex items-start space-x-3">
-                      <img
-                        :src="reply.avatar || `${apiUrl}/random-image-file?user=${reply.username}`"
+                      <img :src="reply.avatar || `${apiUrl}/random-image-file?user=${reply.username}`"
                         :alt="`${reply.username}'s avatar`" class="w-10 h-10 rounded-full object-cover" />
                       <div>
                         <p class="text-ivory font-semibold text-sm">{{ reply.username }}</p>
@@ -453,37 +445,29 @@
           <div v-if="showMetadata" class="mt-6">
             <h2 class="text-xl font-bold mb-4 text-ivory">Metadata</h2>
             <div class="bg-slate/40 p-4 rounded-lg transition-colors">
-              <a :href="apiUrl + '/image/' + currentPin.Id" class="text-champagne hover:underline"
-                target="_blank">view data</a>
+              <a :href="apiUrl + '/image/' + currentPin.Id" class="text-champagne hover:underline" target="_blank">view
+                data</a>
               <div class="">
                 <p class="text-ivory/70"><strong class="text-ivory">Id:</strong>
                   {{ currentPin.Id }}</p>
                 <p class="text-ivory/70"><strong class="text-ivory">Seed:</strong>
                   {{ currentPin.Seed }}</p>
-                <p class="text-ivory/70"><strong
-                    class="text-ivory">Width:</strong> {{ currentPin.Width }}</p>
-                <p class="text-ivory/70"><strong
-                    class="text-ivory">Height:</strong> {{ currentPin.Height }}</p>
-                <p class="text-ivory/70"><strong
-                    class="text-ivory">Steps:</strong> {{ currentPin.Steps }}</p>
-                <p class="text-ivory/70"><strong
-                    class="text-ivory">Sampler:</strong> {{ currentPin.Sampler }}</p>
+                <p class="text-ivory/70"><strong class="text-ivory">Width:</strong> {{ currentPin.Width }}</p>
+                <p class="text-ivory/70"><strong class="text-ivory">Height:</strong> {{ currentPin.Height }}</p>
+                <p class="text-ivory/70"><strong class="text-ivory">Steps:</strong> {{ currentPin.Steps }}</p>
+                <p class="text-ivory/70"><strong class="text-ivory">Sampler:</strong> {{ currentPin.Sampler }}</p>
                 <p class="text-ivory/70"><strong class="text-ivory">CFG
                     Scale:</strong> {{ currentPin.CFGScale }}</p>
-                <p class="text-ivory/70"><strong
-                    class="text-ivory">phash:</strong> {{ currentPin.pHash }}</p>
-                <p class="text-ivory/70"><strong
-                    class="text-ivory">FileName:</strong> {{ currentPin.FileName }}</p>
+                <p class="text-ivory/70"><strong class="text-ivory">phash:</strong> {{ currentPin.pHash }}</p>
+                <p class="text-ivory/70"><strong class="text-ivory">FileName:</strong> {{ currentPin.FileName }}</p>
                 <p class="text-ivory/70"><strong class="text-ivory">Path:</strong>
                   E:/dev/img-api{{ currentPin.Path }}</p>
-                <p class="text-ivory/70"><strong
-                    class="text-ivory">CreatedDate:</strong> {{ formatDate(currentPin.CreatedDate)
-                    }}
+                <p class="text-ivory/70"><strong class="text-ivory">CreatedDate:</strong> {{
+                  formatDate(currentPin.CreatedDate)
+                  }}
                 </p>
-                <p class="text-ivory/70"><strong
-                    class="text-ivory">ModelHash:</strong> {{ currentPin.ModelHash }}</p>
-                <p class="text-ivory/70"><strong
-                    class="text-ivory">Description:</strong>
+                <p class="text-ivory/70"><strong class="text-ivory">ModelHash:</strong> {{ currentPin.ModelHash }}</p>
+                <p class="text-ivory/70"><strong class="text-ivory">Description:</strong>
                   <span v-if="currentPin.description" style="white-space: pre-line;">{{ currentPin.description }}</span>
                   <span v-else>N/A</span>
                 </p>
@@ -493,6 +477,18 @@
 
 
         </div>
+      </div>
+    </div>
+    <div v-if="currentPin?.variations.length > 0" class="mt-8">
+      <h2 class="text-2xl font-serif font-bold italic mb-6 text-ivory">Variations</h2>
+      <div class="columns-2 md:columns-3 lg:columns-4 gap-4 space-y-4">
+        <Image v-for="pin in currentPin.variations" :key="pin.Id" :pin="pin" />
+      </div>
+    </div>
+    <div v-if="currentPin?.identical_images.length > 0" class="mt-8">
+      <h2 class="text-2xl font-serif font-bold italic mb-6 text-ivory">Identical Images</h2>
+      <div class="columns-2 md:columns-3 lg:columns-4 gap-4 space-y-4">
+        <Image v-for="pin in currentPin.identical_images" :key="pin.Id" :pin="pin" />
       </div>
     </div>
 
@@ -511,8 +507,8 @@
     </div>
     <!-- Rec Error -->
     <div v-if="recError" class="bg-panel border border-slate rounded-xl shadow p-8 text-center">
-      <svg class="mx-auto h-10 w-10 text-red-400 mb-3" fill="none" stroke="currentColor"
-        stroke-width="1.5" viewBox="0 0 24 24">
+      <svg class="mx-auto h-10 w-10 text-red-400 mb-3" fill="none" stroke="currentColor" stroke-width="1.5"
+        viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round"
           d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
       </svg>

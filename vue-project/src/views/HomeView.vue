@@ -192,7 +192,7 @@ watch(() => route.query, (newQuery) => {
             <ChevronDown class="w-4 h-4 text-[#FAF8F5]/60 transition-transform duration-300" :class="{ 'rotate-180': isSortOpen }" />
           </button>
           
-          <div v-if="isSortOpen" class="absolute left-1/2 -translate-x-1/2 sm:left-0 sm:translate-x-0 mt-2 w-56 rounded-2xl bg-[#14141A]/95 backdrop-blur-md border border-[#2A2A35]/80 shadow-[0_10px_30px_rgba(0,0,0,0.5)] z-50 py-2 overflow-hidden">
+          <div v-if="isSortOpen" class="absolute left-1/2 -translate-x-1/2 sm:left-0 sm:translate-x-0 mt-2 w-56 rounded-2xl bg-background/95 backdrop-blur-md border border-[#2A2A35]/80 shadow-[0_10px_30px_rgba(0,0,0,0.5)] z-50 py-2 overflow-hidden">
             <button v-for="option in sortOptions" :key="option.value" @click="selectSort(option.value)" :class="[
               'w-full text-left px-4 py-2.5 text-sm font-sans font-medium transition-colors duration-200 block',
               currentSort === option.value
