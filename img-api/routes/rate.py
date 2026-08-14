@@ -432,8 +432,8 @@ def get_matchup(image1_id: Optional[int] = None):
     # ----- New: predicted winner (using predicted ratings only) -----
     meta1 = _get_image_meta(img1_id)
     meta2 = _get_image_meta(img2_id)
-    pred1 = _predict_from_meta(meta1["prompt"], meta1["phash"], top_k=20, alpha=0.6) if meta1 else None
-    pred2 = _predict_from_meta(meta2["prompt"], meta2["phash"], top_k=20, alpha=0.6) if meta2 else None
+    pred1 = _predict_from_meta(meta1["prompt"], meta1["phash"], top_k=20, alpha=0.6, image_id=img1_id) if meta1 else None
+    pred2 = _predict_from_meta(meta2["prompt"], meta2["phash"], top_k=20, alpha=0.6, image_id=img2_id) if meta2 else None
     pred_cr1 = pred1["predicted_conservative_rating"] if pred1 else cr1
     pred_cr2 = pred2["predicted_conservative_rating"] if pred2 else cr2
     pred_rank1 = rank_from_cr(pred_cr1)
@@ -608,8 +608,7 @@ def _phash_similarity(h1: str, h2: str) -> float:
     return 1.0 - (dist / n_bits)
 
 
-def _predict_from_meta(prompt: str, phash: str, top_k: int = 20, alpha: float = 0.6) -> Optional[dict]:
-    # Fast, scalable prediction using caches and token index
+def _predict_from_meta(prompt: str, phash: str, top_k: int = 20, alpha: float = 0.6, image_id: Optional[int] = None) -> Optional[dict]:
     _ensure_images_loaded()
     with _CACHE_LOCK:
         if not _RATED_IDS:
@@ -657,29 +656,38 @@ def _predict_from_meta(prompt: str, phash: str, top_k: int = 20, alpha: float = 
         # Ensure meta present
         tokens, ph_int, ph_bits = _ensure_meta_cached(cid)
 
-        # Text similarity (Jaccard)
-        if q_tokens and tokens:
-            inter = len(q_tokens & tokens)
-            if inter == 0:
-                s_text = 0.0
+        # Try image embeddings similarity first
+        emb_sim = None
+        if image_id is not None:
+            emb_sim = utils.get_embedding_similarity(image_id, cid)
+
+        if emb_sim is not None:
+            s = emb_sim
+        else:
+            # Text similarity (Jaccard)
+            if q_tokens and tokens:
+                inter = len(q_tokens & tokens)
+                if inter == 0:
+                    s_text = 0.0
+                else:
+                    union = q_len + len(tokens) - inter
+                    s_text = (inter / union) if union else 0.0
             else:
-                union = q_len + len(tokens) - inter
-                s_text = (inter / union) if union else 0.0
-        else:
-            s_text = 0.0
+                s_text = 0.0
 
-        # pHash similarity
-        if q_ph_bits and ph_bits and q_ph_int and ph_int:
-            xor = q_ph_int ^ ph_int
-            n_bits = max(q_ph_bits, ph_bits)
-            dist = (xor.bit_count() if hasattr(int, "bit_count") else bin(xor).count("1"))
-            if dist > n_bits:
-                dist = n_bits
-            s_hash = 1.0 - (dist / n_bits)
-        else:
-            s_hash = 0.0
+            # pHash similarity
+            if q_ph_bits and ph_bits and q_ph_int and ph_int:
+                xor = q_ph_int ^ ph_int
+                n_bits = max(q_ph_bits, ph_bits)
+                dist = (xor.bit_count() if hasattr(int, "bit_count") else bin(xor).count("1"))
+                if dist > n_bits:
+                    dist = n_bits
+                s_hash = 1.0 - (dist / n_bits)
+            else:
+                s_hash = 0.0
 
-        s = alpha * s_text + (1.0 - alpha) * s_hash
+            s = alpha * s_text + (1.0 - alpha) * s_hash
+
         if s <= 0.0:
             continue
 
@@ -716,7 +724,7 @@ def predict_score_for_image(image_id: int, top_k: int = 20, alpha: float = 0.6):
     if not meta:
         raise HTTPException(status_code=404, detail="Image not found")
 
-    res = _predict_from_meta(meta["prompt"], meta["phash"], top_k=top_k, alpha=alpha)
+    res = _predict_from_meta(meta["prompt"], meta["phash"], top_k=top_k, alpha=alpha, image_id=image_id)
     if res is None:
         raise HTTPException(status_code=400, detail="Not enough rated images to predict")
 

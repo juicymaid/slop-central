@@ -17,12 +17,20 @@ const windowWidth = ref(window.innerWidth)
 const pins = ref([])
 const isLoading = ref(false)
 const route = useRoute()
-const router = useRouter()
+ const router = useRouter()
 // Flag to prevent duplicate fetch calls
 const isUpdatingFromWatcher = ref(false)
 // Get dark mode state
 const isDarkMode = inject('isDarkMode', ref(false))
 
+let currentAbortController = null
+
+const cancelOngoingFetch = () => {
+  if (currentAbortController) {
+    currentAbortController.abort()
+    currentAbortController = null
+  }
+}
 
 const sortOptions = [
   { label: 'Recommended', value: 'home' },
@@ -100,24 +108,36 @@ const updateUrlParams = () => {
   })
 }
 
-const loadMore = async () => {
-  if (isLoading.value) return
-  isLoading.value = true
-  try {
-    page++
-    updateUrlParams()
-    const newData = await GetFromApi('all-images?sort=' + currentSort.value + '&per_page=60&page=' + page)
-    // Filter out duplicates using both methods for redundancy
-    const uniqueNewData = newData.filter(newPin =>
-      !pins.value.some(existingPin => existingPin.Id === newPin.Id)
-    )
-    const combinedPins = [...pins.value, ...uniqueNewData]
-    // Apply final deduplication before assignment
-    pins.value = getUniquePinsById(combinedPins)
-  } finally {
-    isLoading.value = false
-  }
-}
+ const loadMore = async () => {
+   if (isLoading.value) return
+
+  cancelOngoingFetch()
+  const controller = new AbortController()
+  currentAbortController = controller
+
+   isLoading.value = true
+   try {
+     page++
+     updateUrlParams()
+    const newData = await GetFromApi('all-images?sort=' + currentSort.value + '&per_page=60&page=' + page, { signal: controller.signal })
+    if (currentAbortController !== controller) return
+     // Filter out duplicates using both methods for redundancy
+     const uniqueNewData = newData.filter(newPin =>
+       !pins.value.some(existingPin => existingPin.Id === newPin.Id)
+     )
+     const combinedPins = [...pins.value, ...uniqueNewData]
+     // Apply final deduplication before assignment
+     pins.value = getUniquePinsById(combinedPins)
+  } catch (err) {
+    if (err.name === 'AbortError') return
+    console.error(err)
+   } finally {
+    if (currentAbortController === controller) {
+      isLoading.value = false
+      currentAbortController = null
+    }
+   }
+ }
 
 const handleScroll = () => {
   if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 512) {
@@ -127,17 +147,28 @@ const handleScroll = () => {
 
 // Function to fetch current page data
 const fetchCurrentPage = async () => {
-  if (isLoading.value) return
+  cancelOngoingFetch()
 
-  isLoading.value = true
-  try {
-    const data = await GetFromApi(`all-images?sort=${currentSort.value}&per_page=60&page=${page}`)
-    // Ensure no duplicates in initial data load
-    pins.value = getUniquePinsById(data)
-  } finally {
-    isLoading.value = false
-  }
-}
+  const controller = new AbortController()
+  currentAbortController = controller
+
+   isLoading.value = true
+   try {
+    const data = await GetFromApi(`all-images?sort=${currentSort.value}&per_page=60&page=${page}`, { signal: controller.signal })
+    if (currentAbortController === controller) {
+      // Ensure no duplicates in initial data load
+      pins.value = getUniquePinsById(data)
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') return
+    console.error(err)
+   } finally {
+    if (currentAbortController === controller) {
+      isLoading.value = false
+      currentAbortController = null
+    }
+   }
+ }
 
 onMounted(async () => {
   // Initial data fetch on mount
@@ -146,10 +177,11 @@ onMounted(async () => {
   document.addEventListener('click', handleClickOutside)
 })
 
-onBeforeUnmount(() => {
-  window.removeEventListener('scroll', handleScroll)
-  document.removeEventListener('click', handleClickOutside)
-})
+ onBeforeUnmount(() => {
+  cancelOngoingFetch()
+   window.removeEventListener('scroll', handleScroll)
+   document.removeEventListener('click', handleClickOutside)
+ })
 
 // Single watcher for route changes
 watch(() => route.query, (newQuery) => {
@@ -159,11 +191,11 @@ watch(() => route.query, (newQuery) => {
   const newPage = parseInt(newQuery.page) || 1
   let shouldFetch = false
 
-  if (newSort && newSort !== currentSort.value) {
-    currentSort.value = newSort
-    shouldFetch = true
-  }
-
+   if (newSort && newSort !== currentSort.value) {
+     currentSort.value = newSort
+    pins.value = []
+     shouldFetch = true
+   }
   if (newPage !== page) {
     page = newPage
     shouldFetch = true

@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Civitai Image Upload Helper",
+  "version": "1.0",
+  "description": "Automatically uploads local images via query parameter path to Civitai posts",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "civitai-upload-helper@pinthesis.local",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
+    }
+  },
+  "permissions": [
+    "activeTab",
+    "tabs"
+  ],
+  "host_permissions": [
+    "*://civitai.red/*",
+    "*://*.civitai.red/*",
+    "*://civitai.com/*",
+    "*://*.civitai.com/*",
+    "http://localhost:8000/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "*://civitai.red/posts/create*",
+        "*://*.civitai.red/posts/create*",
+        "*://civitai.com/posts/create*",
+        "*://*.civitai.com/posts/create*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

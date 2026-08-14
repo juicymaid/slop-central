@@ -34,7 +34,11 @@ def add_boards_info(copy_img):
         for pid in pinned_ids:
             pinned_image = utils.images_data.get(pid)
             if pinned_image:
-                total_score += utils.compute_full_similarity(original, pinned_image)
+                emb_sim = utils.get_embedding_similarity(original["Id"], pid)
+                if emb_sim is not None:
+                    total_score += max(0.0, emb_sim)
+                else:
+                    total_score += utils.compute_full_similarity(original, pinned_image)
                 valid_count += 1
         avg_score = total_score / valid_count if valid_count else 0
         
@@ -87,7 +91,7 @@ def _predicted_or_actual_cr(img) -> float:
         # unrated -> predict using prompt + pHash
         prompt = img.get("Prompt") or ""
         phash = img.get("pHash") or img.get("phash") or img.get("hash") or ""
-        res = rate._predict_from_meta(prompt, phash, top_k=20, alpha=0.6)
+        res = rate._predict_from_meta(prompt, phash, top_k=20, alpha=0.6, image_id=img["Id"])
         if not res:
             return 0.0
         return float(res.get("predicted_conservative_rating", 0.0))
@@ -224,6 +228,9 @@ def get_image_details(image_id: str):
                     
     copy_img["identical_images"] = identical_images
     copy_img["variations"] = variation_images
+    import os
+    file_path = copy_img.get("Path", "")
+    copy_img["AbsolutePath"] = os.path.abspath(file_path.replace("/files", utils.api_file_root))
     copy_img = add_boards_info(copy_img)
     return _sanitize_image_dict(copy_img)
 

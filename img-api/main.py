@@ -53,6 +53,12 @@ def get_storage_file(filename: str):
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(file_path)
 
+@app.get("/view-local-file")
+def view_local_file(path: str = Query(..., description="Absolute path of the local file to view")):
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(path)
+
 @app.websocket("/vram")
 async def vram_ws(websocket: WebSocket):
     await websocket.accept()
@@ -125,8 +131,6 @@ def ensure_frontend_running():
 
     print("Starting frontend...")
 
-    DETACHED_PROCESS = 0x00000008
-
     if not os.path.isdir(FRONTEND_DIR):
         print(f"Frontend directory not found: {FRONTEND_DIR}")
         return
@@ -136,7 +140,6 @@ def ensure_frontend_running():
         ["npm", "run", "dev"],
         cwd=FRONTEND_DIR,
         shell=True,
-        creationflags=DETACHED_PROCESS,
     )
 
 

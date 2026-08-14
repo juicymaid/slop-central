@@ -1,3 +1,4 @@
+from typing import Optional
 from datetime import datetime
 import sqlite3
 import json
@@ -440,6 +441,7 @@ def ensure_loaded(block: bool = True) -> bool:
             try:
                 load_images()
                 load_boards()
+                load_embeddings()
                 _data_loaded = True
                 _data_error = None
                 elapsed = time.perf_counter() - started
@@ -466,6 +468,7 @@ def ensure_loaded(block: bool = True) -> bool:
     try:
         load_images()
         load_boards()
+        load_embeddings()
         _data_loaded = True
         _data_error = None
         elapsed = time.perf_counter() - started
@@ -559,6 +562,36 @@ def compute_full_similarity(image_a, image_b, mode: str = "full"):
         negative_prompt_bonus +
         sampler_bonus
     )
+
+def get_embedding_similarity(id_a: int, id_b: int) -> Optional[float]:
+    try:
+        import siglip_utils
+        if siglip_utils.siglip_vectors is not None and len(siglip_utils.siglip_ids) > 0:
+            idx_a = siglip_utils.siglip_id_to_index.get(id_a)
+            idx_b = siglip_utils.siglip_id_to_index.get(id_b)
+            if idx_a is not None and idx_b is not None:
+                vec_a = siglip_utils.siglip_vectors[idx_a]
+                vec_b = siglip_utils.siglip_vectors[idx_b]
+                dot = float(vec_a @ vec_b)
+                norm_a = float(sum(x*x for x in vec_a)) ** 0.5
+                norm_b = float(sum(x*x for x in vec_b)) ** 0.5
+                if norm_a > 0 and norm_b > 0:
+                    return dot / (norm_a * norm_b)
+    except Exception:
+        pass
+
+    emb_a = image_embeddings.get(id_a)
+    emb_b = image_embeddings.get(id_b)
+    if emb_a and emb_b:
+        vec_a = emb_a.get("vec")
+        vec_b = emb_b.get("vec")
+        if vec_a and vec_b:
+            dot = sum(x * y for x, y in zip(vec_a, vec_b))
+            norm_a = emb_a.get("norm") or (sum(x*x for x in vec_a)) ** 0.5
+            norm_b = emb_b.get("norm") or (sum(x*x for x in vec_b)) ** 0.5
+            if norm_a > 0 and norm_b > 0:
+                return dot / (norm_a * norm_b)
+    return None
 
 
 def get_current_timestamp():

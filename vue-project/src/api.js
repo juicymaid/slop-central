@@ -5,8 +5,8 @@ export const apiUrl = `http://${hostname}:8000`
 export const wsUrl = `ws://${hostname}:8000`
 
 
-export async function GetFromApi(endpoint) {
-    const response = await fetch(`${apiUrl}/${endpoint}`)
+export async function GetFromApi(endpoint, options = {}) {
+    const response = await fetch(`${apiUrl}/${endpoint}`, options)
     return await response.json()
 }
 

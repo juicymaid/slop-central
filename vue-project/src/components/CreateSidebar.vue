@@ -899,7 +899,7 @@ watch(() => current_model.model, async (newModel) => {
     if (!backendCapabilities.value.supportsLocalModels) {
         return
     }
-    if (newModel) {
+    if (newModel && newModel.filename) {
         if (newModel.info != null) {
             return;
         }
@@ -1045,6 +1045,7 @@ watch(() => request.prompt, async (newPrompt) => {
 
     request.prompt = request.prompt.replaceAll(defaultStyles.value[current_model.model.model_name].prompt_prefix, '')
     request.prompt = request.prompt.replaceAll(",,", ',')
+    request.prompt = request.prompt.replaceAll(", ,", ',')
 })
 
 //watch for history changes

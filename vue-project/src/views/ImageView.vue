@@ -258,21 +258,19 @@
               class="magnetic-button text-sm px-5 py-2.5 bg-slate/50 hover:bg-slate border border-slate text-ivory/80 hover:text-ivory rounded-full flex items-center transition-all">
               <span class="relative z-10">Open File Location</span>
             </button>
+
+            <button @click="uploadToCivitai"
+              class="magnetic-button text-sm px-5 py-2.5 bg-slate/50 hover:bg-slate border border-slate text-ivory/80 hover:text-ivory rounded-full flex items-center transition-all">
+              <span class="relative z-10">Upload to CivitAI</span>
+            </button>
           </div>
 
           <div class="flex items-center gap-6 mt-8 mb-4 border-b border-slate pb-6">
             <RouterLink :to="'/models/' + currentPin.ModelHash">
               <div class="group">
                 <p class="text-ivory/60 font-mono text-xs uppercase tracking-widest mb-1">Model</p>
-                <p v-if="Array.isArray(currentPin.Model)"
-                  class="text-ivory font-sans font-semibold group-hover:text-champagne transition-colors">
-                  {{JSON.parse(currentPin.Workflow ?? '{}')?.nodes?.filter((node) => node.id ===
-                    parseFloat(currentPin.Model?.[0] ?? ''))?.[0]?.['widgets_values']?.[currentPin.Model?.[1] ??
-                  0].replace(".safetensors","") }}
-
-                </p>
-                <p v-else class="text-ivory font-sans font-semibold group-hover:text-champagne transition-colors">
-                  {{ currentPin.Model ?? currentPin.ModelHash }}
+                <p class="text-ivory font-sans font-semibold group-hover:text-champagne transition-colors">
+                  {{ modelName }}
                 </p>
               </div>
             </RouterLink>
@@ -295,7 +293,7 @@
           <div v-if="currentPin.NegativePrompt" class="mb-4">
             <p class="text-ivory/40 font-mono text-xs uppercase tracking-widest mb-2">Negative Prompt</p>
             <p class="text-ivory/60 font-serif text-sm leading-relaxed mb-6 line-clamp-4">{{ currentPin.NegativePrompt
-              }}</p>
+            }}</p>
           </div>
 
 
@@ -461,10 +459,10 @@
                 <p class="text-ivory/70"><strong class="text-ivory">phash:</strong> {{ currentPin.pHash }}</p>
                 <p class="text-ivory/70"><strong class="text-ivory">FileName:</strong> {{ currentPin.FileName }}</p>
                 <p class="text-ivory/70"><strong class="text-ivory">Path:</strong>
-                  E:/dev/img-api{{ currentPin.Path }}</p>
+                  {{ currentPin.AbsolutePath || currentPin.Path }}</p>
                 <p class="text-ivory/70"><strong class="text-ivory">CreatedDate:</strong> {{
                   formatDate(currentPin.CreatedDate)
-                  }}
+                }}
                 </p>
                 <p class="text-ivory/70"><strong class="text-ivory">ModelHash:</strong> {{ currentPin.ModelHash }}</p>
                 <p class="text-ivory/70"><strong class="text-ivory">Description:</strong>
@@ -694,6 +692,25 @@ const displayPromptRaw = computed(() => {
 
 const displayPromptText = computed(() => stripLoraTags(displayPromptRaw.value))
 const displayLoras = computed(() => dedupeLoras(extractLoras(displayPromptRaw.value)))
+const modelName = computed(() => {
+  if (!currentPin.value) return ''
+  if (Array.isArray(currentPin.value.Model)) {
+    try {
+      const workflow = JSON.parse(currentPin.value.Workflow ?? '{}')
+      const nodeId = parseFloat(currentPin.value.Model[0] ?? '')
+      const node = workflow?.nodes?.find((n) => n.id === nodeId)
+      const val = node?.widgets_values?.[currentPin.value.Model[1] ?? 0]
+      if (typeof val === 'string') {
+        return val.replace(".safetensors", "")
+      }
+      return val != null ? String(val) : ''
+    } catch (e) {
+      console.error('Error parsing workflow for model name:', e)
+      return ''
+    }
+  }
+  return currentPin.value.Model ?? currentPin.value.ModelHash ?? ''
+})
 
 function pinsMatch(a, b) {
   if (!a || !b) return false
@@ -1101,6 +1118,13 @@ function showFullscreen() {
     images: images,
     options: { "inline": true, "button": true, "navbar": false, "title": false, "toolbar": false, "tooltip": false, "movable": true, "zoomable": true, "rotatable": true, "scalable": true, "transition": true, "fullscreen": true, "keyboard": true, }
   });
+}
+
+function uploadToCivitai() {
+  if (!currentPin.value) return;
+  const path = currentPin.value.AbsolutePath || currentPin.value.Path;
+  const url = `https://civitai.red/posts/create?path=${encodeURIComponent(path)}`;
+  window.open(url, '_blank');
 }
 
 </script>
