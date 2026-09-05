@@ -2,6 +2,14 @@
 import { ref, onMounted, computed, reactive, watch } from 'vue'
 import { GetFromApi, PostToApi, apiUrl, formatRequest } from '../api'
 import ClearArt from '@/components/ClearArt.vue'
+import { buildBackendRequest, loadBackendSettings, getActiveBackend } from '@/backends'
+import {
+    executeComfyPrompt,
+    fetchComfyImage,
+    getActiveWorkflow,
+    loadComfyWorkflows,
+    comfyState
+} from '@/backends/comfyui'
 
 
 
@@ -17,7 +25,8 @@ const newChar = ref({
     name: '',
     avatar: '',
     description: '',
-    prompt_prefix: ''
+    prompt_prefix: '',
+    tags: ''
 })
 
 // Auto-format id: spaces → underscores, lowercase
@@ -52,6 +61,8 @@ const loadPosts = async () => {
 onMounted(() => {
     loadCharacters()
     loadPosts()
+    loadBackendSettings()
+    loadComfyWorkflows()
 })
 
 const selectedCharacter = computed(() => {
@@ -61,7 +72,7 @@ const selectedCharacter = computed(() => {
 
 const openCreateModal = () => {
     isEditing.value = false
-    newChar.value = { id: '', name: '', avatar: '', description: '', prompt_prefix: '' }
+    newChar.value = { id: '', name: '', avatar: '', description: '', prompt_prefix: '', tags: '' }
     showCreateModal.value = true
 }
 
@@ -169,6 +180,15 @@ const filteredPosts = computed(() => {
 const sdUrl = ref('http://127.0.0.1:8000/')
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
+const activeBackend = computed(() => getActiveBackend())
+const currentWorkflow = computed(() => getActiveWorkflow())
+
+const resolvePostImageUrl = (url) => {
+    if (!url) return ''
+    if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) return url
+    return apiUrl + (url.startsWith('/') ? url : '/' + url)
+}
+
 // Track generation state per post by created_at key
 const genState = reactive({})
 function getGenState(post) {
@@ -209,52 +229,91 @@ async function generateImage(post) {
     state.progress = 0
     state.preview = ''
 
-    // Build prompt from post image fields
+    // Ensure backend settings and ComfyUI workflows are loaded
+    await loadBackendSettings()
+    await loadComfyWorkflows()
 
-    prompt = postToPromt(post)
-
-
-    console.log(prompt)
-
+    const prompt = postToPromt(post)
+    console.log('Generate post image prompt:', prompt)
 
     try {
         const _request = formatRequest(prompt)
-        console.log('Generate post image:', _request)
+        const backendRequest = buildBackendRequest({ baseRequest: _request })
 
-        const genPromise = fetch(sdUrl.value + 'sdapi/v1/txt2img', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(_request)
-        }).then(async res => {
-            if (!res.ok) throw new Error('txt2img failed')
-            return res.json()
-        })
-
-        // Poll progress with preview
-        const poll = (async () => {
-            while (state.generating) {
-                try {
-                    const progRes = await fetch(sdUrl.value + 'sdapi/v1/progress?skip_current_image=false')
-                    if (progRes.ok) {
-                        const data = await progRes.json()
-                        state.progress = typeof data?.progress === 'number' ? data.progress : 0
-                        if (data?.current_image) state.preview = 'data:image/png;base64,' + data.current_image
-                    }
-                } catch (_) { }
-                await sleep(500)
-            }
-        })()
-
-        const result = await genPromise
-        const imageB64 = 'image/png;base64,' + result.images[0]
-        const file = dataURLtoFile('data:' + imageB64, 'post.png')
-
-        // Find character id and post index for upload
-        const charId = post.character?.id
+        const charId = post.character?.id || selectedCharacterId.value
         if (!charId) throw new Error('No character ID on post')
 
+        let imageFile = null
+
+        if (backendRequest.adapter === 'comfyui') {
+            if (backendRequest.noWorkflow) {
+                throw new Error('No ComfyUI workflow selected in Create Sidebar')
+            }
+
+            const activeWf = getActiveWorkflow()
+            console.log('Generating with ComfyUI workflow:', activeWf?.name)
+
+            const { images } = await executeComfyPrompt(backendRequest, {
+                onProgress: (data) => {
+                    state.progress = data.max > 0 ? data.value / data.max : 0
+                },
+                onPreview: (previewUrl) => {
+                    state.preview = previewUrl
+                },
+            })
+
+            if (!images || images.length === 0) {
+                throw new Error('No images produced by ComfyUI workflow')
+            }
+
+            const blob = await fetchComfyImage(
+                backendRequest.baseUrl,
+                images[0].filename,
+                images[0].subfolder || '',
+                images[0].type || 'output'
+            )
+            imageFile = new File([blob], 'post.png', { type: blob.type || 'image/png' })
+        } else {
+            // Default: Forge / SD WebUI
+            const targetUrl = backendRequest.requestUrl || (sdUrl.value + 'sdapi/v1/txt2img')
+            const payload = backendRequest.payload || _request
+            const headers = backendRequest.headers || { 'Content-Type': 'application/json' }
+
+            const genPromise = fetch(targetUrl, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(payload)
+            }).then(async res => {
+                if (!res.ok) throw new Error('txt2img failed: ' + res.statusText)
+                return res.json()
+            })
+
+            // Poll progress with preview
+            const progressUrl = backendRequest.progressUrl || (sdUrl.value + 'sdapi/v1/progress?skip_current_image=false')
+            const poll = (async () => {
+                while (state.generating) {
+                    try {
+                        const progRes = await fetch(progressUrl)
+                        if (progRes.ok) {
+                            const data = await progRes.json()
+                            state.progress = typeof data?.progress === 'number' ? data.progress : 0
+                            if (data?.current_image) state.preview = 'data:image/png;base64,' + data.current_image
+                        }
+                    } catch (_) { }
+                    await sleep(500)
+                }
+            })()
+
+            const result = await genPromise
+            if (!result.images || result.images.length === 0) {
+                throw new Error('No images returned by generator')
+            }
+            const imageB64 = 'image/png;base64,' + result.images[0]
+            imageFile = dataURLtoFile('data:' + imageB64, 'post.png')
+        }
+
         const formData = new FormData()
-        formData.append('file', file)
+        formData.append('file', imageFile)
 
         const uploadRes = await fetch(`${apiUrl}/characters/${charId}/posts/${post.created_at}/image`, {
             method: 'POST',
@@ -263,8 +322,8 @@ async function generateImage(post) {
         const uploadJson = await uploadRes.json()
         if (!uploadRes.ok) throw new Error(uploadJson?.detail || 'Upload failed')
 
-        post.image_url = apiUrl + uploadJson.image_url + '?t=' + Date.now()
-        refreshFeed()
+        post.image_url = uploadJson.image_url + '?t=' + Date.now()
+        await refreshFeed()
     } catch (e) {
         console.error('Image generation failed:', e)
     } finally {
@@ -290,7 +349,7 @@ async function generateImage(post) {
             <ClearArt class=" object-contain select-none pointer-events-none" />
         </div>
         <!-- Top Bar / Cast List -->
-        <div class="bg-[#14141A] rounded-2xl border border-[#2A2A35] p-5 shadow-lg w-full">
+        <div class="bg-[#14141A]/50 backdrop-blur-3xl rounded-2xl border border-[#2A2A35] p-5 shadow-lg w-full">
 
             <div class="flex items-center justify-between mb-4 border-b border-[#2A2A35] pb-4">
                 <h2 class="text-[#FAF8F5] font-sans font-bold tracking-tight text-xl">Cast of Characters</h2>
@@ -335,7 +394,20 @@ async function generateImage(post) {
             <!-- GLOBAL FEED -->
             <div v-if="!selectedCharacterId" class="space-y-8">
                 <div class="flex items-center justify-between pb-6 border-b border-[#2A2A35]">
-                    <h1 class="text-3xl font-bold font-sans tracking-tight text-[#FAF8F5]">Global Feed</h1>
+                    <div class="flex items-center gap-3">
+                        <h1 class="text-3xl font-bold font-sans tracking-tight text-[#FAF8F5]">Global Feed</h1>
+                        <span v-if="activeBackend?.id === 'comfyui'"
+                            class="text-xs px-3 py-1 rounded-full bg-purple-950/60 text-purple-300 border border-purple-500/30 flex items-center gap-1.5 font-mono shadow-sm"
+                            :title="'Using ComfyUI workflow: ' + (currentWorkflow?.name || 'None')">
+                            <span class="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse"></span>
+                            ComfyUI: {{ currentWorkflow?.name || 'No Workflow' }}
+                        </span>
+                        <span v-else-if="activeBackend?.id"
+                            class="text-xs px-3 py-1 rounded-full bg-blue-950/60 text-blue-300 border border-blue-500/30 flex items-center gap-1.5 font-mono shadow-sm">
+                            <span class="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+                            {{ activeBackend.label }}
+                        </span>
+                    </div>
                     <div class="flex items-center gap-3">
                         <button @click="refreshFeed"
                             class="p-2.5 bg-[#2A2A35] text-[#FAF8F5] rounded-full hover:bg-[#3f3f4e] transition-all duration-300 border border-[#FAF8F5]/10"
@@ -398,7 +470,19 @@ async function generateImage(post) {
                                 <div>
                                     <h1 class="text-4xl font-bold font-sans tracking-tight text-[#FAF8F5]">{{
                                         selectedCharacter.name }}</h1>
-                                    <p class="text-[#C9A84C] font-mono text-sm mt-1">@{{ selectedCharacter.id }}</p>
+                                    <div class="flex items-center gap-2 mt-1">
+                                        <p class="text-[#C9A84C] font-mono text-sm">@{{ selectedCharacter.id }}</p>
+                                        <span v-if="activeBackend?.id === 'comfyui'"
+                                            class="text-[11px] px-2.5 py-0.5 rounded-full bg-purple-950/60 text-purple-300 border border-purple-500/30 flex items-center gap-1 font-mono shadow-sm">
+                                            <span class="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse"></span>
+                                            {{ currentWorkflow?.name || 'ComfyUI' }}
+                                        </span>
+                                        <span v-else-if="activeBackend?.id"
+                                            class="text-[11px] px-2.5 py-0.5 rounded-full bg-blue-950/60 text-blue-300 border border-blue-500/30 flex items-center gap-1 font-mono shadow-sm">
+                                            <span class="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+                                            {{ activeBackend.label }}
+                                        </span>
+                                    </div>
                                 </div>
                             </div>
                             <div class="flex gap-3">
@@ -464,7 +548,7 @@ async function generateImage(post) {
         </div>
         <div class="space-y-6">
             <div v-for="(post, index) in filteredPosts" :key="post.created_at || index"
-                class="bg-[#14141A] rounded-2xl border border-[#2A2A35] overflow-hidden shadow-lg transition-transform duration-300 hover:-translate-y-1 hover:shadow-xl hover:border-[#2A2A35]/80">
+                class="bg-[#14141A]-70 backdrop-blur-3xl rounded-2xl border border-[#2A2A35] overflow-hidden shadow-lg transition-transform duration-300 hover:-translate-y-1 hover:shadow-xl hover:border-[#2A2A35]/80">
                 <div class="p-6 flex gap-4">
                     <router-link :to="'/user/' + post.character?.id">
                         <img :src="post.character?.avatar || 'https://images.unsplash.com/photo-1511275539165-cc46b1ee89bf?w=100&h=100&fit=crop'"
@@ -513,8 +597,31 @@ async function generateImage(post) {
                                 </div>
                             </template>
                             <!-- Final image -->
-                            <img v-else-if="post.image_url" :src="apiUrl + post.image_url"
-                                class="w-full h-auto  object-cover">
+                            <div v-else-if="post.image_url" class="relative group/postimg">
+                                <router-link v-if="post.image_id" :to="'/image/' + post.image_id" class="block relative group/link cursor-pointer">
+                                    <img :src="resolvePostImageUrl(post.image_url)"
+                                        class="w-full h-auto object-cover transition-transform duration-500 group-hover/postimg:scale-[1.01]">
+                                    <div class="absolute inset-0 bg-[#0D0D12]/40 opacity-0 group-hover/postimg:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
+                                        <span class="px-4 py-2 bg-[#C9A84C] text-[#0D0D12] rounded-full font-bold text-xs font-sans shadow-lg flex items-center gap-1.5 transform translate-y-2 group-hover/postimg:translate-y-0 transition-transform">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                            </svg>
+                                            View Image #{{ post.image_id }}
+                                        </span>
+                                    </div>
+                                </router-link>
+                                <img v-else :src="resolvePostImageUrl(post.image_url)"
+                                    class="w-full h-auto object-cover">
+                                <button v-if="post.image" @click.stop.prevent="generateImage(post)"
+                                    title="Regenerate image with active backend"
+                                    class="absolute top-3 right-3 p-2 bg-[#0D0D12]/80 hover:bg-[#C9A84C] text-[#FAF8F5] hover:text-[#0D0D12] rounded-full backdrop-blur-md border border-[#2A2A35] shadow-lg opacity-0 group-hover/postimg:opacity-100 transition-all duration-200 z-20">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                    </svg>
+                                </button>
+                            </div>
 
                             <!-- Prompt card (no image yet) -->
                             <div v-else class="relative p-8 font-mono text-sm bg-cover bg-center group"
@@ -561,17 +668,34 @@ async function generateImage(post) {
                                                 class="text-[#FAF8F5]/40 text-xs uppercase tracking-widest mb-1">Setting</span>{{
                                                     post.image.setting }}</div>
                                         <div v-if="post.image.other_tags"
-                                            class="flex flex-col col-span-2 mt-2 pt-4 border-t border-[#2A2A35]/50">
+                                             class="flex flex-col col-span-2 mt-2 pt-4 border-t border-[#2A2A35]/50">
                                             <span class="text-[#FAF8F5]/40 text-xs uppercase tracking-widest mb-1">Other
                                                 Tags</span><span class="text-[#C9A84C]/80">{{
                                                     post.image.other_tags }}</span>
                                         </div>
                                     </div>
-                                    <div class="flex justify-end mt-4">
+                                    <div class="flex items-center justify-between mt-4">
+                                        <div class="flex items-center gap-2">
+                                            <span v-if="activeBackend?.id === 'comfyui'"
+                                                class="text-[11px] px-2.5 py-1 rounded-full bg-purple-950/60 text-purple-300 border border-purple-500/30 flex items-center gap-1.5 font-mono shadow-sm"
+                                                :title="'Workflow: ' + (currentWorkflow?.name || 'Default')">
+                                                <span class="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse"></span>
+                                                ComfyUI: {{ currentWorkflow?.name || 'No Workflow' }}
+                                            </span>
+                                            <span v-else-if="activeBackend?.id"
+                                                class="text-[11px] px-2.5 py-1 rounded-full bg-blue-950/60 text-blue-300 border border-blue-500/30 flex items-center gap-1.5 font-mono shadow-sm">
+                                                <span class="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+                                                {{ activeBackend.label }}
+                                            </span>
+                                        </div>
                                         <button class="px-5 py-2.5 bg-[#C9A84C] text-[#0D0D12] rounded-full font-bold
                                                             font-sans text-sm shadow-[0_0_15px_rgba(201,168,76,0.3)]
-                                                            hover:scale-105 transition-all duration-300"
-                                            @click="generateImage(post)">Generate</button>
+                                                            hover:scale-105 transition-all duration-300 disabled:opacity-50 disabled:pointer-events-none"
+                                            :disabled="getGenState(post).generating"
+                                            @click="generateImage(post)">
+                                            <span v-if="getGenState(post).generating">Generating...</span>
+                                            <span v-else>Generate</span>
+                                        </button>
                                     </div>
                                 </div>
                             </div>
@@ -628,6 +752,14 @@ async function generateImage(post) {
                     <label class="block text-xs font-mono text-[#FAF8F5]/50 uppercase tracking-widest mb-2">Prompt
                         Prefix</label>
                     <input v-model="newChar.prompt_prefix" type="text"
+                        class="w-full bg-[#0D0D12] border border-[#2A2A35] rounded-xl px-4 py-3 text-[#FAF8F5] font-sans focus:outline-none focus:border-[#C9A84C] focus:ring-1 focus:ring-[#C9A84C] transition-all">
+                </div>
+                <div>
+                    <label class="block text-xs font-mono text-[#FAF8F5]/50 uppercase tracking-widest mb-2 flex items-center justify-between">
+                        <span>Media Query Tags</span>
+                        <span class="text-[#FAF8F5]/30 normal-case text-[11px]">comma-separated tags for Media tab</span>
+                    </label>
+                    <input v-model="newChar.tags" type="text" placeholder="e.g. tohru, maid, dragon maid, blonde hair"
                         class="w-full bg-[#0D0D12] border border-[#2A2A35] rounded-xl px-4 py-3 text-[#FAF8F5] font-sans focus:outline-none focus:border-[#C9A84C] focus:ring-1 focus:ring-[#C9A84C] transition-all">
                 </div>
             </div>

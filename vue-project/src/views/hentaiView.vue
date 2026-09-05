@@ -9,7 +9,7 @@
         </div>
         
         <!-- Mode Switcher -->
-        <div class="bg-white/5 border border-white/5 rounded-xl p-1 flex items-center">
+        <div class="bg-white/5 border border-white/5 rounded-xl p-1 flex items-center gap-1">
           <button 
             @click="switchMode('hentai')" 
             :class="[
@@ -28,6 +28,16 @@
           >
             Porn
           </button>
+          <button 
+            @click="switchMode('local')" 
+            :class="[
+              'px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-300 flex items-center gap-1.5',
+              activeMode === 'local' ? 'bg-amber-500 text-black shadow-lg' : 'text-white/60 hover:text-white'
+            ]"
+          >
+            <HardDrive class="w-3.5 h-3.5" />
+            Local
+          </button>
         </div>
       </div>
       
@@ -45,7 +55,7 @@
       <!-- Background Image with Dark Vignette/Gradients -->
       <div class="absolute inset-0 bg-black">
         <img 
-          :src="heroItem.poster" 
+          :src="resolveMediaUrl(heroItem.poster || heroItem.image)" 
           alt="Spotlight"
           class="w-full h-full object-cover opacity-60"
         />
@@ -55,7 +65,12 @@
 
       <!-- Hero Details -->
       <div class="relative z-10 p-6 md:p-16 max-w-3xl">
-        <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-500/20 border border-red-500/30 text-[10px] font-bold tracking-widest text-red-400 uppercase mb-4">
+        <span 
+          :class="[
+            'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold tracking-widest uppercase mb-4 border',
+            activeMode === 'local' ? 'bg-amber-500/20 border-amber-500/30 text-amber-400' : 'bg-red-500/20 border-red-500/30 text-red-400'
+          ]"
+        >
           <Flame class="w-3.5 h-3.5" /> Featured Spotlight
         </span>
         <h1 class="text-3xl md:text-5xl font-extrabold tracking-tight mb-4 leading-tight">
@@ -67,7 +82,10 @@
         <div class="flex items-center gap-3">
           <router-link 
             :to="`/hentai/${encodeURIComponent(heroItem.id)}`"
-            class="flex items-center gap-2 px-6 py-3 bg-red-500 hover:bg-red-600 text-black font-bold rounded-xl transition-all duration-200 shadow-lg shadow-red-500/20 hover:shadow-red-500/35"
+            :class="[
+              'flex items-center gap-2 px-6 py-3 font-bold rounded-xl transition-all duration-200 shadow-lg text-black',
+              activeMode === 'local' ? 'bg-amber-500 hover:bg-amber-600 shadow-amber-500/20 hover:shadow-amber-500/35' : 'bg-red-500 hover:bg-red-600 shadow-red-500/20 hover:shadow-red-500/35'
+            ]"
           >
             <Play class="w-4.5 h-4.5 fill-current" />
             Watch Now
@@ -88,24 +106,24 @@
             :class="[
               'px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all duration-300 border',
               selectedCatalogId === null 
-                ? (activeMode === 'hentai' ? 'bg-red-500 border-transparent text-black shadow-lg' : 'bg-rose-600 border-transparent text-white shadow-lg')
+                ? (activeMode === 'hentai' ? 'bg-red-500 border-transparent text-black shadow-lg' : (activeMode === 'local' ? 'bg-amber-500 border-transparent text-black shadow-lg' : 'bg-rose-600 border-transparent text-white shadow-lg'))
                 : 'bg-white/5 border-white/5 text-white/70 hover:text-white hover:bg-white/10'
             ]"
           >
-            All Catalogs
+            {{ activeMode === 'local' ? 'All Local Videos' : 'All Catalogs' }}
           </button>
           <button 
-            v-for="cat in activeManifest?.catalogs?.filter(c => c.id !== 'hentai-search')" 
+            v-for="cat in catalogsList" 
             :key="cat.id"
             @click="selectCatalog(cat.id)"
             :class="[
               'px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all duration-300 border',
               selectedCatalogId === cat.id 
-                ? (activeMode === 'hentai' ? 'bg-red-500 border-transparent text-black shadow-lg' : 'bg-rose-600 border-transparent text-white shadow-lg')
+                ? (activeMode === 'hentai' ? 'bg-red-500 border-transparent text-black shadow-lg' : (activeMode === 'local' ? 'bg-amber-500 border-transparent text-black shadow-lg' : 'bg-rose-600 border-transparent text-white shadow-lg'))
                 : 'bg-white/5 border-white/5 text-white/70 hover:text-white hover:bg-white/10'
             ]"
           >
-            {{ activeMode === 'hentai' ? cat.name : cat.name.replace('OnlyPorn: ', '') }}
+            {{ activeMode === 'hentai' ? cat.name : (activeMode === 'local' ? (cat.count ? `${cat.name} (${cat.count})` : cat.name) : cat.name.replace('OnlyPorn: ', '')) }}
           </button>
         </div>
 
@@ -114,13 +132,16 @@
             <input 
               type="text" 
               v-model="searchQuery"
-              placeholder="Search anime titles, tags, studios..."
+              :placeholder="activeMode === 'local' ? 'Search local videos, folders, files...' : 'Search anime titles, tags, studios...'"
               class="w-full bg-[#161622] text-white text-sm rounded-xl border border-white/10 focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500 pl-12 pr-28 py-3.5 transition-all duration-300"
             />
             <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-white/45" />
             <button 
               type="submit"
-              class="absolute right-2 top-1/2 -translate-y-1/2 bg-red-500 hover:bg-red-600 text-black text-xs font-bold px-4 py-2 rounded-lg transition-colors duration-200"
+              :class="[
+                'absolute right-2 top-1/2 -translate-y-1/2 text-black text-xs font-bold px-4 py-2 rounded-lg transition-colors duration-200',
+                activeMode === 'local' ? 'bg-amber-500 hover:bg-amber-600' : 'bg-red-500 hover:bg-red-600'
+              ]"
             >
               Search
             </button>
@@ -137,18 +158,18 @@
     </section>
 
     <!-- Genres / Category Chips -->
-    <section class="max-w-7xl mx-auto px-6 md:px-12 mt-6">
+    <section v-if="genres && genres.length > 0" class="max-w-7xl mx-auto px-6 md:px-12 mt-6">
       <div class="flex gap-2.5 overflow-x-auto pb-2 scrollbar-thin">
         <button 
           @click="selectGenre(null)"
           :class="[
             'px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all duration-300 border',
             selectedGenreId === null 
-              ? 'bg-red-500 border-transparent text-black shadow-lg'
+              ? (activeMode === 'local' ? 'bg-amber-500 border-transparent text-black shadow-lg' : 'bg-red-500 border-transparent text-black shadow-lg')
               : 'bg-white/5 border-white/5 text-white/70 hover:text-white hover:bg-white/10'
           ]"
         >
-          All Genres
+          {{ activeMode === 'local' ? 'All Folders' : 'All Genres' }}
         </button>
         <button 
           v-for="genre in genres" 
@@ -157,7 +178,7 @@
           :class="[
             'px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all duration-300 border',
             selectedGenreId === genre.id 
-              ? 'bg-red-500 border-transparent text-black shadow-lg'
+              ? (activeMode === 'local' ? 'bg-amber-500 border-transparent text-black shadow-lg' : 'bg-red-500 border-transparent text-black shadow-lg')
               : 'bg-white/5 border-white/5 text-white/70 hover:text-white hover:bg-white/10'
           ]"
         >
@@ -193,16 +214,16 @@
         </div>
 
         <div v-else>
-          <div :class="activeMode === 'porn' ? 'grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6' : 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6'">
+          <div :class="activeMode === 'hentai' ? 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6' : 'grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6'">
             <div 
               v-for="item in results" 
               :key="item.id"
               @click="$router.push(`/hentai/${encodeURIComponent(item.id)}`)"
               class="group bg-[#161622] rounded-xl overflow-hidden cursor-pointer border border-white/5 hover:border-red-500/40 transition-all duration-300 hover:-translate-y-1 shadow-lg"
             >
-              <div class="relative overflow-hidden bg-black/50" :class="activeMode === 'porn' ? 'aspect-video' : 'aspect-[2/3]'">
+              <div class="relative overflow-hidden bg-black/50" :class="activeMode === 'hentai' ? 'aspect-[2/3]' : 'aspect-video'">
                 <img 
-                  :src="item.poster" 
+                  :src="resolveMediaUrl(item.poster || item.image)" 
                   alt="Cover"
                   loading="lazy"
                   class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
@@ -212,6 +233,14 @@
                   <div class="w-10 h-10 bg-red-500 rounded-full flex items-center justify-center text-black shadow-lg">
                     <Play class="w-5 h-5 fill-current ml-0.5" />
                   </div>
+                </div>
+                <!-- Local Badge if folder -->
+                <div v-if="item.folder" class="absolute bottom-2 left-2 px-2 py-0.5 rounded bg-black/70 backdrop-blur-sm border border-white/10 text-[10px] font-semibold text-amber-300">
+                  {{ item.folder }}
+                </div>
+                <!-- Size Badge -->
+                <div v-if="item.size_formatted" class="absolute bottom-2 right-2 px-2 py-0.5 rounded bg-black/70 backdrop-blur-sm border border-white/10 text-[10px] font-mono text-white/70">
+                  {{ item.size_formatted }}
                 </div>
               </div>
               <div class="p-4">
@@ -261,7 +290,7 @@
               ]"
             >
               <div class="overflow-hidden bg-black/50 relative" :class="isPornId(item.id) ? 'aspect-video' : 'aspect-[2/3]'">
-                <img :src="item.image" class="w-full h-full object-cover" />
+                <img :src="resolveMediaUrl(item.image)" class="w-full h-full object-cover" />
                 
                 <!-- Progress Bar Overlay -->
                 <div class="absolute bottom-0 left-0 right-0 h-1.5 bg-white/20">
@@ -291,7 +320,7 @@
         <!-- Dynamic Catalogs Rows -->
         <div v-for="catalog in catalogsData" :key="catalog.id">
           <h2 class="text-lg md:text-xl font-bold tracking-tight mb-4 flex items-center gap-2">
-            <Flame class="w-5 h-5 text-red-500" /> {{ catalog.name }}
+            <Flame class="w-5 h-5" :class="activeMode === 'local' ? 'text-amber-500' : 'text-red-500'" /> {{ catalog.name }}
           </h2>
           <div class="flex gap-5 overflow-x-auto pb-4 scrollbar-thin">
             <div 
@@ -299,12 +328,18 @@
               :key="item.id"
               @click="$router.push(`/hentai/${encodeURIComponent(item.id)}`)"
               :class="[
-                'bg-[#161622] rounded-xl overflow-hidden cursor-pointer border border-white/5 hover:border-red-500/30 transition-all duration-300 hover:scale-[1.02] flex-shrink-0 flex flex-col justify-between',
-                activeMode === 'porn' ? 'w-52' : 'w-40'
+                'bg-[#161622] rounded-xl overflow-hidden cursor-pointer border border-white/5 hover:border-red-500/30 transition-all duration-300 hover:scale-[1.02] flex-shrink-0 flex flex-col justify-between group',
+                activeMode === 'hentai' ? 'w-40' : 'w-56'
               ]"
             >
-              <div class="overflow-hidden bg-black/50 relative" :class="activeMode === 'porn' ? 'aspect-video' : 'aspect-[2/3]'">
-                <img :src="item.poster" class="w-full h-full object-cover" loading="lazy" />
+              <div class="overflow-hidden bg-black/50 relative" :class="activeMode === 'hentai' ? 'aspect-[2/3]' : 'aspect-video'">
+                <img :src="resolveMediaUrl(item.poster || item.image)" class="w-full h-full object-cover" loading="lazy" />
+                <div class="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                  <Play class="w-8 h-8 text-white fill-current" />
+                </div>
+                <div v-if="item.size_formatted" class="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded bg-black/70 backdrop-blur-sm text-[9px] font-mono text-white/70">
+                  {{ item.size_formatted }}
+                </div>
               </div>
               <div class="p-3">
                 <h3 class="text-xs font-semibold text-white/80 line-clamp-2 hover:text-red-400 transition-colors">
@@ -322,7 +357,7 @@
 <script setup>
 import { ref, onMounted, watch, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { GetFromApi } from '@/api'
+import { GetFromApi, apiUrl } from '@/api'
 import ClearArt from '@/components/ClearArt.vue'
 import {
   Search,
@@ -333,7 +368,8 @@ import {
   PlayCircle,
   Flame,
   Film,
-  Tv
+  Tv,
+  HardDrive
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -344,9 +380,10 @@ const HENTAI_BASE = 'https://hentaistream-addon.keypop3750.workers.dev/bg=futa,f
 const PORN_BASE = 'https://07b88951aaab-jaxxx-v2.baby-beamup.club'
 
 // UI & Data States
-const activeMode = ref('hentai') // 'hentai' or 'porn'
+const activeMode = ref('hentai') // 'hentai', 'porn', or 'local'
 const hentaiManifest = ref(null)
 const pornManifest = ref(null)
+const localFolders = ref([])
 const selectedCatalogId = ref(null) // null means "All Catalogs" (Dashboard view)
 
 const catalogsData = ref([])
@@ -359,6 +396,13 @@ const selectedGenreName = ref('')
 const results = ref([])
 const currentPage = ref(1)
 const isLoading = ref(false)
+
+// Resolve local or remote media URLs
+const resolveMediaUrl = (url) => {
+  if (!url) return ''
+  if (url.startsWith('http://') || url.startsWith('https://')) return url
+  return `${apiUrl}${url.startsWith('/') ? '' : '/'}${url}`
+}
 
 // Status / Continue watching states
 const userStatus = ref(null)
@@ -400,7 +444,19 @@ const activeManifest = computed(() => {
   return activeMode.value === 'hentai' ? hentaiManifest.value : pornManifest.value
 })
 
+const catalogsList = computed(() => {
+  if (activeMode.value === 'local') {
+    return localFolders.value.map(f => ({ id: f.id, name: f.name, count: f.count }))
+  }
+  return activeManifest.value?.catalogs?.filter(c => c.id !== 'hentai-search') || []
+})
+
 const activeCatalogName = computed(() => {
+  if (activeMode.value === 'local') {
+    if (!selectedCatalogId.value) return 'Local Videos'
+    const found = localFolders.value.find(f => f.id === selectedCatalogId.value)
+    return found ? found.name : selectedCatalogId.value
+  }
   if (!activeManifest.value) return ''
   const cat = activeManifest.value.catalogs?.find(c => c.id === selectedCatalogId.value)
   return cat ? cat.name.replace('OnlyPorn: ', '') : ''
@@ -408,11 +464,14 @@ const activeCatalogName = computed(() => {
 
 const isPornId = (id) => {
   if (!id) return false
-  return id.startsWith('http') || id.includes('eporner') || id.includes('xhamster') || id.includes('spankbang') || id.includes('porntrex') || id.includes('missav')
+  return id.startsWith('http') || id.includes('eporner') || id.includes('xhamster') || id.includes('spankbang') || id.includes('porntrex') || id.includes('missav') || id.startsWith('local:')
 }
 
-// Extract genres dynamically from current active manifest
+// Extract genres dynamically from current active manifest or local folders
 const genres = computed(() => {
+  if (activeMode.value === 'local') {
+    return localFolders.value.map(f => ({ id: f.id, name: f.name, count: f.count, raw: f.name }))
+  }
   const manifest = activeManifest.value
   if (!manifest || !manifest.catalogs) return []
 
@@ -455,7 +514,7 @@ const loadManifests = async () => {
   }
 }
 
-// Load Home Page Dashboard rows dynamically for all manifest catalogs
+// Load Home Page Dashboard rows dynamically for all manifest catalogs or local folders
 const loadDashboard = async () => {
   isLoading.value = true
   catalogsData.value = []
@@ -463,6 +522,35 @@ const loadDashboard = async () => {
 
   try {
     await fetchStatus()
+
+    if (activeMode.value === 'local') {
+      const data = await GetFromApi('hhaven/local/videos?limit=100')
+      if (data && data.results) {
+        localFolders.value = data.folders || []
+        
+        // Group by folder for dashboard rows
+        const grouped = {}
+        for (const vid of data.results) {
+          const f = vid.folder || 'Root'
+          if (!grouped[f]) grouped[f] = []
+          grouped[f].push(vid)
+        }
+        
+        for (const [folderName, items] of Object.entries(grouped)) {
+          catalogsData.value.push({
+            id: folderName,
+            name: `${folderName} (Local)`,
+            metas: items
+          })
+        }
+
+        if (data.results.length > 0) {
+          heroItem.value = data.results[Math.floor(Math.random() * data.results.length)]
+        }
+      }
+      return
+    }
+
     const manifest = activeManifest.value
     if (manifest && manifest.catalogs) {
       for (const cat of manifest.catalogs) {
@@ -501,6 +589,23 @@ const fetchResults = async () => {
 
   const skip = (currentPage.value - 1) * 20
   const skipParam = skip > 0 ? `skip=${skip}` : ''
+
+  if (activeMode.value === 'local') {
+    try {
+      const folderParam = selectedCatalogId.value || selectedGenreId.value || ''
+      const qParam = searchQuery.value || ''
+      const data = await GetFromApi(`hhaven/local/videos?folder=${encodeURIComponent(folderParam)}&query=${encodeURIComponent(qParam)}&page=${currentPage.value}&limit=20`)
+      if (data) {
+        results.value = data.results || []
+        localFolders.value = data.folders || []
+      }
+    } catch (err) {
+      console.error("Failed fetching local video results:", err)
+    } finally {
+      isLoading.value = false
+    }
+    return
+  }
 
   const manifest = activeManifest.value
   if (!manifest) {
@@ -600,6 +705,11 @@ const selectGenre = (genre) => {
     selectedGenreId.value = null
     selectedGenreName.value = ''
     results.value = []
+    if (selectedCatalogId.value === null) {
+      loadDashboard()
+    } else {
+      fetchResults()
+    }
   } else {
     selectedGenreId.value = genre.id
     selectedGenreName.value = genre.name
@@ -611,6 +721,16 @@ const selectGenre = (genre) => {
 // Surprise Me / Randomizer
 const triggerRandom = async () => {
   try {
+    if (activeMode.value === 'local') {
+      const folderParam = selectedCatalogId.value || ''
+      const res = await GetFromApi(`hhaven/local/videos?folder=${encodeURIComponent(folderParam)}&limit=100`)
+      if (res && res.results && res.results.length > 0) {
+        const randomItem = res.results[Math.floor(Math.random() * res.results.length)]
+        router.push(`/hentai/${encodeURIComponent(randomItem.id)}`)
+      }
+      return
+    }
+
     let metas = []
     const manifest = activeManifest.value
     const catId = selectedCatalogId.value || manifest?.catalogs?.[0]?.id

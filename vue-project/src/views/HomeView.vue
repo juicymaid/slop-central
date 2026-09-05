@@ -16,8 +16,9 @@ const windowWidth = ref(window.innerWidth)
 
 const pins = ref([])
 const isLoading = ref(false)
+const hasMore = ref(true)
 const route = useRoute()
- const router = useRouter()
+const router = useRouter()
 // Flag to prevent duplicate fetch calls
 const isUpdatingFromWatcher = ref(false)
 // Get dark mode state
@@ -65,16 +66,13 @@ const handleClickOutside = (event) => {
 
 // Initialize sort and page from URL or default values
 const currentSort = ref(route.query.sort || 'home')
-let page = parseInt(route.query.page) || 1
-
-// Computed property to ensure reactivity
-const displayPins = computed(() => pins.value)
+const page = ref(parseInt(route.query.page) || 1)
 
 // Utility function to ensure unique pins by Id
 const getUniquePinsById = (pinsArray) => {
   const uniqueMap = new Map();
   pinsArray.forEach(pin => {
-    if (!uniqueMap.has(pin.Id)) {
+    if (pin && pin.Id != null && !uniqueMap.has(pin.Id)) {
       uniqueMap.set(pin.Id, pin);
     }
   });
@@ -83,8 +81,10 @@ const getUniquePinsById = (pinsArray) => {
 
 // Update URL when sort changes
 const updateSort = (sortValue) => {
+  if (currentSort.value === sortValue && page.value === 1) return
   currentSort.value = sortValue
-  page = 1
+  page.value = 1
+  hasMore.value = true
   pins.value = [] // Reset pins for new sort
   updateUrlParams()
   fetchCurrentPage()
@@ -92,112 +92,117 @@ const updateSort = (sortValue) => {
 
 // Update URL parameters
 const updateUrlParams = () => {
-  // Set the flag to prevent double fetching
   isUpdatingFromWatcher.value = true
   router.push({
     query: {
       ...route.query,
       sort: currentSort.value,
-      page: page
+      page: page.value
     }
   }).finally(() => {
-    // Reset the flag after navigation completes
     setTimeout(() => {
       isUpdatingFromWatcher.value = false
-    }, 50)
+    }, 100)
   })
 }
 
- const loadMore = async () => {
-   if (isLoading.value) return
-
-  cancelOngoingFetch()
-  const controller = new AbortController()
-  currentAbortController = controller
-
-   isLoading.value = true
-   try {
-     page++
-     updateUrlParams()
-    const newData = await GetFromApi('all-images?sort=' + currentSort.value + '&per_page=60&page=' + page, { signal: controller.signal })
-    if (currentAbortController !== controller) return
-     // Filter out duplicates using both methods for redundancy
-     const uniqueNewData = newData.filter(newPin =>
-       !pins.value.some(existingPin => existingPin.Id === newPin.Id)
-     )
-     const combinedPins = [...pins.value, ...uniqueNewData]
-     // Apply final deduplication before assignment
-     pins.value = getUniquePinsById(combinedPins)
-  } catch (err) {
-    if (err.name === 'AbortError') return
-    console.error(err)
-   } finally {
-    if (currentAbortController === controller) {
-      isLoading.value = false
-      currentAbortController = null
-    }
-   }
- }
-
+let scrollRaf = null
 const handleScroll = () => {
-  if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 512) {
-    loadMore()
+  if (scrollRaf) return
+  scrollRaf = requestAnimationFrame(() => {
+    scrollRaf = null
+    if (isLoading.value || !hasMore.value || pins.value.length === 0) return
+    if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 600) {
+      loadMore()
+    }
+  })
+}
+
+const loadMore = async () => {
+  if (isLoading.value || !hasMore.value) return
+
+  isLoading.value = true
+  const nextPage = page.value + 1
+  try {
+    const newData = await GetFromApi(`all-images?sort=${currentSort.value}&per_page=60&page=${nextPage}`)
+    if (Array.isArray(newData) && newData.length > 0) {
+      page.value = nextPage
+      updateUrlParams()
+      pins.value = getUniquePinsById([...pins.value, ...newData])
+      if (newData.length < 60) {
+        hasMore.value = false
+      }
+    } else {
+      hasMore.value = false
+    }
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      console.error('Error loading more images:', err)
+    }
+  } finally {
+    isLoading.value = false
   }
 }
 
 // Function to fetch current page data
 const fetchCurrentPage = async () => {
   cancelOngoingFetch()
-
   const controller = new AbortController()
   currentAbortController = controller
 
-   isLoading.value = true
-   try {
-    const data = await GetFromApi(`all-images?sort=${currentSort.value}&per_page=60&page=${page}`, { signal: controller.signal })
+  isLoading.value = true
+  try {
+    const data = await GetFromApi(`all-images?sort=${currentSort.value}&per_page=60&page=${page.value}`, { signal: controller.signal })
     if (currentAbortController === controller) {
-      // Ensure no duplicates in initial data load
-      pins.value = getUniquePinsById(data)
+      if (Array.isArray(data)) {
+        pins.value = getUniquePinsById(data)
+        hasMore.value = data.length >= 60
+      } else {
+        pins.value = []
+        hasMore.value = false
+      }
     }
   } catch (err) {
-    if (err.name === 'AbortError') return
-    console.error(err)
-   } finally {
+    if (err.name !== 'AbortError') {
+      console.error('Error fetching images:', err)
+    }
+  } finally {
     if (currentAbortController === controller) {
       isLoading.value = false
       currentAbortController = null
     }
-   }
- }
+  }
+}
 
 onMounted(async () => {
-  // Initial data fetch on mount
   await fetchCurrentPage()
-  window.addEventListener('scroll', handleScroll)
+  window.addEventListener('scroll', handleScroll, { passive: true })
   document.addEventListener('click', handleClickOutside)
 })
 
- onBeforeUnmount(() => {
+onBeforeUnmount(() => {
   cancelOngoingFetch()
-   window.removeEventListener('scroll', handleScroll)
-   document.removeEventListener('click', handleClickOutside)
- })
+  if (scrollRaf) cancelAnimationFrame(scrollRaf)
+  window.removeEventListener('scroll', handleScroll)
+  document.removeEventListener('click', handleClickOutside)
+})
 
 // Single watcher for route changes
 watch(() => route.query, (newQuery) => {
   if (isUpdatingFromWatcher.value) return
 
-  const newSort = newQuery.sort
+  const newSort = newQuery.sort || 'home'
   const newPage = parseInt(newQuery.page) || 1
   let shouldFetch = false
 
-   if (newSort && newSort !== currentSort.value) {
-     currentSort.value = newSort
+  if (newSort !== currentSort.value) {
+    currentSort.value = newSort
     pins.value = []
-     shouldFetch = true
-   }
-  if (newPage !== page) {
-    page = newPage
+    hasMore.value = true
+    shouldFetch = true
+  }
+  if (newPage !== page.value) {
+    page.value = newPage
     shouldFetch = true
   }
 
@@ -205,8 +210,6 @@ watch(() => route.query, (newQuery) => {
     fetchCurrentPage()
   }
 }, { deep: true })
-
-// Remove the separate watch on currentSort as it's now handled in updateSort
 </script>
 
 <template>

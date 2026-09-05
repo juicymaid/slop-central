@@ -1,7 +1,7 @@
 import { reactive } from 'vue'
 import { saveToFile, loadFromFile } from '@/storage'
-import { current_model, defaultStyles, apiUrl } from '@/api'
-import { comfyState, buildComfyPrompt, getActiveWorkflow } from './comfyui'
+import { request, current_model, defaultStyles, apiUrl } from '@/api'
+import { comfyState, buildComfyPrompt, getActiveWorkflow, mapSamplerToComfy, findPositiveAndNegativeNodes } from './comfyui'
 
 const BACKEND_SETTINGS_FILE = 'backendSettings.json'
 
@@ -52,12 +52,12 @@ export const backendDefinitions = {
       url: 'http://127.0.0.1:8888/',
     },
     capabilities: {
-      supportsLocalModels: false,
-      supportsLoras: false,
+      supportsLocalModels: true,
+      supportsLoras: true,
       supportsExtensions: false,
       supportsProgress: true,
       supportsInterrupt: true,
-      supportsModelThumbnails: false,
+      supportsModelThumbnails: true,
       supportsWorkflows: true,
     },
   },
@@ -436,12 +436,151 @@ export const buildBackendRequest = ({ baseRequest, inputImage, denoisingStrength
       }
     }
 
-    // Build overrides from the exposed inputs' current values
+    const req = baseRequest || request
     const inputOverrides = {}
-    for (const input of activeWorkflow.exposedInputs) {
-      inputOverrides[`${input.nodeId}.${input.inputKey}`] = input.value
+    const wf = activeWorkflow.workflow || {}
+    let clipNodes = []
+
+    // Collect all LoRAs already loaded by dedicated LoRA nodes in this workflow (e.g. DMD2, Lightning)
+    // so we NEVER duplicate them into the Power Lora Loader!
+    const dedicatedLoras = new Set()
+    for (const [nodeId, node] of Object.entries(wf)) {
+      const classType = (node.class_type || '').toLowerCase()
+      if (classType.includes('loraloader') && !classType.includes('power')) {
+        const loraName = node.inputs?.lora_name
+        if (loraName && loraName !== '[none]') {
+          const raw = String(loraName).toLowerCase()
+          const clean = raw.replace(/\\/g, '/').split('/').pop().replace(/\.(safetensors|ckpt|pt)$/i, '')
+          dedicatedLoras.add(raw)
+          dedicatedLoras.add(clean)
+        }
+      }
     }
 
+    const hasExposedInputs = Boolean(activeWorkflow.exposedInputs && activeWorkflow.exposedInputs.length > 0)
+
+    for (const [nodeId, node] of Object.entries(wf)) {
+      const classType = (node.class_type || '').toLowerCase()
+      const inputs = node.inputs || {}
+
+      if (classType.includes('checkpointloader') || classType.includes('unetloader') || 'ckpt_name' in inputs) {
+        if ('ckpt_name' in inputs && current_model.model?.filename) {
+          inputOverrides[`${nodeId}.ckpt_name`] = current_model.model.filename
+        } else if ('ckpt_name' in inputs && current_model.model?.title) {
+          inputOverrides[`${nodeId}.ckpt_name`] = current_model.model.title
+        }
+      }
+
+      if (classType.includes('cliptextencode') || classType.includes('prompt')) {
+        clipNodes.push({ nodeId, title: (node._meta?.title || '').toLowerCase() })
+      }
+
+      if (classType.includes('emptylatent') || classType.includes('latentimage')) {
+        if ('width' in inputs && req.width) {
+          inputOverrides[`${nodeId}.width`] = req.width
+        }
+        if ('height' in inputs && req.height) {
+          inputOverrides[`${nodeId}.height`] = req.height
+        }
+      }
+
+      if (classType.includes('ksampler') || classType.includes('sampler')) {
+        if ('seed' in inputs) {
+          inputOverrides[`${nodeId}.seed`] = (req.seed === undefined || req.seed === -1 || req.seed < 0)
+            ? Math.floor(Math.random() * 1000000000000000)
+            : req.seed
+        }
+        // If the workflow does not have exposed inputs, allow request defaults as fallback.
+        // If it DOES have exposed inputs, those are the single source of truth and processed below.
+        if (!hasExposedInputs) {
+          if ('steps' in inputs && req.steps) {
+            inputOverrides[`${nodeId}.steps`] = req.steps
+          }
+          if ('cfg' in inputs && req.cfg_scale) {
+            inputOverrides[`${nodeId}.cfg`] = req.cfg_scale
+          }
+          if ('sampler_name' in inputs && req.sampler_name) {
+            inputOverrides[`${nodeId}.sampler_name`] = mapSamplerToComfy(req.sampler_name)
+          }
+        }
+      }
+
+      if (classType.includes('power lora loader') || classType.includes('powerloraloader')) {
+        // Exclude any LoRA that is already loaded by a dedicated LoRA node in this workflow
+        const loras = (current_model.loras || []).filter(lora => {
+          const name = String(lora.path || lora.filename || lora.name || '').toLowerCase()
+          const clean = name.replace(/\\/g, '/').split('/').pop().replace(/\.(safetensors|ckpt|pt)$/i, '')
+          return !dedicatedLoras.has(name) && !dedicatedLoras.has(clean)
+        })
+
+        const totalSlots = Math.max(loras.length, 10)
+        for (let idx = 0; idx < totalSlots; idx++) {
+          const slotKey = `lora_${idx + 1}`
+          if (idx < loras.length) {
+            const lora = loras[idx]
+            inputOverrides[`${nodeId}.${slotKey}`] = {
+              on: true,
+              lora: lora.path || lora.filename || lora.name,
+              strength: parseFloat(lora.weight ?? 1)
+            }
+          } else if (inputs && slotKey in inputs) {
+            const existingSlot = inputs[slotKey] || {}
+            inputOverrides[`${nodeId}.${slotKey}`] = {
+              ...existingSlot,
+              on: false
+            }
+          }
+        }
+      }
+    }
+
+    const { posNodeId, negNodeId } = findPositiveAndNegativeNodes(wf)
+
+    // 1. Process explicit exposed inputs (skipping raw prompt overrides so req.prompt applies)
+    for (const input of activeWorkflow.exposedInputs || []) {
+      if (input.value !== undefined && input.value !== null && input.value !== '') {
+        let val = input.value
+        const key = (input.inputKey || '').toLowerCase()
+        const isPos = input.role === 'positive' || (posNodeId && String(input.nodeId) === String(posNodeId) && (key === 'text' || input.spec?.type === 'textarea'))
+        const isNeg = input.role === 'negative' || (negNodeId && String(input.nodeId) === String(negNodeId) && (key === 'text' || input.spec?.type === 'textarea'))
+
+        if (isPos || isNeg) {
+          continue
+        } else if (key === 'seed' || key.includes('seed')) {
+          if (req.seed !== undefined && req.seed !== -1 && req.seed >= 0) {
+            val = req.seed
+          } else if (val === -1 || typeof val !== 'number' || val <= 0 || req.seed === -1) {
+            val = Math.floor(Math.random() * 1000000000000000)
+          }
+        } else if (key === 'sampler_name' || key.includes('sampler')) {
+          val = mapSamplerToComfy(req.sampler_name || val, input.spec?.options)
+        }
+        inputOverrides[`${input.nodeId}.${input.inputKey}`] = val
+      }
+    }
+
+    // 2. Apply active UI prompts
+    if (posNodeId && wf[posNodeId]) {
+      let fullPrompt = req.prompt || ''
+      if (current_model.model?.model_name && defaultStyles.value?.[current_model.model.model_name]?.prompt_prefix) {
+        const prefix = defaultStyles.value[current_model.model.model_name].prompt_prefix
+        if (prefix && !fullPrompt.includes(prefix)) {
+          fullPrompt = `${prefix}, ${fullPrompt}`
+        }
+      }
+      inputOverrides[`${posNodeId}.text`] = fullPrompt
+    }
+
+    if (negNodeId && wf[negNodeId]) {
+      let fullNeg = req.negative_prompt || ''
+      if (current_model.model?.model_name && defaultStyles.value?.[current_model.model.model_name]?.negative_prompt_prefix) {
+        const negPrefix = defaultStyles.value[current_model.model.model_name].negative_prompt_prefix
+        if (negPrefix && !fullNeg.includes(negPrefix)) {
+          fullNeg = `${negPrefix}, ${fullNeg}`
+        }
+      }
+      inputOverrides[`${negNodeId}.text`] = fullNeg
+    }
     const promptData = buildComfyPrompt(activeWorkflow.workflow, inputOverrides)
 
     return {

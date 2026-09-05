@@ -7,12 +7,14 @@ import random
 import threading
 import time
 from fastapi import HTTPException, APIRouter
-
-import GPUtil
-
+try:
+    import GPUtil
+except ImportError:
+    GPUtil = None
 
 router = APIRouter()
-DB_FILE = "pinthesis.db"
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_FILE = os.path.join(_BASE_DIR, "pinthesis.db")
 
 def get_db_connection():
     conn = sqlite3.connect(DB_FILE)
@@ -46,8 +48,8 @@ ignore_tags = ["score_9", "score_8", "score_7", "score_6", "score_5", "score_4",
                 "masterpiece", "best quality", "amazing quality", "absurdres"
 ]
 
-api_file_root = os.path.abspath("files")
-api_root = os.path.abspath("")
+api_file_root = os.path.join(_BASE_DIR, "files")
+api_root = _BASE_DIR
 
 
 image_embeddings = {}  # { image_id: { "vec": List[float], "norm": float } }
@@ -94,7 +96,7 @@ def save_embeddings():
     except Exception as e:
         print("Error saving embeddings to SQLite:", e)
 def build_image_embeddings(
-    model_name="nomic-embed-text",
+    model_name="text-embedding-nomic-embed-text-v2-moe",
     force=False,
     limit=None,
     save_every=25,
@@ -607,9 +609,9 @@ def compute_custom_score(candidate, liked_images, disliked_images):
     return score
 
 def compute_phash(image_path: str) -> str:
-    from PIL import Image
-    import imagehash
     try:
+        from PIL import Image
+        import imagehash
         img = Image.open(image_path)
         return str(imagehash.phash(img))
     except Exception as e:
@@ -715,34 +717,74 @@ def get_vram_process_breakdown():
 
 
 def get_vram_usage():
-    try:
-        gpus = GPUtil.getGPUs()
-        if not gpus:
-            return {"error": "No GPUs found"}
-        
-        gpu_info = []
-        for gpu in gpus:
-            # Compute memory_util directly — GPUtil's memoryUtil can return 0 on Windows
-            mem_total = gpu.memoryTotal or 1
-            mem_used = gpu.memoryUsed or 0
-            computed_util = mem_used / mem_total
+    # 1. Try GPUtil if available
+    if GPUtil is not None:
+        try:
+            gpus = GPUtil.getGPUs()
+            if gpus:
+                gpu_info = []
+                for gpu in gpus:
+                    mem_total = gpu.memoryTotal or 1
+                    mem_used = gpu.memoryUsed or 0
+                    computed_util = mem_used / mem_total
+                    gpu_data = {
+                        "id": gpu.id,
+                        "name": gpu.name,
+                        "memory_total": mem_total,
+                        "memory_used": mem_used,
+                        "memory_free": gpu.memoryFree,
+                        "memory_util": computed_util,
+                        "load": gpu.load,
+                        "temperature": getattr(gpu, 'temperature', None),
+                        "breakdown": get_vram_process_breakdown(),
+                    }
+                    gpu_info.append(gpu_data)
+                return {"gpus": gpu_info}
+        except Exception:
+            pass
 
-            gpu_data = {
-                "id": gpu.id,
-                "name": gpu.name,
-                "memory_total": mem_total,
-                "memory_used": mem_used,
-                "memory_free": gpu.memoryFree,
-                "memory_util": computed_util,
-                "load": gpu.load,
-                "temperature": getattr(gpu, 'temperature', None),
-                "breakdown": get_vram_process_breakdown(),
-            }
-            gpu_info.append(gpu_data)
-        
-        return {"gpus": gpu_info}
+    # 2. Fallback: query nvidia-smi directly
+    import subprocess
+    try:
+        cmd = [
+            "nvidia-smi",
+            "--query-gpu=memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu,name",
+            "--format=csv,noheader,nounits"
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        if res.returncode == 0 and res.stdout.strip():
+            gpu_info = []
+            for idx, line in enumerate(res.stdout.strip().splitlines()):
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) >= 6:
+                    try:
+                        mem_total = float(parts[0])
+                        mem_used = float(parts[1])
+                        mem_free = float(parts[2])
+                        util_gpu = float(parts[3])
+                        temp_gpu = float(parts[4])
+                        name = parts[5]
+                    except ValueError:
+                        continue
+                    computed_util = (mem_used / mem_total) if mem_total > 0 else 0
+                    gpu_data = {
+                        "id": idx,
+                        "name": name,
+                        "memory_total": mem_total,
+                        "memory_used": mem_used,
+                        "memory_free": mem_free,
+                        "memory_util": computed_util,
+                        "load": util_gpu / 100.0,
+                        "temperature": temp_gpu,
+                        "breakdown": get_vram_process_breakdown(),
+                    }
+                    gpu_info.append(gpu_data)
+            if gpu_info:
+                return {"gpus": gpu_info}
     except Exception as e:
         return {"error": f"Failed to get GPU info: {str(e)}"}
+
+    return {"error": "No GPUs found"}
 
 
 @router.get("/image_count_per_day")
@@ -796,16 +838,21 @@ def status():
     # Lightweight health/status endpoint for startup debugging.
     return get_load_state()
 
-wildcard_path = r"H:\ent\ai\StabilityMatrix\Packages\forge\webui\extensions\sd-dynamic-prompts\wildcards"
+wildcard_path = os.getenv(
+    "WILDCARDS_DIR",
+    "/mnt/SSD/ai/Data/Packages/Stable Diffusion WebUI Forge - Neo/extensions/sd-dynamic-prompts/wildcards"
+)
 @router.get("/wildcards")
 def get_wildcards():
     """Returns a list of the txt files in the wildcards directory. (without .txt extension)"""
     try:
+        if not os.path.exists(wildcard_path):
+            return {"wildcards": []}
         files = os.listdir(wildcard_path)
         wildcards = [f[:-4] for f in files if f.endswith(".txt")]
         return {"wildcards": wildcards}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to list wildcards: {str(e)}")
+        return {"wildcards": [], "error": str(e)}
 
 def get_dir_size(path):
     total = 0
@@ -878,18 +925,14 @@ def image_to_base64(image_path):
 
 def is_vram_high_enough_to_unload(threshold=0.40):
     try:
-        gpus = GPUtil.getGPUs()
+        usage = get_vram_usage()
+        gpus = usage.get("gpus")
         if not gpus:
             print("[VRAM] No GPUs found. Assuming we need to unload.")
             return True
         for gpu in gpus:
-            util = gpu.memoryUtil
-            # Double check with direct calculation
-            if gpu.memoryTotal > 0:
-                calc_util = gpu.memoryUsed / gpu.memoryTotal
-            else:
-                calc_util = util
-            print(f"[VRAM] GPU {gpu.id} ({gpu.name}): VRAM usage = {calc_util * 100:.1f}%, used = {gpu.memoryUsed}MB, total = {gpu.memoryTotal}MB")
+            calc_util = gpu.get("memory_util", 0)
+            print(f"[VRAM] GPU {gpu.get('id', 0)} ({gpu.get('name', 'Unknown')}): VRAM usage = {calc_util * 100:.1f}%, used = {gpu.get('memory_used', 0)}MB, total = {gpu.get('memory_total', 0)}MB")
             if calc_util >= threshold:
                 return True
         return False

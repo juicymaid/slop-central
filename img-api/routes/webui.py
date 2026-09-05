@@ -9,8 +9,13 @@ router = APIRouter()
 
 webui_process = None
 
-webui_start_bat_folder = "H:/ent/ai/StabilityMatrix/Packages/forge/"
-webui_start_bat = webui_start_bat_folder + "run.bat"
+import sys
+import os
+
+webui_start_folder = os.getenv(
+    "FORGE_DIR",
+    "/mnt/SSD/ai/Data/Packages/Stable Diffusion WebUI Forge - Neo"
+)
 
 @router.post("/webui/start")
 def start_webui():
@@ -19,13 +24,40 @@ def start_webui():
     if webui_process and webui_process.poll() is None:
         return {"message": "Web UI is already running"}
 
-    DETACHED_PROCESS = 0x00000008
+    if not os.path.exists(webui_start_folder):
+        return {"error": f"Forge directory not found: {webui_start_folder}"}
 
-    # Start the web UI process using cmd.exe to ensure the batch file runs correctly
-    webui_process = subprocess.Popen(
-        webui_start_bat, cwd=webui_start_bat_folder,
-        creationflags=DETACHED_PROCESS,
-    )
+    if sys.platform == "win32":
+        DETACHED_PROCESS = 0x00000008
+        bat_candidates = ["webui-user.bat", "run.bat", "webui.bat"]
+        target_script = None
+        for cand in bat_candidates:
+            full_path = os.path.join(webui_start_folder, cand)
+            if os.path.exists(full_path):
+                target_script = full_path
+                break
+        if not target_script:
+            target_script = os.path.join(webui_start_folder, "webui-user.bat")
+        webui_process = subprocess.Popen(
+            target_script,
+            cwd=webui_start_folder,
+            creationflags=DETACHED_PROCESS,
+        )
+    else:
+        sh_candidates = ["webui-user.sh", "webui.sh"]
+        target_script = None
+        for cand in sh_candidates:
+            full_path = os.path.join(webui_start_folder, cand)
+            if os.path.exists(full_path):
+                target_script = full_path
+                break
+        if not target_script:
+            target_script = os.path.join(webui_start_folder, "webui-user.sh")
+        webui_process = subprocess.Popen(
+            ["bash", target_script],
+            cwd=webui_start_folder,
+            start_new_session=True,
+        )
     return {"message": "Web UI started"}
 
 url = "http://127.0.0.1:7860/"
@@ -48,10 +80,9 @@ async def unload_models():
 
 
 
-loras_folder = "H:\\ent\\ai\\StabilityMatrix\\Packages\\Backup\\models\\Lora"
-models_folder = "H:\\ent\\ai\\StabilityMatrix\\Packages\\Backup\\models\\Stable-diffusion"
+loras_folder = os.getenv("LORAS_DIR", "/mnt/SSD/ai/Data/Models/Lora")
+models_folder = os.getenv("MODELS_DIR", "/mnt/SSD/ai/Data/Models/StableDiffusion")
 
-import os
 @router.get("/webui/loras")
 def get_loras():
     loras = []
@@ -149,4 +180,4 @@ async def proxy_sdapi(path: str, request: Request):
             )
         except Exception as e:
             print(f"[VRAM] Error proxying to SD WebUI: {e}")
-            return JSONResponse({"error": f"SD Proxy error: {str(e)}"}, status_code=500)
+            return JSONResponse({"error": f"SD Proxy error: {str(e)}"}, status_code=500)

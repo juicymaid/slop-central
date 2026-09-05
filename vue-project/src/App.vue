@@ -2,7 +2,7 @@
 import { ref, nextTick, onMounted, onBeforeUnmount, provide, computed } from 'vue'
 import { RouterLink, useRouter, useRoute } from 'vue-router'
 import { Search, Moon, Sun } from 'lucide-vue-next'
-import { GetFromApi, ImageSrc } from './api'
+import { GetFromApi, ImageSrc,apiUrl } from './api'
 import CreateSidebar from './components/CreateSidebar.vue'
 import { webState } from './api'
 import SelectModelModal from './components/SelectModelModal.vue'
@@ -20,6 +20,36 @@ const tags = ref([])
 const suggestions = ref([])
 const selectedIndex = ref(-1)
 const isDarkMode = ref(false)
+
+const backgroundUrl = ref('')
+const backgroundLoaded = ref(false)
+let backgroundInterval = null
+
+const refreshBackground = () => {
+  const isVertical = window.innerWidth < 768 && window.innerHeight > window.innerWidth
+  const endpoint = isVertical ? 'random-background/vertical' : 'random-background'
+  const newUrl = `${apiUrl}/${endpoint}?t=${Date.now()}`
+  const img = new Image()
+  img.onload = () => {
+    backgroundUrl.value = newUrl
+    backgroundLoaded.value = true
+  }
+  img.onerror = () => {
+    if (!backgroundUrl.value) {
+      backgroundLoaded.value = false
+    }
+  }
+  img.src = newUrl
+}
+
+const onBackgroundLoad = () => {
+  backgroundLoaded.value = true
+}
+
+const onBackgroundError = () => {
+  backgroundLoaded.value = false
+  backgroundUrl.value = ''
+}
 
 const handleKeyDown = (e) => {
   if (e.key === 'Control') {
@@ -48,6 +78,9 @@ onMounted(() => {
   checkMobile()
   window.addEventListener('resize', checkMobile)
 
+  refreshBackground()
+  backgroundInterval = setInterval(refreshBackground, 60000)
+
   if (import.meta.env.VITE_DEV_BLUR === 'true') {
     document.body.classList.add('dev-blur-enabled')
     window.addEventListener('keydown', handleKeyDown)
@@ -59,6 +92,9 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', checkMobile)
+  if (backgroundInterval) {
+    clearInterval(backgroundInterval)
+  }
   if (import.meta.env.VITE_DEV_BLUR === 'true') {
     window.removeEventListener('keydown', handleKeyDown)
     window.removeEventListener('keyup', handleKeyUp)
@@ -191,11 +227,28 @@ async function GetSuggestions() {
   suggestions.value = data
   console.log(data)
 }
+
+
 </script>
 
 <template>
   <CreateSidebar />
-  <div class="min-h-screen transition-colors duration-300 bg-obsidian">
+  <div class="min-h-screen transition-colors duration-300 bg-obsidian relative">
+    <!-- App Background Wallpaper Layer -->
+    <div
+      v-if="backgroundUrl"
+      class="fixed inset-0 pointer-events-none z-0 overflow-hidden"
+    >
+      <img
+        :src="backgroundUrl"
+        alt=""
+        class="w-full h-full object-cover select-none pointer-events-none transition-opacity duration-700"
+        :class="backgroundLoaded ? 'opacity-50 dark:opacity-70' : 'opacity-0'"
+        @load="onBackgroundLoad"
+        @error="onBackgroundError"
+      />
+      <div class="absolute inset-0 bg-obsidian/75 backdrop-blur-[2px]"></div>
+    </div>
     <!-- Navigation Header - Floating Island -->
     <nav v-if="!hideNav" id="app-header"
       class="app-header fixed top-4 left-1/2 -translate-x-1/2 transition-colors duration-200 bg-obsidian/60 backdrop-blur-xl border border-slate rounded-full shadow-lg z-40 px-6 py-3"
@@ -391,7 +444,7 @@ async function GetSuggestions() {
     </nav>
 
     <!-- Main Content -->
-    <div :class="['flex pb-20 md:pb-0', hideNav ? '' : 'pt-20']">
+    <div :class="['flex pb-20 md:pb-0 relative z-10', hideNav ? '' : 'pt-20']">
       <main class="flex-grow px-2 md:px-6" :style="{ marginLeft: isMobile ? '0px' : webState.sidebarWidth + 'px' }">
         <RouterView />
       </main>

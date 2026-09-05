@@ -22,15 +22,148 @@ siglip_indexing_status = {
 }
 _status_lock = threading.Lock()
 
-SIGLIP_EMBEDDINGS_FILE = "siglip_embeddings.npy"
-SIGLIP_IDS_FILE = "siglip_embeddings_ids.json"
+_cached_siglip_model = None
+_cached_siglip_processor = None
+_cached_siglip_lock = threading.Lock()
+
+def get_siglip_model():
+    """Get or initialize cached SigLIP model and processor in memory for fast inference."""
+    global _cached_siglip_model, _cached_siglip_processor
+    with _cached_siglip_lock:
+        if _cached_siglip_model is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            _cached_siglip_processor = AutoProcessor.from_pretrained(MODEL_NAME)
+            _cached_siglip_model = AutoModel.from_pretrained(MODEL_NAME).to(device)
+            _cached_siglip_model.eval()
+        return _cached_siglip_model, _cached_siglip_processor
+
+def embed_pil_image(pil_img: Image.Image) -> np.ndarray:
+    """
+    Generate a normalized 768-dimensional SigLIP feature vector for a PIL Image.
+    Returns np.ndarray of shape (768,).
+    """
+    model, processor = get_siglip_model()
+    device = next(model.parameters()).device
+    if pil_img.mode != "RGB":
+        pil_img = pil_img.convert("RGB")
+    if pil_img.width > 16384 or pil_img.height > 16384:
+        pil_img.thumbnail((2048, 2048))
+
+    inputs = processor(images=[pil_img], return_tensors="pt").to(device)
+    with torch.no_grad():
+        feat = extract_feature_tensor(model.get_image_features(**inputs))
+        feat = feat / feat.norm(dim=-1, keepdim=True)
+        return feat.cpu().numpy().astype(np.float32)[0]
+
+def get_similar_images_by_embedding(target_vec: np.ndarray, top_k: int = 50, exclude_id: int = None):
+    """
+    Given a normalized 768-dim query vector, compute cosine similarity against
+    all in-memory SigLIP embeddings and return top_k (image_id, similarity_score) tuples.
+    """
+    global siglip_vectors, siglip_ids
+    if siglip_vectors is None or len(siglip_ids) == 0:
+        load_siglip_embeddings()
+    if siglip_vectors is None or len(siglip_ids) == 0:
+        return []
+
+    similarities = siglip_vectors @ target_vec
+    sorted_indices = np.argsort(similarities)[::-1]
+
+    results = []
+    for s_idx in sorted_indices:
+        iid = siglip_ids[s_idx]
+        if exclude_id is not None and iid == exclude_id:
+            continue
+        results.append((iid, float(similarities[s_idx])))
+        if len(results) >= top_k:
+            break
+    return results
+
+def get_similar_images_by_crop(image_id: int, x: float = 0.0, y: float = 0.0, width: float = 1.0, height: float = 1.0, top_k: int = 50, exclude_self: bool = False):
+    """
+    Crop an existing cataloged image using normalized coordinates (0.0 to 1.0),
+    generate a temporary in-memory SigLIP embedding, and return similar images.
+    """
+    global siglip_vectors, siglip_ids
+    if siglip_vectors is None or len(siglip_ids) == 0:
+        load_siglip_embeddings()
+    if siglip_vectors is None or len(siglip_ids) == 0:
+        return []
+
+    img = utils.images_data.get(image_id)
+    if not img:
+        return []
+    local_path = get_local_path(img.get("Path"))
+    if not local_path or not os.path.exists(local_path):
+        return []
+
+    try:
+        pil_img = Image.open(local_path)
+        img_w, img_h = pil_img.size
+
+        # Clamp normalized coordinates to [0, 1]
+        x_clamped = max(0.0, min(1.0, float(x)))
+        y_clamped = max(0.0, min(1.0, float(y)))
+        w_clamped = max(0.005, min(1.0 - x_clamped, float(width)))
+        h_clamped = max(0.005, min(1.0 - y_clamped, float(height)))
+
+        left = int(x_clamped * img_w)
+        top = int(y_clamped * img_h)
+        right = int((x_clamped + w_clamped) * img_w)
+        bottom = int((y_clamped + h_clamped) * img_h)
+
+        if right <= left:
+            right = min(img_w, left + 10)
+        if bottom <= top:
+            bottom = min(img_h, top + 10)
+
+        cropped = pil_img.crop((left, top, right, bottom))
+        q_vec = embed_pil_image(cropped)
+        return get_similar_images_by_embedding(q_vec, top_k=top_k, exclude_id=image_id if exclude_self else None)
+    except Exception as e:
+        print(f"Error in get_similar_images_by_crop: {e}")
+        return []
+
+def get_similar_images_by_image_bytes(image_bytes: bytes, top_k: int = 50):
+    """
+    Generate a temporary SigLIP embedding for an uploaded image bytes buffer
+    and return similar images.
+    """
+    from io import BytesIO
+    global siglip_vectors, siglip_ids
+    if siglip_vectors is None or len(siglip_ids) == 0:
+        load_siglip_embeddings()
+    if siglip_vectors is None or len(siglip_ids) == 0:
+        return []
+    try:
+        pil_img = Image.open(BytesIO(image_bytes))
+        q_vec = embed_pil_image(pil_img)
+        return get_similar_images_by_embedding(q_vec, top_k=top_k)
+    except Exception as e:
+        print(f"Error in get_similar_images_by_image_bytes: {e}")
+        return []
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SIGLIP_EMBEDDINGS_FILE = os.path.join(BASE_DIR, "siglip_embeddings.npy")
+SIGLIP_IDS_FILE = os.path.join(BASE_DIR, "siglip_embeddings_ids.json")
+SIGLIP_2D_COORDS_FILE = os.path.join(BASE_DIR, "siglip_2d_coords.json")
 MODEL_NAME = "google/siglip2-base-patch16-224"
 EMBEDDING_DIM = 768
 
-def load_siglip_embeddings():
+def extract_feature_tensor(output):
+    """Safely extract the pooled tensor from model output (handles BaseModelOutputWithPooling or raw Tensor)."""
+    if hasattr(output, "pooler_output") and output.pooler_output is not None:
+        return output.pooler_output
+    if not isinstance(output, torch.Tensor):
+        return output[0]
+    return output
+
+def load_siglip_embeddings(force=False):
     """Load precomputed SigLIP embeddings and IDs from disk into memory."""
     global siglip_vectors, siglip_ids, siglip_id_to_index
     
+    if not force and siglip_vectors is not None and len(siglip_ids) > 0:
+        return
+
     # Load IDs
     if os.path.exists(SIGLIP_IDS_FILE):
         try:
@@ -63,11 +196,18 @@ def load_siglip_embeddings():
     print(f"Loaded {len(siglip_ids)} SigLIP embeddings.")
 
 def save_siglip_embeddings(ids, matrix):
-    """Save embeddings and IDs to disk."""
+    """Save embeddings and IDs to disk safely using atomic writes."""
+    if not ids or matrix is None or len(ids) == 0:
+        return
     try:
-        with open(SIGLIP_IDS_FILE, "w", encoding="utf-8") as f:
+        tmp_ids_file = SIGLIP_IDS_FILE + ".tmp"
+        with open(tmp_ids_file, "w", encoding="utf-8") as f:
             json.dump(ids, f, indent=2)
-        np.save(SIGLIP_EMBEDDINGS_FILE, matrix)
+        os.replace(tmp_ids_file, SIGLIP_IDS_FILE)
+
+        tmp_emb_file = SIGLIP_EMBEDDINGS_FILE + ".tmp.npy"
+        np.save(tmp_emb_file, matrix)
+        os.replace(tmp_emb_file, SIGLIP_EMBEDDINGS_FILE)
     except Exception as e:
         print(f"Error saving SigLIP embeddings: {e}")
 
@@ -185,7 +325,7 @@ def run_siglip_indexing(force=False):
                 # Preprocess and forward pass
                 inputs = processor(images=batch_pil_images, return_tensors="pt").to(device)
                 with torch.no_grad():
-                    features = model.get_image_features(**inputs)
+                    features = extract_feature_tensor(model.get_image_features(**inputs))
                     # L2 Normalize the vectors
                     features = features / features.norm(dim=-1, keepdim=True)
                     features_np = features.cpu().numpy().astype(np.float32)
@@ -200,7 +340,7 @@ def run_siglip_indexing(force=False):
                     try:
                         inputs = processor(images=[pil_img], return_tensors="pt").to(device)
                         with torch.no_grad():
-                            feat = model.get_image_features(**inputs)
+                            feat = extract_feature_tensor(model.get_image_features(**inputs))
                             feat = feat / feat.norm(dim=-1, keepdim=True)
                             feat_np = feat.cpu().numpy().astype(np.float32)
                         run_ids.append(iid)
@@ -325,6 +465,10 @@ def generate_image_embedding(image_id: int):
         print(f"Failed to open image for single embedding generation: {e}")
         return False
 
+    # Ensure existing embeddings are loaded before appending!
+    if siglip_vectors is None or len(siglip_ids) == 0:
+        load_siglip_embeddings()
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     try:
         model = AutoModel.from_pretrained(MODEL_NAME).to(device)
@@ -332,7 +476,7 @@ def generate_image_embedding(image_id: int):
         
         inputs = processor(images=[pil_img], return_tensors="pt").to(device)
         with torch.no_grad():
-            features = model.get_image_features(**inputs)
+            features = extract_feature_tensor(model.get_image_features(**inputs))
             features = features / features.norm(dim=-1, keepdim=True)
             features_np = features.cpu().numpy().astype(np.float32)
             
@@ -455,7 +599,7 @@ def rebuild_siglip_2d_coords():
             coords_map[int(iid)] = [float(normalized_coords[i, 0]), float(normalized_coords[i, 1])]
             
         # Save to file
-        with open("siglip_2d_coords.json", "w", encoding="utf-8") as f:
+        with open(SIGLIP_2D_COORDS_FILE, "w", encoding="utf-8") as f:
             json.dump({str(k): v for k, v in coords_map.items()}, f)
             
         print(f"Successfully generated 2D coords using {mode_used} for {len(siglip_ids)} images.")

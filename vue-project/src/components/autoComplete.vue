@@ -277,7 +277,7 @@ function ApplyTag(result) {
 
 <template>
     <div v-if="results.length > 0" ref="containerRef"
-        class="absolute z-50 w-full bg-[#13131A]/95 backdrop-blur-xl border border-[#2A2A35] rounded-2xl overflow-y-auto p-2 max-h-64 top-full mt-2 shadow-[0_12px_40px_rgba(0,0,0,0.6)]">
+        class="absolute z-[9999] w-full bg-[#13131A]/95 backdrop-blur-xl border border-[#2A2A35] rounded-2xl overflow-y-auto p-2 max-h-64 top-full mt-2 shadow-[0_16px_50px_rgba(0,0,0,0.85)]">
         <div v-for="(result, index) in results" :key="result.tag" @click="ApplyTag(result)"
             @mouseenter="selectedIndex = index" :class="['px-3.5 py-2.5 rounded-xl cursor-pointer transition-colors flex items-center gap-3 mb-1 last:mb-0',
                 index === selectedIndex ? 'bg-[#2A2A35]/80 text-[#FAF8F5]' : 'hover:bg-[#2A2A35]/40 text-[#FAF8F5]/90']">

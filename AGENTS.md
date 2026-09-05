@@ -128,7 +128,7 @@ except Exception as e:
 * **`img-api/utils.py`**: State broker. Manages database loads, writes, serialization sanitizing, and hashing operations (pHash Hamming distance).
 * **`img-api/routes/lmstudio_client.py`**: Local model adapter. Maps Python functions to OpenAI tool schema definitions and processes streaming responses.
 * **`img-api/routes/assistant.py`**: Assistant coordinator. Runs the WebSocket connection loop for chat interface Airi, utilizing RAG context, skills parsing, and tool execution.
-* **`img-api/routes/rag.py`**: Vector search index. Performs cosine dot-product comparisons using `nomic-embed-text` embeddings, falling back to a token keyword search.
+* **`img-api/routes/rag.py`**: Vector search index. Performs cosine dot-product comparisons using `text-embedding-nomic-embed-text-v2-moe` embeddings, falling back to a token keyword search.
 * **`img-api/routes/skills.py`**: Progressive disclosure controller. Scans `img-api/skills/` markdown files, checking query keywords against YAML headers to inject relevant instructions into LLM system prompts.
 * **`vue-project/src/api.js`**: Frontend interface state definition, WebSocket loops, and API fetch wrappers.
 * **`vue-project/src/backends/index.js` & `comfyui.js`**: Mappings translating reactive UI generation settings into payload structures for Forge, ComfyUI, and Horde.

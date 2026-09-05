@@ -5,13 +5,22 @@ from fastapi import APIRouter
 import utils  
 from sklearn.preprocessing import normalize
 
-from sentence_transformers import SentenceTransformer
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 from datetime import datetime, timezone
 from routes import rate
 from scipy.sparse import csr_matrix
+import time
+
+_rec_cache = None
+_rec_cache_time = 0.0
+_REC_CACHE_TTL = 60.0  # cache recommendations for 60s
+
+def invalidate_rec_cache():
+    global _rec_cache, _rec_cache_time
+    _rec_cache = None
+    _rec_cache_time = 0.0
 
 def phash_to_bits(phash):
     return np.array([int(b) for h in phash for b in bin(int(h, 16))[2:].zfill(4)], dtype=np.uint8)
@@ -23,6 +32,10 @@ def hamming_similarity(a, b):
     return 1.0 - np.mean(np.bitwise_xor(a, b))
 
 def get_recommended_images():
+    global _rec_cache, _rec_cache_time
+    now = time.time()
+    if _rec_cache is not None and (now - _rec_cache_time) < _REC_CACHE_TTL:
+        return _rec_cache
     
     # Helper: compute max similarity to a "seen" set in chunks (sparse-safe)
     def max_sim_to_seen(candidates_csr, seen_csr, batch_size=1024):
@@ -475,5 +488,7 @@ def get_recommended_images():
             else:
                 clean[k] = v
         safe_images.append(clean)
+    _rec_cache = safe_images
+    _rec_cache_time = time.time()
 
     return safe_images

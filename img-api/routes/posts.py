@@ -1,12 +1,13 @@
 from routes.comments import ChatResponse
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import json
 import os
 import io
 import time
+import hashlib
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Query
 from PIL import Image as PILImage
 import tiktoken
 
@@ -26,22 +27,179 @@ class Image(BaseModel):
     other_tags: str = "" # other tags
 
 class Post(BaseModel):
-    title:str
+    title: str
     image: Image
     image_url: str
-    instructions_for_next_post:str
+    instructions_for_next_post: str
     created_at: float = 0.0
+    image_id: Optional[int] = None
 
 class Character(BaseModel):
-    id:str
-    name:str
-    avatar:str
+    id: str
+    name: str
+    avatar: str
     avatar_tags: Optional[str] = ""
-    description:str
-    prompt_prefix:str
+    description: str
+    prompt_prefix: str
+    tags: Optional[str] = ""
     posts: List[Post] = []
 
+class UpdateTagsPayload(BaseModel):
+    tags: str
+
 DATA_FILE = "storage/characters.json"
+
+_img_md5_cache: Dict[str, str] = {}
+_posts_link_cache: Dict[str, Any] = {
+    "last_build": 0,
+    "image_to_post": {},
+    "post_to_image": {}
+}
+
+def _compute_file_md5(file_path: str) -> Optional[str]:
+    try:
+        if not os.path.exists(file_path) or not os.path.isfile(file_path):
+            return None
+        hasher = hashlib.md5()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                hasher.update(chunk)
+        return hasher.hexdigest()
+    except Exception:
+        return None
+
+def get_image_md5(file_path: str) -> Optional[str]:
+    if file_path in _img_md5_cache:
+        return _img_md5_cache[file_path]
+    h = _compute_file_md5(file_path)
+    if h:
+        _img_md5_cache[file_path] = h
+    return h
+
+def find_image_id_for_post(post: Post) -> Optional[int]:
+    import utils
+    if not post.image_url:
+        return None
+
+    clean_url = post.image_url.split("?")[0]
+    if clean_url.startswith("http://") or clean_url.startswith("https://"):
+        clean_url = "/" + "/".join(clean_url.split("/")[3:])
+    rel_path = clean_url.lstrip("/")
+    base_name = os.path.basename(clean_url)
+
+    # 1. Path or Basename matching
+    for img_id, img in utils.images_data.items():
+        img_path = img.get("Path", "")
+        if img_path:
+            img_clean = img_path.lstrip("/")
+            if img_clean == rel_path or img_path == clean_url or img_clean.endswith(rel_path) or rel_path.endswith(img_clean):
+                return int(img_id)
+            if base_name and os.path.basename(img_path) == base_name:
+                return int(img_id)
+
+    # 2. File Hash (MD5) matching
+    local_file_path = None
+    if clean_url.startswith("/files") or clean_url.startswith("files"):
+        local_file_path = str(Path(__file__).parent.parent / clean_url.lstrip("/"))
+    elif os.path.exists(clean_url):
+        local_file_path = clean_url
+
+    post_md5 = None
+    if local_file_path and os.path.exists(local_file_path):
+        post_md5 = get_image_md5(local_file_path)
+
+    if post_md5:
+        for img_id, img in utils.images_data.items():
+            img_path = img.get("Path", "")
+            if not img_path:
+                continue
+            resolved = img_path if os.path.isabs(img_path) else str(Path(__file__).parent.parent / img_path.lstrip("/"))
+            if os.path.exists(resolved):
+                if get_image_md5(resolved) == post_md5:
+                    return int(img_id)
+
+    # 3. pHash matching
+    if local_file_path and os.path.exists(local_file_path):
+        try:
+            post_phash = utils.compute_phash(local_file_path)
+            if post_phash:
+                for img_id, img in utils.images_data.items():
+                    img_phash = img.get("pHash")
+                    if img_phash:
+                        try:
+                            if utils.hamming_distance(post_phash, img_phash) <= 2:
+                                return int(img_id)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+    return None
+
+def _refresh_posts_link_cache(force: bool = False):
+    now = time.time()
+    if not force and (now - _posts_link_cache["last_build"] < 30):
+        return
+
+    characters = load_characters()
+    img_to_post = {}
+    post_to_img = {}
+
+    for char in characters:
+        char_info = {
+            "id": char.id,
+            "name": char.name,
+            "avatar": char.avatar,
+            "prompt_prefix": char.prompt_prefix,
+            "tags": char.tags or ""
+        }
+        for post in char.posts:
+            matched_id = find_image_id_for_post(post)
+            post_dict = post.model_dump() if hasattr(post, 'model_dump') else post.dict()
+            if matched_id:
+                post_dict["image_id"] = matched_id
+                post_to_img[(char.id, post.created_at)] = matched_id
+                img_to_post[matched_id] = {
+                    "character": char_info,
+                    "post": post_dict
+                }
+
+    _posts_link_cache["image_to_post"] = img_to_post
+    _posts_link_cache["post_to_image"] = post_to_img
+    _posts_link_cache["last_build"] = now
+
+def get_post_info_for_image(image_id: int, image_dict: Optional[dict] = None) -> Optional[dict]:
+    _refresh_posts_link_cache()
+    if image_id in _posts_link_cache["image_to_post"]:
+        return _posts_link_cache["image_to_post"][image_id]
+
+    if image_dict:
+        img_path = image_dict.get("Path", "")
+        img_base = os.path.basename(img_path) if img_path else ""
+        characters = load_characters()
+        for char in characters:
+            char_info = {
+                "id": char.id,
+                "name": char.name,
+                "avatar": char.avatar,
+                "prompt_prefix": char.prompt_prefix,
+                "tags": char.tags or ""
+            }
+            for post in char.posts:
+                if not post.image_url:
+                    continue
+                p_url = post.image_url.split("?")[0]
+                p_base = os.path.basename(p_url)
+                if (img_base and p_base and img_base == p_base) or (img_path and p_url and (p_url.endswith(img_path) or img_path.endswith(p_url))):
+                    post_dict = post.model_dump() if hasattr(post, 'model_dump') else post.dict()
+                    post_dict["image_id"] = image_id
+                    res = {
+                        "character": char_info,
+                        "post": post_dict
+                    }
+                    _posts_link_cache["image_to_post"][image_id] = res
+                    return res
+    return None
 
 def load_characters() -> List[Character]:
     if not os.path.exists(DATA_FILE):
@@ -56,18 +214,30 @@ def load_characters() -> List[Character]:
 def save_characters(characters: List[Character]):
     os.makedirs("storage", exist_ok=True)
     with open(DATA_FILE, "w", encoding="utf-8") as f:
-        # Use json.loads(char.json()) to handle enums/objects cleanly across Pydantic v1 and v2
         json.dump([json.loads(char.json()) if hasattr(char, 'json') else char.model_dump() for char in characters], f, indent=4)
+    _refresh_posts_link_cache(force=True)
 
 @router.get("/characters", response_model=List[Character])
 def get_characters():
-    return load_characters()
+    _refresh_posts_link_cache()
+    chars = load_characters()
+    for char in chars:
+        for p in char.posts:
+            p.image_id = _posts_link_cache["post_to_image"].get((char.id, p.created_at))
+            if not p.image_id and p.image_url:
+                p.image_id = find_image_id_for_post(p)
+    return chars
 
 @router.get("/characters/{char_id}", response_model=Character)
 def get_character(char_id: str):
+    _refresh_posts_link_cache()
     characters = load_characters()
     for char in characters:
         if char.id == char_id:
+            for p in char.posts:
+                p.image_id = _posts_link_cache["post_to_image"].get((char.id, p.created_at))
+                if not p.image_id and p.image_url:
+                    p.image_id = find_image_id_for_post(p)
             return char
     raise HTTPException(status_code=404, detail="Character not found")
 
@@ -137,11 +307,27 @@ def edit_character(char_id: str, updated_char: Character):
             return updated_char
     raise HTTPException(status_code=404, detail="Character not found")
 
+@router.put("/characters/{char_id}/tags", response_model=Character)
+def update_character_tags(char_id: str, payload: UpdateTagsPayload):
+    characters = load_characters()
+    for i, char in enumerate(characters):
+        if char.id == char_id:
+            char.tags = payload.tags
+            characters[i] = char
+            save_characters(characters)
+            return char
+    raise HTTPException(status_code=404, detail="Character not found")
+
 @router.get("/characters/{char_id}/posts", response_model=List[Post])
 def get_posts(char_id: str):
+    _refresh_posts_link_cache()
     characters = load_characters()
     for char in characters:
         if char.id == char_id:
+            for p in char.posts:
+                p.image_id = _posts_link_cache["post_to_image"].get((char.id, p.created_at))
+                if not p.image_id and p.image_url:
+                    p.image_id = find_image_id_for_post(p)
             return char.posts
     raise HTTPException(status_code=404, detail="Character not found")
 
@@ -152,14 +338,59 @@ def create_post(char_id: str, post: Post):
         if char.id == char_id:
             if post.created_at == 0.0:
                 post.created_at = time.time()
+            post.image_id = find_image_id_for_post(post)
             char.posts.insert(0, post) # Add to the beginning like Twitter
             characters[i] = char
             save_characters(characters)
             return post
     raise HTTPException(status_code=404, detail="Character not found")
 
+@router.get("/characters/{char_id}/media")
+def get_character_media(
+    char_id: str,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(30, ge=1, le=100),
+    sort: str = Query("new")
+):
+    char = get_character(char_id)
+    if not char:
+        raise HTTPException(status_code=404, detail="Character not found")
+
+    query_tags = (char.tags or "").strip()
+    if not query_tags:
+        query_tags = (char.prompt_prefix or char.name).strip()
+
+    from routes import images as img_routes
+    try:
+        matched_images = img_routes.search_images(
+            query=query_tags,
+            page=page,
+            per_page=per_page,
+            sort=sort,
+            can_return_empty=True
+        )
+    except Exception as e:
+        matched_images = []
+
+    enriched = []
+    for img in matched_images:
+        img_dict = dict(img) if isinstance(img, dict) else img.dict() if hasattr(img, 'dict') else {}
+        post_info = get_post_info_for_image(img_dict.get("Id", -1), img_dict)
+        if post_info:
+            img_dict["post_info"] = post_info
+        enriched.append(img_dict)
+
+    return {
+        "character_id": char.id,
+        "query_tags": query_tags,
+        "page": page,
+        "per_page": per_page,
+        "images": enriched
+    }
+
 @router.get("/posts")
 def get_post():
+    _refresh_posts_link_cache()
     posts = []
     characters = load_characters()
     for char in characters:
@@ -170,7 +401,12 @@ def get_post():
                 'name': char.name,
                 'avatar': char.avatar,
                 'prompt_prefix': char.prompt_prefix,
+                'tags': char.tags or '',
             }
+            matched_id = _posts_link_cache["post_to_image"].get((char.id, p.created_at))
+            if not matched_id and p.image_url:
+                matched_id = find_image_id_for_post(p)
+            post_data['image_id'] = matched_id
             posts.append(post_data)
     
     # Sort newest first

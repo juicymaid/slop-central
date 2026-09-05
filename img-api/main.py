@@ -4,7 +4,7 @@ import random
 from fastapi import FastAPI, HTTPException, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
-from routes import images, rec, tags, boards, phashes, scan_images, scoring, tagger, models, comments, webui, chats, rate, comics, ai_search, stories, assistant, posts, ai_settings, hentai, lmstudio, mcp, rag, skills
+from routes import images, rec, tags, boards, phashes, scan_images, scoring, tagger, models, comments, webui, chats, rate, comics, ai_search, stories, assistant, posts, ai_settings, hentai, lmstudio, mcp, rag, skills, civitai_helper
 from fastapi.staticfiles import StaticFiles
 from utils import (
     images_data, all_images, clicks_data, boards_data
@@ -32,7 +32,8 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
-app.mount("/files", StaticFiles(directory=os.path.abspath("files"), follow_symlink=True), name="files")
+files_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "files")
+app.mount("/files", StaticFiles(directory=files_dir, follow_symlink=True), name="files")
 
 @app.get("/")
 def read_root():
@@ -104,6 +105,7 @@ app.include_router(lmstudio.router)
 app.include_router(mcp.router)
 app.include_router(rag.router)
 app.include_router(skills.router)
+app.include_router(civitai_helper.router)
 print("routes loaded")
 
 
@@ -129,19 +131,24 @@ def ensure_frontend_running():
     except Exception:
         pass
 
-    print("Starting frontend...")
-
-    if not os.path.isdir(FRONTEND_DIR):
-        print(f"Frontend directory not found: {FRONTEND_DIR}")
+    import shutil
+    frontend_script = os.path.join(FRONTEND_DIR, "start.sh")
+    if os.path.exists(frontend_script) and os.access(frontend_script, os.X_OK):
+        print("Starting frontend via start.sh...")
+        subprocess.Popen(["bash", frontend_script], cwd=FRONTEND_DIR)
         return
 
-    # run npm run dev
-    subprocess.Popen(
-        ["npm", "run", "dev"],
-        cwd=FRONTEND_DIR,
-        shell=True,
-    )
+    runner = None
+    for cmd in ["pnpm", "npm", "bun"]:
+        if shutil.which(cmd):
+            runner = [cmd, "run", "dev"] if cmd != "pnpm" else ["pnpm", "dev"]
+            break
 
+    if runner:
+        print(f"Starting frontend via {' '.join(runner)}...")
+        subprocess.Popen(runner, cwd=FRONTEND_DIR)
+    else:
+        print("[!] Neither pnpm, npm, nor bun were found in PATH. Install Node.js & pnpm via 'sudo pacman -S nodejs pnpm'")
 
 @app.on_event("startup")
 async def _startup_init():
@@ -206,6 +213,7 @@ async def _ensure_data_loaded(request: Request, call_next):
         or path.startswith("/openapi.json")
         or path.startswith("/redoc")
         or path.startswith("/status")
+        or path.startswith("/random-background")
     ):
         return await call_next(request)
 

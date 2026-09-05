@@ -1,274 +1,777 @@
 <template>
-    <div class="chat-container">
-        <!-- Chat List Sidebar -->
-        <div class="chat-sidebar">
-            <div class="sidebar-header">
-                <h2>Messages</h2>
-                <button class="new-chat-btn" title="Show characters">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                    </svg>
-                </button>
-            </div>
+    <div class="h-[calc(100vh-5.25rem)] max-w-[1600px] mx-auto flex flex-col relative overflow-hidden bg-[#0D0D12] text-[#FAF8F5] font-sans rounded-3xl border border-[#2A2A35] shadow-2xl">
+        <!-- Ambient decorative background glow -->
+        <div class="absolute -top-40 -left-40 w-96 h-96 bg-[#C9A84C]/10 rounded-full blur-3xl pointer-events-none"></div>
+        <div class="absolute -bottom-40 -right-40 w-96 h-96 bg-[#C9A84C]/5 rounded-full blur-3xl pointer-events-none"></div>
 
-            <!-- Characters Section -->
-            <div v-if="characters.length" class="sidebar-section">
-                <div class="section-label">Characters</div>
-                <router-link v-for="char in characters" :key="char.id" :to="{ name: 'chat', params: { id: char.id } }"
-                    class="chat-item" :class="{ active: route.params.id == char.id }">
-                    <div class="chat-avatar">
-                        <img :src="char.avatar || `${apiUrl}/random-image-file?user=${char.id}`" />
-                    </div>
-                    <div class="chat-info">
-                        <div class="chat-name">{{ char.name }}</div>
-                        <div class="last-message">{{ char.description?.substring(0, 50) || 'Start chatting…' }}…</div>
-                    </div>
-                </router-link>
-            </div>
-
-            <!-- Existing Chats -->
-            <div v-if="all_chats.length" class="sidebar-section">
-                <div class="section-label">Recent</div>
-                <router-link v-for="chat in all_chats" :key="chat.id"
-                    :to="{ name: 'chat', params: { id: chat.chat_id } }" class="chat-item"
-                    :class="{ active: route.params.id == chat.chat_id }">
-                    <div class="chat-avatar">
-                        <img
-                            :src="chat.character?.avatar || (chat.is_character_chat ? `${apiUrl}/random-image-file?user=${chat.chat_id}` : apiUrl + '/image-file/' + chat.chat_id)" />
-                    </div>
-                    <div class="chat-info">
-                        <div class="chat-name">{{ chat.character?.character_name || 'Chat' }}</div>
-                        <div class="last-message">{{ chat.messages?.[chat.messages.length - 1]?.text || 'No messages yet' }}</div>
-                    </div>
-                    <div class="chat-meta">
-                        <div class="chat-time">{{ chat.time }}</div>
-                        <div v-if="chat.unreadCount" class="unread-badge">{{ chat.unreadCount }}</div>
-                    </div>
-                </router-link>
-            </div>
-        </div>
-
-        <!-- Main Chat Area -->
-        <div class="chat-main">
-            <div v-if="selectedChat" class="chat-content">
-                <!-- Chat Header -->
-                <div class="chat-header">
-                    <div class="chat-user-info">
-                        <img :src="chat.character?.avatar || (chat.is_character_chat ? `${apiUrl}/random-image-file?user=${chat.chat_id}` : apiUrl + '/image-file/' + chat.chat_id)"
-                            :alt="chat.character?.character_name ?? 'Loading...'" class="user-avatar" />
-                        <div>
-                            <h3>{{ chat.character?.character_name ?? "Loading..." }}</h3>
+        <div class="flex flex-1 min-h-0 relative z-10">
+            <!-- ── Left Sidebar (Conversations & Characters) ────────────────────── -->
+            <aside :class="[
+                'w-80 md:w-88 flex-shrink-0 bg-[#14141A]/90 backdrop-blur-xl border-r border-[#2A2A35] flex flex-col transition-all duration-300 z-30',
+                mobileSidebarOpen ? 'fixed inset-y-0 left-0 w-80 z-50 shadow-2xl md:relative md:shadow-none' : 'hidden md:flex'
+            ]">
+                <!-- Sidebar Header -->
+                <div class="p-5 border-b border-[#2A2A35]/80 flex items-center justify-between">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-2 h-2 rounded-full bg-[#C9A84C] animate-pulse"></span>
+                            <h2 class="font-serif italic font-bold text-xl text-[#FAF8F5] tracking-tight">Chronicles</h2>
                         </div>
+                        <p class="text-[10px] font-mono text-[#FAF8F5]/40 uppercase tracking-widest mt-0.5">Personas & Dialogues</p>
                     </div>
-                    <div class="chat-actions">
-                        <button class="action-btn" title="Voice call">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-                            </svg>
+
+                    <div class="flex items-center gap-1.5">
+                        <button @click="refreshAll" :disabled="isRefreshing"
+                            class="p-2 rounded-xl text-[#FAF8F5]/50 hover:text-[#C9A84C] hover:bg-[#1A1A24] border border-transparent hover:border-[#2A2A35] transition-all"
+                            title="Refresh chats & personas">
+                            <RefreshCw class="w-4 h-4" :class="{ 'animate-spin': isRefreshing }" />
                         </button>
-                        <button class="action-btn" title="Video call">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                            </svg>
-                        </button>
-                        <button class="action-btn" title="Chat info">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
+                        <router-link to="/posts"
+                            class="p-2 rounded-xl text-[#FAF8F5]/50 hover:text-[#C9A84C] hover:bg-[#1A1A24] border border-transparent hover:border-[#2A2A35] transition-all"
+                            title="Explore more characters">
+                            <Compass class="w-4 h-4" />
+                        </router-link>
+                        <button v-if="mobileSidebarOpen" @click="mobileSidebarOpen = false"
+                            class="md:hidden p-2 rounded-xl text-[#FAF8F5]/50 hover:text-white hover:bg-[#1A1A24]">
+                            <X class="w-4 h-4" />
                         </button>
                     </div>
                 </div>
 
-                <!-- Messages Area -->
-                <div class="messages-container" ref="messagesContainer">
+                <!-- Search Filter & Navigation Tabs -->
+                <div class="px-4 pt-3 pb-2 space-y-2.5">
+                    <!-- Search Input -->
+                    <div class="relative">
+                        <input v-model="searchQuery" type="text" placeholder="Search personas..."
+                            class="w-full bg-[#0D0D12] text-xs font-sans text-[#FAF8F5] placeholder-[#FAF8F5]/30 border border-[#2A2A35] rounded-xl pl-9 pr-3 py-2 focus:outline-none focus:border-[#C9A84C] focus:ring-1 focus:ring-[#C9A84C] transition-all" />
+                        <Search class="w-3.5 h-3.5 text-[#FAF8F5]/30 absolute left-3 top-2.5" />
+                        <button v-if="searchQuery" @click="searchQuery = ''" class="absolute right-2.5 top-2.5 text-[#FAF8F5]/40 hover:text-white">
+                            <X class="w-3.5 h-3.5" />
+                        </button>
+                    </div>
 
+                    <!-- Category Filter Tabs -->
+                    <div class="flex p-1 bg-[#0D0D12] rounded-xl border border-[#2A2A35]/60">
+                        <button v-for="tab in ['all', 'characters', 'recent']" :key="tab"
+                            @click="sidebarTab = tab"
+                            :class="[
+                                'flex-1 py-1.5 text-[11px] font-mono capitalize rounded-lg transition-all',
+                                sidebarTab === tab
+                                    ? 'bg-[#C9A84C] text-[#0D0D12] font-bold shadow-sm'
+                                    : 'text-[#FAF8F5]/50 hover:text-[#FAF8F5]'
+                            ]">
+                            {{ tab }}
+                        </button>
+                    </div>
+                </div>
 
+                <!-- Sidebar Scrollable List -->
+                <div class="flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-4 custom-scrollbar">
+                    <!-- Characters Section -->
+                    <div v-if="(sidebarTab === 'all' || sidebarTab === 'characters') && filteredCharacters.length">
+                        <div class="flex items-center justify-between px-2 mb-2">
+                            <span class="text-[10px] font-mono uppercase tracking-widest text-[#C9A84C] font-semibold">Active Personas</span>
+                            <span class="text-[10px] font-mono text-[#FAF8F5]/40">{{ filteredCharacters.length }}</span>
+                        </div>
 
+                        <div class="space-y-1">
+                            <router-link v-for="char in filteredCharacters" :key="char.id"
+                                :to="{ name: 'chat', params: { id: char.id } }"
+                                @click="mobileSidebarOpen = false"
+                                :class="[
+                                    'flex items-center gap-3 p-2.5 rounded-2xl border transition-all duration-200 group',
+                                    route.params.id === char.id
+                                        ? 'bg-[#1A1A24] border-[#C9A84C]/50 shadow-md ring-1 ring-[#C9A84C]/20'
+                                        : 'bg-[#14141A]/50 border-transparent hover:border-[#2A2A35] hover:bg-[#1A1A24]/60'
+                                ]">
+                                <div class="relative shrink-0">
+                                    <img :src="char.avatar || `${apiUrl}/random-image-file?user=${char.id}`"
+                                        class="w-11 h-11 rounded-full object-cover border border-[#2A2A35] group-hover:border-[#C9A84C]/50 transition-all shadow-sm" />
+                                    <span class="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-emerald-500 border-2 border-[#14141A]"></span>
+                                </div>
 
-                    <div v-if="chat.chat_id && !chat.is_character_chat" class="received">
-                        <div class="message-content">
-                            <div class="message-image">
-                                <img :src="apiUrl + '/image-file/' + chat.chat_id" :alt="'Shared image'"
-                                    @click="openImage(apiUrl + '/image-file/' + chat.chat_id)" />
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex items-center justify-between">
+                                        <h4 :class="[
+                                            'font-sans font-semibold text-xs truncate',
+                                            route.params.id === char.id ? 'text-[#C9A84C]' : 'text-[#FAF8F5] group-hover:text-[#C9A84C] transition-colors'
+                                        ]">
+                                            {{ char.name }}
+                                        </h4>
+                                        <span class="text-[9px] font-mono text-[#FAF8F5]/30">@{{ char.id }}</span>
+                                    </div>
+                                    <p class="text-[11px] text-[#FAF8F5]/50 truncate mt-0.5 font-light">
+                                        {{ char.description || 'Start a roleplay chronicle…' }}
+                                    </p>
+                                </div>
+                            </router-link>
+                        </div>
+                    </div>
+
+                    <!-- Recent Dialogues Section -->
+                    <div v-if="(sidebarTab === 'all' || sidebarTab === 'recent') && filteredRecentChats.length">
+                        <div class="flex items-center justify-between px-2 mb-2">
+                            <span class="text-[10px] font-mono uppercase tracking-widest text-[#FAF8F5]/40 font-semibold">Recent Dialogues</span>
+                            <span class="text-[10px] font-mono text-[#FAF8F5]/40">{{ filteredRecentChats.length }}</span>
+                        </div>
+
+                        <div class="space-y-1">
+                            <router-link v-for="c in filteredRecentChats" :key="c.chat_id"
+                                :to="{ name: 'chat', params: { id: c.chat_id } }"
+                                @click="mobileSidebarOpen = false"
+                                :class="[
+                                    'flex items-center gap-3 p-2.5 rounded-2xl border transition-all duration-200 group',
+                                    route.params.id === c.chat_id
+                                        ? 'bg-[#1A1A24] border-[#C9A84C]/50 shadow-md ring-1 ring-[#C9A84C]/20'
+                                        : 'bg-[#14141A]/50 border-transparent hover:border-[#2A2A35] hover:bg-[#1A1A24]/60'
+                                ]">
+                                <div class="relative shrink-0">
+                                    <img :src="getChatAvatar(c)"
+                                        class="w-11 h-11 rounded-full object-cover border border-[#2A2A35] group-hover:border-[#C9A84C]/50 transition-all shadow-sm" />
+                                </div>
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex items-center justify-between">
+                                        <h4 :class="[
+                                            'font-sans font-semibold text-xs truncate',
+                                            route.params.id === c.chat_id ? 'text-[#C9A84C]' : 'text-[#FAF8F5] group-hover:text-[#C9A84C] transition-colors'
+                                        ]">
+                                            {{ getChatTitle(c) }}
+                                        </h4>
+                                        <span v-if="c.messages?.length" class="text-[9px] font-mono text-[#FAF8F5]/30">
+                                            {{ c.messages.length }} msgs
+                                        </span>
+                                    </div>
+                                    <p class="text-[11px] text-[#FAF8F5]/50 truncate mt-0.5 font-light">
+                                        {{ getLastMessageText(c) }}
+                                    </p>
+                                </div>
+                            </router-link>
+                        </div>
+                    </div>
+
+                    <!-- Empty State for Sidebar -->
+                    <div v-if="!filteredCharacters.length && !filteredRecentChats.length" class="py-12 text-center">
+                        <MessageSquare class="w-8 h-8 text-[#2A2A35] mx-auto mb-2" />
+                        <p class="text-xs font-mono text-[#FAF8F5]/40">No conversations match filter</p>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Backdrop for mobile sidebar -->
+            <div v-if="mobileSidebarOpen" @click="mobileSidebarOpen = false"
+                class="fixed inset-0 bg-[#0D0D12]/70 backdrop-blur-sm z-40 md:hidden"></div>
+
+            <!-- ── Main Chat Area ────────────────────────────────────────────────── -->
+            <main class="flex-1 min-w-0 flex flex-col bg-[#0D0D12] relative overflow-hidden">
+                <!-- Chat Topbar -->
+                <header class="px-6 py-4 border-b border-[#2A2A35] bg-[#14141A]/70 backdrop-blur-md flex items-center justify-between z-20">
+                    <div class="flex items-center gap-3.5 min-w-0">
+                        <button @click="mobileSidebarOpen = true"
+                            class="md:hidden p-2 -ml-2 rounded-xl text-[#FAF8F5]/70 hover:text-white hover:bg-[#1A1A24]">
+                            <MessageSquare class="w-5 h-5" />
+                        </button>
+
+                        <template v-if="chatData?.character || currentCharacter">
+                            <div class="relative shrink-0 group/avatar">
+                                <img :src="activePersonaAvatar"
+                                    class="w-11 h-11 rounded-full object-cover border border-[#C9A84C]/40 shadow-md group-hover/avatar:border-[#C9A84C] transition-all" />
+                                <span class="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-400 border border-[#14141A]"></span>
+                            </div>
+
+                            <div class="min-w-0">
+                                <div class="flex items-center gap-2">
+                                    <h3 class="font-sans font-bold text-base text-[#FAF8F5] truncate">
+                                        {{ activePersonaName }}
+                                    </h3>
+                                    <span class="px-2 py-0.5 rounded-full bg-[#C9A84C]/15 border border-[#C9A84C]/30 text-[#C9A84C] text-[10px] font-mono">
+                                        Persona
+                                    </span>
+                                </div>
+                                <div class="flex items-center gap-2 text-xs font-mono text-[#FAF8F5]/40 truncate">
+                                    <span v-if="isTyping" class="text-[#C9A84C] flex items-center gap-1.5 animate-pulse">
+                                        <span class="w-1.5 h-1.5 rounded-full bg-[#C9A84C]"></span>
+                                        {{ isGeneratingImage ? 'Manifesting image…' : 'Composing reply…' }}
+                                    </span>
+                                    <span v-else class="flex items-center gap-1 text-emerald-400/80">
+                                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                                        Ready to converse
+                                    </span>
+                                    <span>•</span>
+                                    <span class="truncate">{{ activePersonaSubtext }}</span>
+                                </div>
+                            </div>
+                        </template>
+
+                        <div v-else class="flex items-center gap-3">
+                            <div class="w-10 h-10 rounded-full bg-[#1A1A24] border border-[#2A2A35] flex items-center justify-center text-[#C9A84C]">
+                                <Sparkles class="w-5 h-5" />
+                            </div>
+                            <div>
+                                <h3 class="font-sans font-bold text-sm text-[#FAF8F5]">Slop Central Chronicles</h3>
+                                <p class="text-xs font-mono text-[#FAF8F5]/40">Select a persona to begin conversation</p>
                             </div>
                         </div>
                     </div>
-                    <template v-for="message in chat.messages" :key="message.id">
-                        <div v-if="message.role !== 'tool'"
-                            :class="['message', { sent: message.isUser || message.role === 'user', received: !message.isUser && message.role !== 'user' }]">
-                            <div class="message-content w-full">
-                                <!-- Model Name (if available) -->
-                                <div v-if="message.model" class="text-xs font-mono text-gray-500 mb-2">
-                                    {{ message.model }}
+
+                    <!-- Header Actions -->
+                    <div class="flex items-center gap-2">
+                        <template v-if="route.params.id">
+                            <!-- View Profile -->
+                            <router-link :to="'/user/' + route.params.id"
+                                class="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#1A1A24] hover:bg-[#2A2A35] border border-[#2A2A35] hover:border-[#C9A84C]/40 text-xs font-sans text-[#FAF8F5]/80 hover:text-[#FAF8F5] transition-all">
+                                <User class="w-3.5 h-3.5 text-[#C9A84C]" />
+                                <span>Profile</span>
+                            </router-link>
+                            <!-- Clear Chat History -->
+                            <button @click="showClearConfirm = true"
+                                class="p-2 rounded-xl text-[#FAF8F5]/50 hover:text-red-400 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 transition-all"
+                                title="Clear conversation history">
+                                <Trash2 class="w-4 h-4" />
+                            </button>
+
+                            <!-- Persona Dossier Toggle -->
+                            <button @click="infoDrawerOpen = !infoDrawerOpen"
+                                :class="[
+                                    'p-2 rounded-xl border transition-all',
+                                    infoDrawerOpen
+                                        ? 'bg-[#C9A84C]/15 border-[#C9A84C]/40 text-[#C9A84C]'
+                                        : 'text-[#FAF8F5]/50 hover:text-[#FAF8F5] hover:bg-[#1A1A24] border-transparent hover:border-[#2A2A35]'
+                                ]"
+                                title="Toggle persona dossier">
+                                <Info class="w-4 h-4" />
+                            </button>
+                        </template>
+                    </div>
+                </header>
+
+                <!-- ── Chat Messages Container ───────────────────────────────────── -->
+                <div ref="messagesContainer" class="flex-1 min-h-0 overflow-y-auto px-4 md:px-8 py-6 space-y-6 custom-scrollbar">
+                    <!-- Welcome / Empty State when no chat selected -->
+                    <div v-if="!route.params.id" class="h-full flex flex-col items-center justify-center py-16 text-center max-w-lg mx-auto">
+                        <div class="w-20 h-20 rounded-3xl bg-gradient-to-br from-[#1A1A24] to-[#14141A] border border-[#2A2A35] flex items-center justify-center shadow-xl mb-6 relative group">
+                            <Sparkles class="w-10 h-10 text-[#C9A84C] group-hover:scale-110 transition-transform" />
+                            <div class="absolute inset-0 bg-[#C9A84C]/10 rounded-3xl blur-xl opacity-50"></div>
+                        </div>
+
+                        <h2 class="font-serif italic text-3xl font-bold text-[#FAF8F5] mb-2 tracking-tight">Enter the Chronicles</h2>
+                        <p class="text-sm font-sans text-[#FAF8F5]/60 leading-relaxed mb-8">
+                            Converse with vivid AI characters and roleplay companions. Select a persona to embark upon dialogue.
+                        </p>
+                        <!-- Quick Persona Cards -->
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full text-left">
+                            <router-link v-for="char in characters.slice(0, 4)" :key="char.id"
+                                :to="{ name: 'chat', params: { id: char.id } }"
+                                class="p-3.5 rounded-2xl bg-[#14141A] border border-[#2A2A35] hover:border-[#C9A84C]/50 hover:bg-[#1A1A24] transition-all flex items-center gap-3 group">
+                                <img :src="char.avatar || `${apiUrl}/random-image-file?user=${char.id}`"
+                                    class="w-10 h-10 rounded-full object-cover border border-[#2A2A35] group-hover:scale-105 transition-transform" />
+                                <div class="min-w-0 flex-1">
+                                    <h4 class="font-bold text-xs text-[#FAF8F5] group-hover:text-[#C9A84C] transition-colors truncate">{{ char.name }}</h4>
+                                    <p class="text-[11px] font-mono text-[#FAF8F5]/40 truncate">@{{ char.id }}</p>
                                 </div>
-                                
-                                <!-- Expandable thinking (modern AI-app style) -->
-                                <div v-if="message.thinking" class="mb-3 thought-block">
-                                    <button @click="toggleExpandedThought(message.id)"
-                                        class="w-full flex items-center gap-2 text-xs font-mono uppercase text-gray-400 hover:text-gray-200 transition-colors py-1.5 focus:outline-none"
-                                        type="button">
-                                        <span class="text-[10px] transition-transform duration-200"
-                                            :class="isThoughtExpanded(message.id) ? 'rotate-90' : ''">▶</span>
-                                        <span>Thought for {{ message.thinking_duration || '2.41' }} seconds</span>
-                                    </button>
-                                    <div v-show="isThoughtExpanded(message.id)"
-                                        class="mt-1 text-xs font-mono text-gray-300 bg-gray-900/40 border border-gray-800 rounded-lg p-3 whitespace-pre-wrap leading-relaxed">
-                                        {{ message.thinking }}
+                            </router-link>
+                        </div>
+                    </div>
+
+                    <!-- Active Chat Message Stream -->
+                    <template v-else>
+                        <!-- Persona Introduction Header Card -->
+                        <div class="p-6 rounded-3xl bg-gradient-to-b from-[#14141A] to-[#14141A]/50 border border-[#2A2A35] text-center max-w-xl mx-auto shadow-lg relative overflow-hidden mb-8">
+                            <div class="absolute top-0 right-0 w-32 h-32 bg-[#C9A84C]/10 rounded-full blur-2xl pointer-events-none"></div>
+                            
+                            <img :src="activePersonaAvatar"
+                                class="w-20 h-20 rounded-full object-cover border-2 border-[#C9A84C] mx-auto mb-3 shadow-xl hover:scale-105 transition-transform cursor-pointer"
+                                @click="openImage(activePersonaAvatar)" />
+
+                            <h3 class="font-serif italic font-bold text-2xl text-[#FAF8F5] mb-1">{{ activePersonaName }}</h3>
+                            <p class="text-xs font-mono text-[#C9A84C] mb-3">@{{ route.params.id }}</p>
+                            <p class="text-xs font-sans text-[#FAF8F5]/70 leading-relaxed max-w-md mx-auto line-clamp-3">
+                                {{ activePersonaDescription }}
+                            </p>
+
+                            <!-- Starting Conversation Prompt Chips -->
+                            <div v-if="!chatMessages.length" class="flex flex-wrap gap-2 justify-center mt-5">
+                                <button v-for="prompt in starterPrompts" :key="prompt"
+                                    @click="sendMessageDirect(prompt)"
+                                    class="text-xs font-sans px-3.5 py-1.5 rounded-full bg-[#1A1A24] border border-[#2A2A35] text-[#FAF8F5]/80 hover:text-[#C9A84C] hover:border-[#C9A84C]/40 transition-all hover:scale-102">
+                                    "{{ prompt }}"
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Messages List -->
+                        <div v-for="(msg, idx) in chatMessages" :key="msg.id || idx" class="space-y-4">
+                            <!-- Skip system or tool messages if present in raw stream -->
+                            <template v-if="msg.role !== 'tool' && msg.role !== 'system'">
+                                <!-- ── User Message (Right Aligned) ─────────────── -->
+                                <div v-if="msg.isUser || msg.role === 'user'" class="flex justify-end gap-3 group">
+                                    <div class="flex flex-col items-end max-w-[80%] md:max-w-[70%]">
+                                        <!-- Attached Image if any -->
+                                        <div v-if="msg.image" class="mb-2 rounded-2xl overflow-hidden border border-[#C9A84C]/30 shadow-lg cursor-pointer max-w-sm">
+                                            <img :src="msg.image" alt="Attached" class="w-full h-auto object-cover hover:scale-102 transition-transform"
+                                                @click="openImage(msg.image)" />
+                                        </div>
+
+                                        <!-- Message Bubble -->
+                                        <div class="p-4 rounded-3xl rounded-tr-sm bg-gradient-to-br from-[#C9A84C]/20 to-[#C9A84C]/10 border border-[#C9A84C]/30 text-[#FAF8F5] shadow-md">
+                                            <p class="text-sm font-sans whitespace-pre-wrap leading-relaxed">{{ msg.text }}</p>
+                                        </div>
+
+                                        <!-- Timestamp -->
+                                        <span class="text-[10px] font-mono text-[#FAF8F5]/30 mt-1 px-2">
+                                            {{ formatMsgTime(msg) }}
+                                        </span>
+                                    </div>
+
+                                    <!-- User Avatar Pill -->
+                                    <div class="w-8 h-8 rounded-full bg-[#C9A84C] text-[#0D0D12] font-bold text-xs flex items-center justify-center shrink-0 shadow-md">
+                                        U
                                     </div>
                                 </div>
 
-                                <!-- Tool Calls -->
-                                <div v-if="message.tool_calls && message.tool_calls.length" class="space-y-3 mb-3">
-                                    <div v-for="tool_call in message.tool_calls" :key="tool_call.id"
-                                        class="border border-gray-850 rounded-lg overflow-hidden bg-gray-950/20">
-                                        <!-- Tool Call Header -->
-                                        <div @click="toggleExpandedResult(tool_call.id)"
-                                            class="flex items-center justify-between p-2.5 bg-gray-900/20 border-b border-gray-850 cursor-pointer select-none">
-                                            <div class="flex items-center gap-2">
-                                                <span class="w-2 h-2 rounded-full" :class="getToolColor(tool_call.function.name)"></span>
-                                                <span class="font-semibold text-xs text-blue-400 hover:underline">{{ getToolPrettyName(tool_call.function.name) }}</span>
-                                            </div>
-                                            <div class="flex items-center gap-2">
-                                                <span class="text-[10px] text-gray-500 bg-gray-900/60 px-1.5 py-0.5 rounded border border-gray-800/30 font-mono">{{ getToolNamespace(tool_call.function.name) }}</span>
-                                                <span class="text-[10px] text-gray-400 transform transition-transform duration-200"
-                                                    :class="isResultExpanded(tool_call.id) ? 'rotate-90' : ''">▶</span>
+                                <!-- ── Assistant / Persona Message (Left Aligned) ─── -->
+                                <div v-else class="flex items-start gap-3.5 group max-w-[85%] md:max-w-[75%]">
+                                    <!-- Persona Avatar -->
+                                    <img :src="activePersonaAvatar"
+                                        class="w-9 h-9 rounded-full object-cover border border-[#2A2A35] shrink-0 mt-1 shadow-sm" />
+
+                                    <div class="flex flex-col items-start min-w-0 flex-1">
+                                        <!-- Model Badge (if provided) -->
+                                        <div v-if="msg.model" class="text-[10px] font-mono text-[#FAF8F5]/30 mb-1 flex items-center gap-1.5">
+                                            <Bot class="w-3 h-3 text-[#C9A84C]" />
+                                            <span>{{ msg.model }}</span>
+                                        </div>
+
+                                        <!-- Expandable Thinking Block -->
+                                        <div v-if="msg.thinking" class="w-full mb-3">
+                                            <button @click="toggleExpanded(expandedThoughts, msg.id || idx)"
+                                                class="flex items-center gap-2 text-[11px] font-mono uppercase tracking-wider text-[#FAF8F5]/50 hover:text-[#C9A84C] py-1 px-2 rounded-lg bg-[#14141A] border border-[#2A2A35]/60 transition-colors">
+                                                <ChevronRight class="w-3.5 h-3.5 transition-transform duration-200"
+                                                    :class="{ 'rotate-90': isExpanded(expandedThoughts, msg.id || idx) }" />
+                                                <span>Reasoning Trace ({{ msg.thinking_duration || '2.4s' }})</span>
+                                            </button>
+                                            <div v-show="isExpanded(expandedThoughts, msg.id || idx)"
+                                                class="mt-1.5 p-3.5 rounded-2xl bg-[#0D0D12] border border-[#2A2A35] text-xs font-mono text-[#FAF8F5]/60 leading-relaxed whitespace-pre-wrap">
+                                                {{ msg.thinking }}
                                             </div>
                                         </div>
-                                        
-                                        <!-- Tool Call Body -->
-                                        <div v-show="isResultExpanded(tool_call.id)" class="divide-y divide-gray-850">
-                                            <!-- Arguments -->
-                                            <div class="p-2.5 bg-gray-950/40 text-xs font-mono">
-                                                <div @click.stop="toggleExpandedArgs(tool_call.id)" class="cursor-pointer flex items-center gap-1.5 text-gray-400 hover:text-gray-200 select-none">
-                                                    <span class="transform transition-transform duration-200" :class="{ 'rotate-90': isArgsExpanded(tool_call.id) }">▶</span>
-                                                    <span class="font-semibold">Arguments:</span>
-                                                    <span v-if="!isArgsExpanded(tool_call.id)" class="text-gray-500 truncate max-w-[200px] sm:max-w-md">{{ tool_call.function.arguments }}</span>
+
+                                        <!-- Message Content Bubble -->
+                                        <div class="p-4 rounded-3xl rounded-tl-sm bg-[#14141A] border border-[#2A2A35] shadow-lg text-[#FAF8F5] w-full">
+                                            <!-- Rendered Markdown Body -->
+                                            <div class="prose prose-invert prose-sm max-w-none text-[#FAF8F5]/90 leading-relaxed"
+                                                v-html="renderMarkdown(msg.text)" />
+
+                                            <!-- Inline Image Manifestation -->
+                                            <div v-if="msg.image || msg.image_prompt" class="mt-4 pt-3 border-t border-[#2A2A35]/80 space-y-3">
+                                                <!-- Image Prompt Pill -->
+                                                <div v-if="msg.image_prompt" class="flex items-center gap-1.5 flex-wrap">
+                                                    <span class="text-[10px] font-mono uppercase tracking-widest text-[#C9A84C] bg-[#C9A84C]/10 border border-[#C9A84C]/20 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                                        <Sparkles class="w-2.5 h-2.5" /> Prompt
+                                                    </span>
+                                                    <span class="text-xs font-mono text-[#FAF8F5]/50 truncate max-w-sm">{{ msg.image_prompt }}</span>
                                                 </div>
-                                                <pre v-show="isArgsExpanded(tool_call.id)" class="mt-1.5 p-2 bg-gray-950/80 rounded border border-gray-900 text-gray-300 overflow-x-auto whitespace-pre-wrap text-[11px]">{{ formatJson(tool_call.function.arguments) }}</pre>
-                                            </div>
-                                            <!-- Result (if available) -->
-                                            <div v-if="getToolResult(tool_call.id)" class="p-2.5 bg-gray-950/40 text-xs font-mono">
-                                                <div @click.stop="toggleExpandedResultSection(tool_call.id)" class="cursor-pointer flex items-center gap-1.5 text-gray-400 hover:text-gray-200 select-none">
-                                                    <span class="transform transition-transform duration-200" :class="{ 'rotate-90': isResultSectionExpanded(tool_call.id) }">▶</span>
-                                                    <span class="font-semibold">Result:</span>
+
+                                                <!-- Image Display -->
+                                                <div v-if="msg.image" class="relative group/genimg rounded-2xl overflow-hidden border border-[#2A2A35] bg-[#0D0D12] max-w-md shadow-xl">
+                                                    <img :src="msg.image" alt="Generated artifact"
+                                                        class="w-full h-auto object-cover hover:scale-102 transition-transform duration-300 cursor-pointer"
+                                                        @click="openImage(msg.image)" />
+                                                    
+                                                    <!-- Hover Actions Overlay -->
+                                                    <div class="absolute inset-0 bg-[#0D0D12]/60 opacity-0 group-hover/genimg:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                                        <button @click="openImage(msg.image)"
+                                                            class="px-3 py-1.5 rounded-full bg-[#C9A84C] text-[#0D0D12] font-bold text-xs font-sans shadow-lg flex items-center gap-1 hover:brightness-110">
+                                                            <Maximize2 class="w-3.5 h-3.5" /> Fullscreen
+                                                        </button>
+                                                    </div>
                                                 </div>
-                                                <pre v-show="isResultSectionExpanded(tool_call.id)" class="mt-1.5 p-2 bg-gray-950/80 rounded border border-gray-900 text-gray-300 overflow-x-auto whitespace-pre-wrap text-[11px] max-h-[300px]">{{ formatJson(getToolResult(tool_call.id)) }}</pre>
                                             </div>
                                         </div>
+
+                                        <!-- Timestamp -->
+                                        <span class="text-[10px] font-mono text-[#FAF8F5]/30 mt-1 px-2">
+                                            {{ formatMsgTime(msg) }}
+                                        </span>
                                     </div>
                                 </div>
+                            </template>
+                        </div>
 
-                                <!-- Text response -->
-                                <div v-if="message.text" class="message-text">
-                                    {{ message.text }}
-                                </div>
-                                <div v-if="message.text && message.image_prompt" class="text-gray-400">
-                                    {{ message.image_prompt }}
-                                </div>
-                                <div v-if="message.image" class="message-image">
-                                    <img :src="message.image" :alt="'Shared image'" @click="openImage(message.image)" />
-                                </div>
-                                <div class="message-time">{{ message.time }}</div>
+                        <!-- Typing / Generation Indicator -->
+                        <div v-if="isTyping" class="flex items-center gap-3">
+                            <img :src="activePersonaAvatar"
+                                class="w-8 h-8 rounded-full object-cover border border-[#2A2A35] animate-pulse" />
+                            <div class="px-4 py-3 rounded-2xl bg-[#14141A] border border-[#2A2A35] flex items-center gap-2">
+                                <span class="w-2 h-2 rounded-full bg-[#C9A84C] animate-bounce"></span>
+                                <span class="w-2 h-2 rounded-full bg-[#C9A84C] animate-bounce [animation-delay:0.2s]"></span>
+                                <span class="w-2 h-2 rounded-full bg-[#C9A84C] animate-bounce [animation-delay:0.4s]"></span>
+                                <span class="text-xs font-mono text-[#FAF8F5]/40 ml-1">
+                                    {{ isGeneratingImage ? 'Manifesting image artifact…' : `${activePersonaName} is typing…` }}
+                                </span>
                             </div>
                         </div>
                     </template>
-                    <div>
-                        <div v-if="isTyping" class="typing-indicator">
-                            <span class="dot"></span>
-                            <span class="dot"></span>
-                            <span class="dot"></span>
+                </div>
+
+                <!-- ── Input Dock Container ──────────────────────────────────────── -->
+                <div v-if="route.params.id" class="p-4 md:p-6 border-t border-[#2A2A35] bg-[#14141A]/60 backdrop-blur-xl relative z-20">
+                    <!-- Suggested reply chips -->
+                    <div v-if="chatMessages.length && !isTyping" class="flex gap-2 overflow-x-auto pb-2.5 mb-1 custom-scrollbar text-xs">
+                        <button v-for="prompt in contextualSuggestions" :key="prompt"
+                            @click="sendMessageDirect(prompt)"
+                            class="whitespace-nowrap px-3 py-1 rounded-full bg-[#1A1A24] border border-[#2A2A35] text-[#FAF8F5]/70 hover:text-[#C9A84C] hover:border-[#C9A84C]/40 transition-all text-xs font-sans">
+                            {{ prompt }}
+                        </button>
+                    </div>
+
+                    <!-- Image Attachment Preview -->
+                    <div v-if="attachedImageBase64" class="mb-3 relative inline-block">
+                        <div class="relative rounded-2xl overflow-hidden border-2 border-[#C9A84C] shadow-lg w-24 h-24">
+                            <img :src="attachedImageBase64" class="w-full h-full object-cover" />
+                            <button @click="attachedImageBase64 = null"
+                                class="absolute top-1 right-1 p-1 rounded-full bg-[#0D0D12]/80 text-white hover:bg-red-500 transition-colors">
+                                <X class="w-3 h-3" />
+                            </button>
                         </div>
                     </div>
-                </div>
 
-                <!-- Message Input -->
-                <div class="message-input-container">
-                    <div class="input-actions">
-                        <button @click="attachImage" class="attach-btn" title="Attach file">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                            </svg>
+                    <!-- Input Bar -->
+                    <div class="flex items-center gap-2 bg-[#0D0D12] rounded-2xl border border-[#2A2A35] p-2 focus-within:border-[#C9A84C] focus-within:ring-1 focus-within:ring-[#C9A84C] transition-all shadow-inner">
+                        <!-- Attachment Buttons -->
+                        <button @click="triggerFileInput"
+                            class="p-2.5 rounded-xl text-[#FAF8F5]/40 hover:text-[#C9A84C] hover:bg-[#14141A] transition-colors"
+                            title="Attach image">
+                            <Paperclip class="w-5 h-5" />
                         </button>
-                        <button @click="attachImage" class="image-btn" title="Attach image">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                            </svg>
+
+                        <input ref="fileInput" type="file" accept="image/*" class="hidden" @change="handleFileSelected" />
+
+                        <!-- Text Area Input -->
+                        <textarea v-model="newMessage"
+                            @keydown.enter.exact.prevent="sendMessage"
+                            rows="1"
+                            placeholder="Converse with persona… (Shift+Enter for newline)"
+                            class="flex-1 bg-transparent text-sm text-[#FAF8F5] placeholder-[#FAF8F5]/30 focus:outline-none resize-none py-2 px-1 max-h-32 custom-scrollbar font-sans"></textarea>
+
+                        <!-- Send Button -->
+                        <button @click="sendMessage"
+                            :disabled="(!newMessage.trim() && !attachedImageBase64) || isTyping"
+                            class="w-10 h-10 rounded-xl bg-[#C9A84C] text-[#0D0D12] flex items-center justify-center font-bold hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:pointer-events-none transition-all shadow-[0_0_12px_rgba(201,168,76,0.2)]">
+                            <Send class="w-4 h-4" />
                         </button>
                     </div>
-                    <input v-model="newMessage" @keyup.enter="sendMessage" placeholder="Type a message..."
-                        class="message-input" />
-                    <button @click="sendMessage" class="send-btn">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                        </svg>
+                </div>
+            </main>
+
+            <!-- ── Right Persona Dossier Drawer ─────────────────────────────────── -->
+            <aside v-if="infoDrawerOpen && route.params.id"
+                class="w-80 border-l border-[#2A2A35] bg-[#14141A]/95 backdrop-blur-xl flex flex-col z-20 overflow-y-auto custom-scrollbar p-6 space-y-6">
+                <div class="flex items-center justify-between pb-4 border-b border-[#2A2A35]">
+                    <h3 class="font-serif italic font-bold text-lg text-[#FAF8F5]">Persona Dossier</h3>
+                    <button @click="infoDrawerOpen = false" class="p-1 rounded-lg text-[#FAF8F5]/40 hover:text-white">
+                        <X class="w-4 h-4" />
                     </button>
                 </div>
-            </div>
 
-            <!-- Welcome State -->
-            <div v-else class="welcome-state">
-                <div class="welcome-icon">
-                    <svg class="w-16 h-16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1"
-                            d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                    </svg>
+                <!-- High-res Avatar Card -->
+                <div class="text-center">
+                    <img :src="activePersonaAvatar"
+                        class="w-32 h-32 rounded-3xl object-cover border-2 border-[#C9A84C]/40 mx-auto shadow-2xl mb-4 hover:scale-102 transition-transform cursor-pointer"
+                        @click="openImage(activePersonaAvatar)" />
+                    <h4 class="font-bold text-lg text-[#FAF8F5]">{{ activePersonaName }}</h4>
+                    <p class="text-xs font-mono text-[#C9A84C] mt-0.5">@{{ route.params.id }}</p>
                 </div>
-                <h2>Welcome to Messages</h2>
-                <p>Select a conversation to start chatting</p>
+
+                <!-- Quick Navigation Links -->
+                <div class="space-y-2">
+                    <router-link :to="'/user/' + route.params.id"
+                        class="w-full flex items-center justify-between p-3 rounded-xl bg-[#1A1A24] border border-[#2A2A35] hover:border-[#C9A84C]/50 text-xs font-sans font-semibold text-[#FAF8F5] transition-all group">
+                        <span class="flex items-center gap-2">
+                            <User class="w-4 h-4 text-[#C9A84C]" />
+                            <span>Character Profile</span>
+                        </span>
+                        <ChevronRight class="w-4 h-4 text-[#FAF8F5]/30 group-hover:text-[#C9A84C] group-hover:translate-x-0.5 transition-all" />
+                    </router-link>
+
+                    <router-link :to="'/user/' + route.params.id + '?tab=media'"
+                        class="w-full flex items-center justify-between p-3 rounded-xl bg-[#1A1A24] border border-[#2A2A35] hover:border-[#C9A84C]/50 text-xs font-sans font-semibold text-[#FAF8F5] transition-all group">
+                        <span class="flex items-center gap-2">
+                            <Sparkles class="w-4 h-4 text-[#C9A84C]" />
+                            <span>Media Gallery</span>
+                        </span>
+                        <ChevronRight class="w-4 h-4 text-[#FAF8F5]/30 group-hover:text-[#C9A84C] group-hover:translate-x-0.5 transition-all" />
+                    </router-link>
+                </div>
+
+                <!-- Backstory & Personality -->
+                <div class="space-y-2">
+                    <span class="text-[10px] font-mono uppercase tracking-widest text-[#FAF8F5]/40 font-semibold block">Background</span>
+                    <div class="p-3.5 rounded-2xl bg-[#0D0D12] border border-[#2A2A35] text-xs font-sans text-[#FAF8F5]/80 leading-relaxed whitespace-pre-wrap max-h-60 overflow-y-auto custom-scrollbar">
+                        {{ activePersonaDescription }}
+                    </div>
+                </div>
+
+                <!-- Prompt Prefix / Tags (if available) -->
+                <div v-if="currentCharacter?.prompt_prefix || chatData?.image_prompt" class="space-y-2">
+                    <span class="text-[10px] font-mono uppercase tracking-widest text-[#FAF8F5]/40 font-semibold block">Style Trigger Tokens</span>
+                    <div class="p-3 rounded-xl bg-[#0D0D12] border border-[#2A2A35] text-[11px] font-mono text-[#C9A84C]/90 break-words">
+                        {{ currentCharacter?.prompt_prefix || chatData?.image_prompt }}
+                    </div>
+                </div>
+            </aside>
+        </div>
+
+        <!-- ── Image Lightbox Modal ──────────────────────────────────────────── -->
+        <div v-if="selectedImage" @click="closeImage"
+            class="fixed inset-0 bg-[#0D0D12]/90 backdrop-blur-md z-50 flex items-center justify-center p-4">
+            <div class="relative max-w-4xl max-h-[90vh] rounded-3xl overflow-hidden border border-[#2A2A35] bg-[#14141A] shadow-2xl" @click.stop>
+                <img :src="selectedImage" alt="Enlarged preview" class="max-h-[85vh] w-auto object-contain" />
+                <button @click="closeImage"
+                    class="absolute top-4 right-4 p-2 rounded-full bg-[#0D0D12]/80 text-[#FAF8F5] hover:text-[#C9A84C] border border-[#2A2A35] hover:border-[#C9A84C] transition-all">
+                    <X class="w-5 h-5" />
+                </button>
             </div>
         </div>
 
-        <!-- Image Modal -->
-        <div v-if="selectedImage" class="image-modal " @click="closeImage">
-            <div class="modal-content " @click.stop>
-                <img :src="selectedImage" alt="Full size image" class="h-full w-fit" />
-                <button class="close-btn" @click="closeImage">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                </button>
+        <!-- ── Clear Chat Confirmation Modal ─────────────────────────────────── -->
+        <div v-if="showClearConfirm" @click="showClearConfirm = false"
+            class="fixed inset-0 bg-[#0D0D12]/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div class="bg-[#14141A] border border-[#2A2A35] rounded-3xl p-6 max-w-sm w-full shadow-2xl space-y-4" @click.stop>
+                <h4 class="font-serif italic font-bold text-xl text-[#FAF8F5]">Clear Chronicle?</h4>
+                <p class="text-xs font-sans text-[#FAF8F5]/60 leading-relaxed">
+                    This will wipe the message history for this conversation. This action cannot be reversed.
+                </p>
+                <div class="flex justify-end gap-2 pt-2">
+                    <button @click="showClearConfirm = false"
+                        class="px-4 py-2 rounded-xl text-xs font-sans text-[#FAF8F5]/60 hover:text-white hover:bg-[#1A1A24] transition-all">
+                        Cancel
+                    </button>
+                    <button @click="confirmClearChat"
+                        class="px-4 py-2 rounded-xl text-xs font-sans font-bold bg-red-500 text-white hover:bg-red-600 transition-all shadow-md">
+                        Clear All
+                    </button>
+                </div>
             </div>
         </div>
     </div>
 </template>
 
 <script setup>
-import { apiUrl, formatRequest, GetFromApi } from '@/api';
-import { ref, reactive, nextTick, onMounted, watch } from 'vue';
-import { useRoute } from 'vue-router'
+import { apiUrl, formatRequest, GetFromApi, request } from '@/api';
+import { ref, computed, nextTick, onMounted, watch } from 'vue';
+import { useRoute } from 'vue-router';
+import { marked } from 'marked';
+import {
+    MessageSquare,
+    Send,
+    Sparkles,
+    Trash2,
+    User,
+    Info,
+    RefreshCw,
+    ChevronRight,
+    X,
+    Bot,
+    Paperclip,
+    Search,
+    Compass,
+    Eye,
+    Maximize2
+} from 'lucide-vue-next';
 
-const route = useRoute()
+// Configure marked for clean markdown
+marked.setOptions({ breaks: true, gfm: true });
 
-const chat = ref({});
+function renderMarkdown(content) {
+    if (!content) return '';
+    try {
+        return marked.parse(content);
+    } catch {
+        return content;
+    }
+}
 
-const all_chats = ref([]);
+const route = useRoute();
+
+// Reactive State
+const chatData = ref(null);
+const allChats = ref([]);
 const characters = ref([]);
+const newMessage = ref('');
+const isTyping = ref(false);
+const isGeneratingImage = ref(false);
+const isRefreshing = ref(false);
+const selectedImage = ref(null);
+const messagesContainer = ref(null);
+const fileInput = ref(null);
+const attachedImageBase64 = ref(null);
 
+// UI Controls
+const searchQuery = ref('');
+const sidebarTab = ref('all');
+const mobileSidebarOpen = ref(false);
+const infoDrawerOpen = ref(false);
+const showClearConfirm = ref(false);
+const expandedThoughts = ref({});
+
+function toggleExpanded(store, id) {
+    store.value[id] = !store.value[id];
+}
+function isExpanded(store, id) {
+    return !!store.value[id];
+}
+
+// Active Persona Computeds
+const isCharacterChat = computed(() => {
+    return true;
+});
+
+const currentCharacter = computed(() => {
+    if (!route.params.id) return null;
+    return characters.value.find(c => c.id === route.params.id);
+});
+
+const activePersonaName = computed(() => {
+    if (currentCharacter.value?.name) return currentCharacter.value.name;
+    if (chatData.value?.character?.character_name) return chatData.value.character.character_name;
+    return 'Companion';
+});
+
+const activePersonaAvatar = computed(() => {
+    if (currentCharacter.value?.avatar) return currentCharacter.value.avatar;
+    if (chatData.value?.character?.avatar) return chatData.value.character.avatar;
+    if (route.params.id) {
+        return `${apiUrl}/random-image-file?user=${route.params.id}`;
+    }
+    return 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&h=120&fit=crop';
+});
+
+const activePersonaDescription = computed(() => {
+    if (currentCharacter.value?.description) return currentCharacter.value.description;
+    if (chatData.value?.character?.short_description) return chatData.value.character.short_description;
+    return 'A captivating companion ready to share thoughts, adventures, and imagery.';
+});
+
+const activePersonaSubtext = computed(() => {
+    if (currentCharacter.value?.description) return currentCharacter.value.description.slice(0, 45) + '…';
+    if (chatData.value?.character?.short_description) return chatData.value.character.short_description.slice(0, 45) + '…';
+    return 'Interactive Companion';
+});
+
+const chatMessages = computed(() => {
+    return chatData.value?.messages || [];
+});
+
+// Starters & Contextual Suggestions
+const starterPrompts = [
+    "Tell me about yourself.",
+    "What are you thinking right now?",
+    "Can you describe what you're wearing?",
+    "Tell me a secret nobody else knows."
+];
+
+const contextualSuggestions = [
+    "Can you send a selfie?",
+    "What should we do next?",
+    "Describe your surroundings.",
+    "Tell me something cute."
+];
+
+// Filtering Sidebar Items
+const filteredCharacters = computed(() => {
+    const q = searchQuery.value.trim().toLowerCase();
+    if (!q) return characters.value;
+    return characters.value.filter(c =>
+        c.name?.toLowerCase().includes(q) ||
+        c.id?.toLowerCase().includes(q) ||
+        c.description?.toLowerCase().includes(q)
+    );
+});
+
+const filteredRecentChats = computed(() => {
+    const q = searchQuery.value.trim().toLowerCase();
+    // Only keep character-based chats
+    let list = allChats.value.filter(c =>
+        c.is_character_chat ||
+        c.character ||
+        characters.value.some(char => char.id === c.chat_id)
+    );
+    if (q) {
+        list = list.filter(c =>
+            c.chat_id?.toLowerCase().includes(q) ||
+            c.character?.character_name?.toLowerCase().includes(q) ||
+            characters.value.find(char => char.id === c.chat_id)?.name?.toLowerCase().includes(q) ||
+            c.messages?.[c.messages.length - 1]?.text?.toLowerCase().includes(q)
+        );
+    }
+    return list;
+});
+
+function getChatAvatar(c) {
+    if (c.character?.avatar) return c.character.avatar;
+    const charMatch = characters.value.find(char => char.id === c.chat_id);
+    if (charMatch?.avatar) return charMatch.avatar;
+    return `${apiUrl}/random-image-file?user=${c.chat_id}`;
+}
+
+function getChatTitle(c) {
+    if (c.character?.character_name) return c.character.character_name;
+    const charMatch = characters.value.find(char => char.id === c.chat_id);
+    if (charMatch?.name) return charMatch.name;
+    return c.chat_id;
+}
+function getLastMessageText(c) {
+    if (!c.messages || !c.messages.length) return 'New chronicle started…';
+    const last = c.messages[c.messages.length - 1];
+    return last.text || (last.image ? 'Sent an image' : 'Message');
+}
+
+function formatMsgTime(msg) {
+    if (msg.time) return msg.time;
+    if (msg.timestamp) {
+        const d = new Date(typeof msg.timestamp === 'number' && msg.timestamp < 10000000000 ? msg.timestamp * 1000 : msg.timestamp);
+        if (!isNaN(d.getTime())) {
+            return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+    }
+    return '';
+}
+
+// ── Backend Communications ───────────────────────────────────────────────────
+
+async function refreshAll() {
+    isRefreshing.value = true;
+    try {
+        await Promise.all([RefreshChat(), loadCharacters()]);
+    } finally {
+        isRefreshing.value = false;
+    }
+}
 
 async function RefreshChat() {
-
-    console.log('Refreshing chat data...');
-
     if (route.params.id) {
-        const response = await fetch(apiUrl + '/chat/' + route.params.id, {
-            method: 'GET',
-            headers: {
-                'Content-Type': 'application/json'
+        try {
+            const res = await fetch(`${apiUrl}/chat/${route.params.id}`);
+            if (res.ok) {
+                chatData.value = await res.json();
             }
-        });
-        chat.value = await response.json();
+        } catch (e) {
+            console.error('Failed to load active chat:', e);
+        }
     }
-    console.log('Chat data:', chat.value);
-    const chatResponse = await fetch(apiUrl + '/chats');
-    all_chats.value = await chatResponse.json();
+
+    try {
+        const chatsRes = await fetch(`${apiUrl}/chats`);
+        if (chatsRes.ok) {
+            allChats.value = await chatsRes.json();
+        }
+    } catch (e) {
+        console.error('Failed to load recent chats:', e);
+    }
+
+    nextTick(() => {
+        scrollToBottom();
+    });
 }
 
 async function loadCharacters() {
@@ -282,6 +785,135 @@ async function loadCharacters() {
     }
 }
 
+async function sendMessageDirect(text) {
+    newMessage.value = text;
+    await sendMessage();
+}
+
+async function sendMessage() {
+    const textToSend = newMessage.value.trim();
+    const imageToSend = attachedImageBase64.value;
+    if ((!textToSend && !imageToSend) || !route.params.id) return;
+
+    newMessage.value = '';
+    attachedImageBase64.value = null;
+
+    if (!chatData.value) {
+        chatData.value = { chat_id: route.params.id, messages: [] };
+    }
+    if (!chatData.value.messages) {
+        chatData.value.messages = [];
+    }
+
+    // Optimistically push user message
+    const optimisticMsg = {
+        id: Date.now(),
+        text: textToSend,
+        image: imageToSend,
+        isUser: true,
+        timestamp: Date.now() / 1000
+    };
+    chatData.value.messages.push(optimisticMsg);
+
+    isTyping.value = true;
+    scrollToBottom();
+
+    try {
+        const body = {
+            image_request: { ...request }
+        };
+
+        const response = await fetch(`${apiUrl}/chat/${route.params.id}/message?message=${encodeURIComponent(textToSend)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+
+        const responseData = await response.json();
+
+        // If the persona decided to generate an image
+        if (responseData.image_prompt) {
+            isGeneratingImage.value = true;
+            try {
+                const _req = formatRequest(responseData.image_prompt);
+                const txt2imgResponse = await fetch(`${apiUrl}/sdapi/v1/txt2img`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(_req)
+                });
+
+                if (txt2imgResponse.ok) {
+                    const result = await txt2imgResponse.json();
+                    if (result?.images?.[0]) {
+                        // Associate image with the message in backend
+                        const msgIdx = chatData.value.messages.length - 1;
+                        await fetch(`${apiUrl}/chat/${route.params.id}/${msgIdx}/image`, {
+                            method: 'POST'
+                        });
+                    }
+                }
+            } catch (imgErr) {
+                console.error('Failed to generate persona image:', imgErr);
+            } finally {
+                isGeneratingImage.value = false;
+            }
+        }
+    } catch (e) {
+        console.error('Error sending message:', e);
+    } finally {
+        isTyping.value = false;
+        await RefreshChat();
+    }
+}
+
+async function confirmClearChat() {
+    if (!route.params.id) return;
+    try {
+        await fetch(`${apiUrl}/chat/${route.params.id}`, { method: 'DELETE' });
+        if (chatData.value) {
+            chatData.value.messages = [];
+        }
+        showClearConfirm.value = false;
+        await RefreshChat();
+    } catch (e) {
+        console.error('Failed to clear chat:', e);
+    }
+}
+
+// ── Image Attachment Handling ─────────────────────────────────────────────────
+
+function triggerFileInput() {
+    fileInput.value?.click();
+}
+
+function handleFileSelected(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        attachedImageBase64.value = event.target?.result;
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+}
+
+function openImage(url) {
+    selectedImage.value = url;
+}
+
+function closeImage() {
+    selectedImage.value = null;
+}
+
+function scrollToBottom() {
+    nextTick(() => {
+        if (messagesContainer.value) {
+            messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight;
+        }
+    });
+}
+
 onMounted(() => {
     RefreshChat();
     loadCharacters();
@@ -290,995 +922,21 @@ onMounted(() => {
 watch(() => route.params.id, () => {
     RefreshChat();
 });
-
-const selectedChat = ref(null);
-const newMessage = ref('');
-const selectedImage = ref(null);
-const messagesContainer = ref(null);
-
-// Collapsible UI states for thoughts & tool calls
-const expandedThoughts = ref({});
-const expandedResults = ref({});
-const expandedArgs = ref({});
-const expandedResultSections = ref({});
-
-function toggleExpandedThought(id) {
-    expandedThoughts.value[id] = !expandedThoughts.value[id];
-}
-function isThoughtExpanded(id) {
-    return !!expandedThoughts.value[id];
-}
-
-function toggleExpandedResult(id) {
-    expandedResults.value[id] = !expandedResults.value[id];
-}
-function isResultExpanded(id) {
-    // Default to expanded so the user sees results initially
-    return expandedResults.value[id] !== false;
-}
-
-function toggleExpandedArgs(id) {
-    expandedArgs.value[id] = !expandedArgs.value[id];
-}
-function isArgsExpanded(id) {
-    return !!expandedArgs.value[id];
-}
-
-function toggleExpandedResultSection(id) {
-    expandedResultSections.value[id] = !expandedResultSections.value[id];
-}
-function isResultSectionExpanded(id) {
-    // Default to expanded initially
-    return expandedResultSections.value[id] !== false;
-}
-
-function getToolResult(toolCallId) {
-    if (!chat.value || !chat.value.messages) return null;
-    const toolMsg = chat.value.messages.find(m => m.role === 'tool' && m.tool_call_id === toolCallId);
-    return toolMsg ? toolMsg.content : null;
-}
-
-function formatJson(val) {
-    if (!val) return '';
-    if (typeof val === 'object') return JSON.stringify(val, null, 2);
-    try {
-        return JSON.stringify(JSON.parse(val), null, 2);
-    } catch (e) {
-        return val;
-    }
-}
-
-function getToolPrettyName(name) {
-    const prettyNames = {
-        search_images: 'Search Images',
-        get_random_images: 'Get Random Images',
-        show_image: 'Show Image',
-        generate_new_image: 'Generate Image',
-        inpaint_image: 'Inpaint Image',
-        search_civitai_models: 'Search CivitAI Models',
-        get_civitai_images: 'Get CivitAI Images',
-        show_prompt: 'Show Prompt',
-        search: 'Web Search',
-        'visit-website': 'Visit Website',
-    };
-    return prettyNames[name] || name;
-}
-
-function getToolNamespace(name) {
-    const namespaces = {
-        search_images: 'local/search-images',
-        get_random_images: 'local/get-random-images',
-        show_image: 'local/show-image',
-        generate_new_image: 'local/generate-new-image',
-        inpaint_image: 'local/inpaint-image',
-        search_civitai_models: 'civitai/search-models',
-        get_civitai_images: 'civitai/get-images',
-        show_prompt: 'local/show-prompt',
-        search: 'vadimfedenko/duck-duck-go-reworked',
-        'visit-website': 'vadimfedenko/visit-website-reworked',
-    };
-    return namespaces[name] || 'mcp/' + name;
-}
-
-function getToolColor(name) {
-    if (name === 'search' || name === 'search_images' || name === 'search_civitai_models') {
-        return 'bg-amber-500';
-    }
-    if (name === 'visit-website' || name === 'show_image') {
-        return 'bg-blue-500';
-    }
-    return 'bg-green-500';
-}
-
-const chats = reactive([
-    {
-        id: 1,
-        name: 'Alice Johnson',
-        avatar: 'https://images.unsplash.com/photo-1494790108755-2616b612b47c?w=150&h=150&fit=crop&crop=face',
-        lastMessage: 'Hey! How are you doing?',
-        time: '2:30 PM',
-        status: 'Online',
-        unreadCount: 2,
-        messages: [
-            { id: 1, text: 'Hey there!', time: '2:15 PM', sent: false },
-            { id: 2, text: 'Hi Alice! How are you?', time: '2:16 PM', sent: true },
-            { id: 3, image: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=400&h=300&fit=crop', time: '2:20 PM', sent: false },
-            { id: 4, text: 'Beautiful sunset!', time: '2:21 PM', sent: false },
-            { id: 5, text: "Wow, that's amazing! 😍", time: '2:25 PM', sent: true },
-            { id: 6, text: 'Hey! How are you doing?', time: '2:30 PM', sent: false }
-        ]
-    },
-    {
-        id: 2,
-        name: 'Bob Smith',
-        avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop&crop=face',
-        lastMessage: "Let's meet tomorrow",
-        time: '1:45 PM',
-        status: 'Away',
-        unreadCount: 0,
-        messages: [
-            { id: 1, text: 'Are we still on for tomorrow?', time: '1:30 PM', sent: false },
-            { id: 2, text: 'Yes! What time works for you?', time: '1:35 PM', sent: true },
-            { id: 3, text: 'How about 3 PM?', time: '1:40 PM', sent: false },
-            { id: 4, text: 'Perfect! See you then', time: '1:42 PM', sent: true },
-            { id: 5, text: "Let's meet tomorrow", time: '1:45 PM', sent: false }
-        ]
-    },
-    {
-        id: 3,
-        name: 'Carol Davis',
-        avatar: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=150&h=150&fit=crop&crop=face',
-        lastMessage: 'Thanks for the help!',
-        time: '11:20 AM',
-        status: 'Offline',
-        unreadCount: 0,
-        messages: [
-            { id: 1, text: 'Can you help me with the project?', time: '11:00 AM', sent: false },
-            { id: 2, text: 'Of course! What do you need?', time: '11:05 AM', sent: true },
-            { id: 3, image: 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=400&h=300&fit=crop', time: '11:10 AM', sent: true },
-            { id: 4, text: "Here's the design mockup", time: '11:11 AM', sent: true },
-            { id: 5, text: 'This looks great!', time: '11:15 AM', sent: false },
-            { id: 6, text: 'Thanks for the help!', time: '11:20 AM', sent: false }
-        ]
-    }
-]);
-
-import { request } from '@/api';
-
-function selectChat(chat) {
-    selectedChat.value = chat;
-    nextTick(() => {
-        scrollToBottom();
-    });
-}
-
-const isTyping = ref(false);
-const url = ref('http://127.0.0.1:8000/')
-
-async function sendMessage() {
-    if (!newMessage.value.trim() || !chat.value) return;
-
-
-
-    isTyping.value = true;
-
-    chat.value.messages.push({
-        id: Date.now(),
-        text: newMessage.value,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        isUser: true
-    });
-
-    const message = encodeURIComponent(newMessage.value);
-    newMessage.value = ''
-
-
-    const body = {
-        image_request: { ...request },
-    }
-
-    console.log('Sending message:', body);
-
-    const response = await fetch(apiUrl + '/chat/' + route.params.id + '/message?message=' + message, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(body)
-    });
-
-    const responseData = await response.json();
-
-    console.log('Response:', responseData);
-    await RefreshChat();
-
-    if (responseData.image_prompt) {
-
-        console.log('Image prompt received:', responseData.image_prompt);
-        const _request = formatRequest(responseData.image_prompt);
-
-        console.log('Formatted request:', _request);
-        //post to /sdapi/v1/txt2img with body as plainRequest
-        const txt2imgResponse = await fetch(url.value + 'sdapi/v1/txt2img', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(_request)
-        })
-        const result = await txt2imgResponse.json()
-        chat.value.messages[chat.value.messages.length - 1].image = "image/png;base64," + result.images[0];
-
-        //post to /chat/{chat_id}/{message_index}/image
-        const _url = apiUrl + '/chat/' + route.params.id + '/' + (chat.value.messages.length - 1) + '/image';
-        const imageResponse = await fetch(_url, {
-            method: 'POST',
-        });
-    }
-
-    isTyping.value = false;
-    await RefreshChat();
-
-    nextTick(() => {
-        scrollToBottom();
-    });
-
-}
-
-function attachImage() {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
-    input.onchange = (e) => {
-        const file = e.target.files[0];
-        if (file && selectedChat.value) {
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                const message = {
-                    id: Date.now(),
-                    image: e.target.result,
-                    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                    sent: true
-                };
-                selectedChat.value.messages.push(message);
-                selectedChat.value.lastMessage = 'Sent an image';
-                nextTick(() => {
-                    scrollToBottom();
-                });
-            };
-            reader.readAsDataURL(file);
-        }
-    };
-    input.click();
-}
-
-function openImage(imageUrl) {
-    selectedImage.value = imageUrl;
-}
-
-function closeImage() {
-    selectedImage.value = null;
-}
-
-function scrollToBottom() {
-    if (messagesContainer.value) {
-        messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight;
-    }
-}
-
-onMounted(() => {
-    if (chats.length > 0) {
-        selectChat(chats[0]);
-    }
-});
 </script>
 
 <style scoped>
-.chat-container {
-    display: flex;
-    height: calc(100vh - 80px);
-    max-width: 1400px;
-    margin: 0 auto;
-    background: #111827;
-    border-radius: 12px;
-    overflow: hidden;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-}
-
-@media (prefers-color-scheme: dark) {
-    .chat-container {
-        background: #111827;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
-    }
-}
-
-/* Sidebar Styles */
-.chat-sidebar {
-    width: 350px;
-    background: #f9fafb;
-    border-right: 1px solid #e5e7eb;
-    display: flex;
-    flex-direction: column;
-}
-
-@media (prefers-color-scheme: dark) {
-    .chat-sidebar {
-        background: #1f2937;
-        border-right-color: #374151;
-    }
-}
-
-.sidebar-header {
-    padding: 24px 20px 16px;
-    border-bottom: 1px solid #e5e7eb;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-@media (prefers-color-scheme: dark) {
-    .sidebar-header {
-        border-bottom-color: #374151;
-    }
-}
-
-.sidebar-header h2 {
-    margin: 0;
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: #111827;
-}
-
-@media (prefers-color-scheme: dark) {
-    .sidebar-header h2 {
-        color: #f9fafb;
-    }
-}
-
-.new-chat-btn {
-    width: 44px;
-    height: 44px;
-    border-radius: 10px;
-    border: none;
-    background: #3b82f6;
-    color: white;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s;
-}
-
-.new-chat-btn:hover {
-    background: #2563eb;
-    transform: translateY(-1px);
-}
-
-.chat-list {
-    flex: 1;
-    overflow-y: auto;
-    padding: 8px 0;
-}
-
-.sidebar-section {
-    padding: 4px 0;
-}
-
-.section-label {
-    padding: 8px 20px 4px;
-    font-size: 0.7rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    color: #9ca3af;
-}
-
-.chat-item {
-    display: flex;
-    padding: 12px 20px;
-    cursor: pointer;
-    transition: all 0.2s;
-    position: relative;
-}
-
-.chat-item:hover {
-    background: #f3f4f6;
-}
-
-@media (prefers-color-scheme: dark) {
-    .chat-item:hover {
-        background: #374151;
-    }
-}
-
-.chat-item.active {
-    background: #eff6ff;
-    border-right: 3px solid #3b82f6;
-}
-
-@media (prefers-color-scheme: dark) {
-    .chat-item.active {
-        background: #1e3a8a;
-    }
-}
-
-.chat-avatar {
-    position: relative;
-    margin-right: 12px;
-}
-
-.chat-avatar img {
-    width: 52px;
-    height: 52px;
-    border-radius: 50%;
-    object-fit: cover;
-}
-
-.status-indicator {
-    position: absolute;
-    bottom: 2px;
-    right: 2px;
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    border: 2px solid white;
-}
-
-@media (prefers-color-scheme: dark) {
-    .status-indicator {
-        border-color: #1f2937;
-    }
-}
-
-.status-online {
-    background: #10b981;
-}
-
-.status-away {
-    background: #f59e0b;
-}
-
-.status-offline {
-    background: #6b7280;
-}
-
-.chat-info {
-    flex: 1;
-    min-width: 0;
-    margin-right: 12px;
-}
-
-.chat-name {
-    font-weight: 600;
-    color: #111827;
-    margin-bottom: 4px;
-    font-size: 15px;
-}
-
-@media (prefers-color-scheme: dark) {
-    .chat-name {
-        color: #f9fafb;
-    }
-}
-
-.last-message {
-    color: #6b7280;
-    font-size: 14px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-@media (prefers-color-scheme: dark) {
-    .last-message {
-        color: #9ca3af;
-    }
-}
-
-.chat-meta {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 4px;
-}
-
-.chat-time {
-    color: #9ca3af;
-    font-size: 12px;
-}
-
-.unread-badge {
-    background: #ef4444;
-    color: white;
-    font-size: 11px;
-    font-weight: 600;
-    padding: 2px 6px;
-    border-radius: 10px;
-    min-width: 18px;
-    text-align: center;
-}
-
-/* Main Chat Styles */
-.chat-main {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    background: white;
-}
-
-@media (prefers-color-scheme: dark) {
-    .chat-main {
-        background: #111827;
-    }
-}
-
-.chat-content {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-}
-
-.chat-header {
-    padding: 20px 24px;
-    border-bottom: 1px solid #e5e7eb;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-@media (prefers-color-scheme: dark) {
-    .chat-header {
-        border-bottom-color: #374151;
-    }
-}
-
-.chat-user-info {
-    display: flex;
-    align-items: center;
-}
-
-.user-avatar {
-    width: 44px;
-    height: 44px;
-    border-radius: 50%;
-    object-fit: cover;
-    margin-right: 12px;
-}
-
-.chat-user-info h3 {
-    margin: 0 0 2px 0;
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: #111827;
-}
-
-@media (prefers-color-scheme: dark) {
-    .chat-user-info h3 {
-        color: #f9fafb;
-    }
-}
-
-.status {
-    font-size: 14px;
-    font-weight: 500;
-}
-
-.status.status-online {
-    color: #10b981;
-}
-
-.status.status-away {
-    color: #f59e0b;
-}
-
-.status.status-offline {
-    color: #6b7280;
-}
-
-.chat-actions {
-    display: flex;
-    gap: 8px;
-}
-
-.action-btn {
-    width: 44px;
-    height: 44px;
-    border: none;
-    background: #f3f4f6;
-    border-radius: 10px;
-    cursor: pointer;
-    color: #6b7280;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s;
-}
-
-.action-btn:hover {
-    background: #e5e7eb;
-    color: #374151;
-}
-
-@media (prefers-color-scheme: dark) {
-    .action-btn {
-        background: #374151;
-        color: #9ca3af;
-    }
-
-    .action-btn:hover {
-        background: #4b5563;
-        color: #f3f4f6;
-    }
-}
-
-.messages-container {
-    flex: 1;
-    padding: 24px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    background: #f9fafb;
-}
-
-@media (prefers-color-scheme: dark) {
-    .messages-container {
-        background: #0f172a;
-    }
-}
-
-.message {
-    display: flex;
-}
-
-.message.sent {
-    justify-content: flex-end;
-}
-
-.message.received {
-    justify-content: flex-start;
-}
-
-.message-content {
-    max-width: 70%;
-    background: white;
-    border-radius: 18px;
-    padding: 12px 16px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    border: 1px solid #e5e7eb;
-}
-
-@media (prefers-color-scheme: dark) {
-    .message-content {
-        background: #1f2937;
-        border-color: #374151;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-    }
-}
-
-.message.sent .message-content {
-    background: #3b82f6;
-    color: white;
-    border-color: #3b82f6;
-}
-
-.message-text {
-    margin-bottom: 4px;
-    color: #111827;
-    line-height: 1.5;
-}
-
-@media (prefers-color-scheme: dark) {
-    .message-text {
-        color: #f3f4f6;
-    }
-}
-
-.message.sent .message-text {
-    color: white;
-}
-
-.message-image {
-    margin-bottom: 4px;
-}
-
-.message-image img {
-    max-width: 280px;
-    max-height: 200px;
-    border-radius: 12px;
-    cursor: pointer;
-    display: block;
-}
-
-.message-time {
-    font-size: 11px;
-    opacity: 0.7;
-    text-align: right;
-}
-
-.message-input-container {
-    padding: 20px 24px;
-    border-top: 1px solid #e5e7eb;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    background: white;
-}
-
-@media (prefers-color-scheme: dark) {
-    .message-input-container {
-        border-top-color: #374151;
-        background: #111827;
-    }
-}
-
-.input-actions {
-    display: flex;
-    gap: 8px;
-}
-
-.attach-btn,
-.image-btn {
-    width: 44px;
-    height: 44px;
-    border: none;
-    background: #f3f4f6;
-    border-radius: 10px;
-    cursor: pointer;
-    color: #6b7280;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s;
-}
-
-.attach-btn:hover,
-.image-btn:hover {
-    background: #e5e7eb;
-    color: #374151;
-}
-
-@media (prefers-color-scheme: dark) {
-
-    .attach-btn,
-    .image-btn {
-        background: #374151;
-        color: #9ca3af;
-    }
-
-    .attach-btn:hover,
-    .image-btn:hover {
-        background: #4b5563;
-        color: #f3f4f6;
-    }
-}
-
-.message-input {
-    flex: 1;
-    padding: 12px 16px;
-    border: 1px solid #d1d5db;
-    border-radius: 25px;
-    outline: none;
-    font-size: 14px;
-    background: #f9fafb;
-    color: #111827;
-    transition: all 0.2s;
-}
-
-.message-input:focus {
-    border-color: #3b82f6;
-    background: white;
-}
-
-.message-input::placeholder {
-    color: #9ca3af;
-}
-
-@media (prefers-color-scheme: dark) {
-    .message-input {
-        background: #1f2937;
-        border-color: #4b5563;
-        color: #f3f4f6;
-    }
-
-    .message-input:focus {
-        border-color: #3b82f6;
-        background: #111827;
-    }
-
-    .message-input::placeholder {
-        color: #6b7280;
-    }
-}
-
-.send-btn {
-    width: 44px;
-    height: 44px;
-    background: #3b82f6;
-    color: white;
-    border: none;
-    border-radius: 50%;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s;
-}
-
-.send-btn:hover {
-    background: #2563eb;
-    transform: translateY(-1px);
-}
-
-.welcome-state {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    height: 100%;
-    color: #6b7280;
-    text-align: center;
-}
-
-@media (prefers-color-scheme: dark) {
-    .welcome-state {
-        color: #9ca3af;
-    }
-}
-
-.welcome-icon {
-    margin-bottom: 16px;
-    opacity: 0.5;
-}
-
-.welcome-state h2 {
-    margin: 0 0 8px 0;
-    font-size: 1.5rem;
-    font-weight: 600;
-}
-
-.welcome-state p {
-    margin: 0;
-    font-size: 1rem;
-}
-
-/* Image Modal */
-.image-modal {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(0, 0, 0, 0.9);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    z-index: 1000;
-    backdrop-filter: blur(8px);
-}
-
-.modal-content {
-    position: relative;
-    max-width: 90%;
-    max-height: 90%;
-    border-radius: 12px;
-    overflow: hidden;
-}
-
-.modal-content img {
-    max-width: 100%;
-    max-height: 100%;
-    display: block;
-}
-
-.close-btn {
-    position: absolute;
-    top: 16px;
-    right: 16px;
-    width: 44px;
-    height: 44px;
-    background: rgba(0, 0, 0, 0.8);
-    color: white;
-    border: none;
-    border-radius: 50%;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s;
-}
-
-.close-btn:hover {
-    background: rgba(0, 0, 0, 0.9);
-    transform: scale(1.1);
-}
-
-/* Responsive Design */
-@media (max-width: 1024px) {
-    .chat-container {
-        height: calc(100vh - 60px);
-        border-radius: 0;
-    }
-
-    .chat-sidebar {
-        width: 300px;
-    }
-}
-
-@media (max-width: 768px) {
-    .chat-container {
-        position: relative;
-    }
-
-    .chat-sidebar {
-        width: 100%;
-        position: absolute;
-        z-index: 100;
-        height: 100%;
-        transform: translateX(-100%);
-        transition: transform 0.3s ease;
-    }
-
-    .chat-sidebar.mobile-open {
-        transform: translateX(0);
-    }
-
-    .chat-main {
-        width: 100%;
-    }
-
-    .message-content {
-        max-width: 85%;
-    }
-}
-
-/* Scrollbar Styling */
-.chat-list::-webkit-scrollbar,
-.messages-container::-webkit-scrollbar {
-    width: 6px;
-}
-
-.chat-list::-webkit-scrollbar-track,
-.messages-container::-webkit-scrollbar-track {
+.custom-scrollbar::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
     background: transparent;
 }
-
-.chat-list::-webkit-scrollbar-thumb,
-.messages-container::-webkit-scrollbar-thumb {
-    background: #d1d5db;
-    border-radius: 3px;
+.custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #2A2A35;
+    border-radius: 9999px;
 }
-
-.chat-list::-webkit-scrollbar-thumb:hover,
-.messages-container::-webkit-scrollbar-thumb:hover {
-    background: #9ca3af;
-}
-
-.typing-indicator {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    color: #6b7280;
-}
-
-.dot {
-    width: 8px;
-    height: 8px;
-    background-color: #6b7280;
-    border-radius: 50%;
-    animation: blink 1.4s infinite both;
-}
-
-@media (prefers-color-scheme: dark) {
-
-    .chat-list::-webkit-scrollbar-thumb,
-    .messages-container::-webkit-scrollbar-thumb {
-        background: #4b5563;
-    }
-
-    .chat-list::-webkit-scrollbar-thumb:hover,
-    .messages-container::-webkit-scrollbar-thumb:hover {
-        background: #6b7280;
-    }
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #C9A84C;
 }
 </style>

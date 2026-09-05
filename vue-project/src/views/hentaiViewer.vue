@@ -46,7 +46,7 @@
               controls 
               autoplay
               class="w-full h-full object-contain"
-              :poster="details.poster || details.image"
+              :poster="resolveMediaUrl(details.poster || details.image)"
             ></video>
             <div v-if="!activeStreamUrl" class="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-black/90">
               <Tv class="w-16 h-16 text-white/20 mb-3" />
@@ -111,8 +111,13 @@
             </div>
 
             <div class="flex flex-wrap items-center gap-3.5 text-xs text-white/50 border-b border-white/5 pb-4 mb-4">
-              <span class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/5 text-red-400 font-bold border border-white/5 uppercase">
-                {{ activeMode === 'hentai' ? 'Hentai' : 'Porn' }}
+              <span 
+                :class="[
+                  'flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-bold border uppercase',
+                  activeMode === 'local' ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'bg-white/5 border-white/5 text-red-400'
+                ]"
+              >
+                {{ activeMode === 'hentai' ? 'Hentai' : (activeMode === 'local' ? 'Local' : 'Porn') }}
               </span>
               <span v-if="details.runtime" class="flex items-center gap-1 text-red-400 font-semibold">
                 {{ details.runtime }}
@@ -132,7 +137,9 @@
         <div class="lg:col-span-4 flex flex-col gap-6">
           <!-- Episodes List -->
           <div v-if="details.videos && details.videos.length > 0" class="bg-[#161622] border border-white/5 rounded-2xl p-6 shadow-xl">
-            <h3 class="text-xs font-bold text-white/40 uppercase tracking-widest mb-4">Episode Selection</h3>
+            <h3 class="text-xs font-bold text-white/40 uppercase tracking-widest mb-4">
+              {{ activeMode === 'local' ? 'Folder Videos' : 'Episode Selection' }}
+            </h3>
             <div class="flex flex-col gap-2.5 max-h-[300px] overflow-y-auto pr-1 scrollbar-thin">
               <div 
                 v-for="ep in details.videos" 
@@ -146,7 +153,7 @@
                 ]"
               >
                 <div v-if="ep.thumbnail" class="w-20 aspect-[16/10] rounded-lg overflow-hidden bg-black flex-shrink-0">
-                  <img :src="ep.thumbnail" class="w-full h-full object-cover" />
+                  <img :src="resolveMediaUrl(ep.thumbnail)" class="w-full h-full object-cover" />
                 </div>
                 <div class="flex-grow min-w-0">
                   <h4 class="text-xs font-bold truncate">
@@ -188,7 +195,7 @@
 <script setup>
 import { ref, onMounted, watch, nextTick, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { GetFromApi, PostToApi } from '@/api'
+import { GetFromApi, PostToApi, apiUrl } from '@/api'
 import {
   ArrowLeft,
   Tv,
@@ -205,6 +212,13 @@ const router = useRouter()
 const HENTAI_BASE = 'https://hentaistream-addon.keypop3750.workers.dev/bg=futa,futanari,furry'
 const PORN_BASE = 'https://07b88951aaab-jaxxx-v2.baby-beamup.club'
 
+// Resolve local or remote media URLs
+const resolveMediaUrl = (url) => {
+  if (!url) return ''
+  if (url.startsWith('http://') || url.startsWith('https://')) return url
+  return `${apiUrl}${url.startsWith('/') ? '' : '/'}${url}`
+}
+
 // Refs
 const videoPlayer = ref(null)
 const details = ref(null)
@@ -218,6 +232,9 @@ const activeEpisodeId = ref(null)
 // Mode detection
 const activeMode = computed(() => {
   const itemId = route.params.id
+  if (itemId.startsWith('local:') || itemId.startsWith('local_')) {
+    return 'local'
+  }
   if (itemId.startsWith('http') || itemId.includes('eporner') || itemId.includes('xhamster') || itemId.includes('spankbang') || itemId.includes('porntrex') || itemId.includes('missav')) {
     return 'porn'
   }
@@ -375,7 +392,16 @@ const fetchDetails = async () => {
   try {
     let metadata = null
     
-    if (activeMode.value === 'hentai') {
+    if (activeMode.value === 'local') {
+      try {
+        const data = await GetFromApi(`hhaven/local/detail?id=${encodeURIComponent(itemId)}`)
+        if (data) {
+          metadata = data
+        }
+      } catch (err) {
+        console.error("Failed to load local video detail:", err)
+      }
+    } else if (activeMode.value === 'hentai') {
       // Try series first
       try {
         const res = await fetch(`${base}/meta/series/${encodeURIComponent(itemId)}.json`)
@@ -401,8 +427,14 @@ const fetchDetails = async () => {
     if (metadata) {
       details.value = metadata
 
-      // If Hentai mode has episodes, default to episode 1
-      if (activeMode.value === 'hentai' && metadata.videos && metadata.videos.length > 0) {
+      if (activeMode.value === 'local') {
+        availableStreams.value = (metadata.streams || []).map(s => ({
+          name: s.name,
+          url: resolveMediaUrl(s.url)
+        }))
+        activeStreamUrl.value = availableStreams.value[0]?.url || resolveMediaUrl(metadata.stream_url)
+        activeEpisodeId.value = metadata.id
+      } else if (activeMode.value === 'hentai' && metadata.videos && metadata.videos.length > 0) {
         const firstEp = metadata.videos[0]
         activeEpisodeId.value = firstEp.id
         await fetchEpisodeStream(firstEp.id)
@@ -463,6 +495,10 @@ const fetchMovieStream = async (movieId) => {
 
 // Switch episode
 const playEpisode = async (ep) => {
+  if (activeMode.value === 'local') {
+    router.push(`/hentai/${encodeURIComponent(ep.id)}`)
+    return
+  }
   isLoading.value = true
   activeEpisodeId.value = ep.id
   await fetchEpisodeStream(ep.id)

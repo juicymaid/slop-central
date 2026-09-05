@@ -129,7 +129,8 @@ import { ref, computed, onMounted } from 'vue';
 function GetPath(path) {
   // Remove everything up to and including "models" and the next category folder
   if (!path) return '';
-  const parts = path.split('\\');
+  const normalized = path.replace(/\\/g, '/');
+  const parts = normalized.split('/').filter(Boolean);
   const modelsIndex = parts.findIndex(part => part.toLowerCase() === 'models');
   if (modelsIndex === -1 || modelsIndex + 2 >= parts.length) return '/' + parts.slice(modelsIndex + 1).join('/');
   // Skip "models" and the next folder (category)
@@ -284,15 +285,52 @@ async function fetchModels() {
     if (props.modelType === 'checkpoint') {
       full_url += 'status/models?type=image';
     } else if (props.modelType === 'lora') {
-      // AI horde does not have an endpoint to list all loras. 
-      // We will rely on Civitai or local loras later, but for now return empty or use the local backend loras.
-      // Actually we will fetch local loras since we can use them to get CivitAI IDs.
       full_url = apiUrl + '/webui/loras';
     }
   } else {
     if (props.modelType === 'checkpoint') {
+      // Try ComfyUI object_info/CheckpointLoaderSimple first
+      try {
+        const comfyResp = await fetch(`${props.url}object_info/CheckpointLoaderSimple`);
+        if (comfyResp.ok) {
+          const comfyData = await comfyResp.json();
+          const ckptList = comfyData.CheckpointLoaderSimple?.input?.required?.ckpt_name?.[0];
+          if (Array.isArray(ckptList) && ckptList.length > 0) {
+            models.value = ckptList.map(name => ({
+              title: name,
+              model_name: name.replaceAll('\\', '/').split('/').pop().replace(/\.(safetensors|ckpt|pt)$/i, ''),
+              filename: name,
+              path: name,
+            }));
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn('ComfyUI CheckpointLoaderSimple object_info fetch failed, falling back:', e);
+      }
+
       full_url += 'sdapi/v1/sd-models';
     } else if (props.modelType === 'lora') {
+      // Try ComfyUI object_info/LoraLoader first
+      try {
+        const comfyResp = await fetch(`${props.url}object_info/LoraLoader`);
+        if (comfyResp.ok) {
+          const comfyData = await comfyResp.json();
+          const loraList = comfyData.LoraLoader?.input?.required?.lora_name?.[0];
+          if (Array.isArray(loraList) && loraList.length > 0) {
+            models.value = loraList.map(name => ({
+              name: name,
+              title: name,
+              filename: name,
+              path: name,
+            }));
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn('ComfyUI LoraLoader object_info fetch failed, falling back:', e);
+      }
+
       full_url = apiUrl + '/webui/loras';
     }
   }

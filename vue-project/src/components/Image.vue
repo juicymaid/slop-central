@@ -2,16 +2,16 @@
     <RouterLink v-if="!hide" :to="`/image/${pin.Id}`" class="block relative group/link"
         @click.capture="handleLinkClick">
         <div :key="pin.Id" class="break-inside-avoid cursor-pointer p-0.5">
-            <div class="relative group rounded-xl overflow-hidden" :style="`aspect-ratio: ${pin.Width}/${pin.Height}`"
+            <div class="relative group rounded-xl overflow-hidden" :style="pin.Width && pin.Height ? `aspect-ratio: ${pin.Width}/${pin.Height}` : 'aspect-ratio: 3/4'"
                 :class="{ 'ring-2 ring-[#C9A84C] ring-offset-4 ring-offset-[#0D0D12]': isSelected }">
                 <!-- Placeholder shown while image is loading -->
                 <div v-if="!imageLoaded"
-                    class="w-full h-full absolute top-0 left-0 bg-[#14141A] animate-pulse rounded-[2rem]"></div>
+                    class="w-full h-full absolute top-0 left-0 bg-[#14141A] animate-pulse rounded-[2rem] backdrop-blur-2xl"></div>
 
                 <img :src="ImageSrc(pin.Path)" :alt="pin.Prompt"
-                    class="w-full h-full object-cover  absolute top-0 left-0 transition-opacity duration-300"
+                    class="w-full h-full object-cover absolute top-0 left-0 transition-opacity duration-300"
                     :class="{ 'opacity-0': !imageLoaded, 'opacity-100': imageLoaded }" @error="handleImageError"
-                    @load="imageLoaded = true" loading="lazy" />
+                    @load="imageLoaded = true" loading="lazy" referrerpolicy="no-referrer" />
                 <div
                     class="absolute inset-0 bg-[#0D0D12]/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 ">
                     <div class="absolute bottom-0 left-0 right-0 p-6">
@@ -38,6 +38,16 @@
                             <Trash class="w-3.5 h-3.5 md:w-4 md:h-4" />
                         </button>
                     </div>
+                    <!-- Post Origin Pill -->
+                    <div v-if="pin.post_info" class="absolute top-2 left-2 z-20" @click.stop="">
+                        <RouterLink :to="'/user/' + pin.post_info.character.id"
+                            class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#0D0D12]/85 backdrop-blur-md border border-[#C9A84C]/40 text-[#FAF8F5] text-xs font-sans hover:border-[#C9A84C] hover:bg-[#14141A] transition-all shadow-md">
+                            <img :src="pin.post_info.character.avatar || 'https://images.unsplash.com/photo-1511275539165-cc46b1ee89bf?w=100&h=100&fit=crop'"
+                                class="w-3.5 h-3.5 rounded-full object-cover" />
+                            <span class="font-medium truncate max-w-[90px]">{{ pin.post_info.character.name }}</span>
+                        </RouterLink>
+                    </div>
+
                     <div
                         class="absolute bottom-0 left-0 p-2 md:p-4 bg-[#0D0D12]/40 backdrop-blur-md rounded-tr-[1.5rem] md:rounded-tr-[2rem] flex items-center border-t border-r border-[#FAF8F5]/10 gap-2 md:gap-3">
                         <div class="flex items-center gap-1" title="Views">

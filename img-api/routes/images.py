@@ -13,6 +13,7 @@ from collections import defaultdict
 from routes import rate
 from pathlib import Path
 from pydantic import BaseModel
+from typing import Optional
 import base64
 import uuid
 from datetime import datetime
@@ -26,12 +27,14 @@ router = APIRouter()
 def add_boards_info(copy_img):
     # Use original image data which still contains 'tags_set'
     original = utils.images_data.get(copy_img["Id"], copy_img)
+    tags_set = original.get("tags_set", set())
     recommended_boards = []
     for board in utils.boards_data.values():
         pinned_ids = board.get("images", [])
         total_score = 0
         valid_count = 0
-        for pid in pinned_ids:
+        # Sample up to 4 pinned images to keep page latency fast
+        for pid in pinned_ids[:4]:
             pinned_image = utils.images_data.get(pid)
             if pinned_image:
                 emb_sim = utils.get_embedding_similarity(original["Id"], pid)
@@ -43,24 +46,20 @@ def add_boards_info(copy_img):
         avg_score = total_score / valid_count if valid_count else 0
         
         tag_count = 0
-
         # Incorporate board.tags into the recommendation score
-        if board.get("tags"):
+        if board.get("tags") and tags_set:
             board_tags = [t.strip().lower() for t in board["tags"].split(",") if t.strip()]
-
-            for prompt in original["tags_set"]:
+            for prompt in tags_set:
                 for tag in board_tags:
                     if tag in prompt:
                         tag_count += 1
-                        continue
-                
+                        break
 
         # Combine the average similarity score with the tag count
         if tag_count > 0:
             combined_score = avg_score + tag_count
         else:
             combined_score = avg_score
-        
         recommended_boards.append({
             "id": board["id"],
             "name": board["name"],
@@ -232,6 +231,16 @@ def get_image_details(image_id: str):
     file_path = copy_img.get("Path", "")
     copy_img["AbsolutePath"] = os.path.abspath(file_path.replace("/files", utils.api_file_root))
     copy_img = add_boards_info(copy_img)
+
+    # Attach character/post origin if linked
+    try:
+        import routes.posts as posts_routes
+        post_info = posts_routes.get_post_info_for_image(copy_img.get("Id", -1), copy_img)
+        if post_info:
+            copy_img["post_info"] = post_info
+    except Exception as e:
+        print(f"Error fetching post info for image {copy_img.get('Id')}: {e}")
+
     return _sanitize_image_dict(copy_img)
 
 @router.get("/image-file/{image_id}")
@@ -417,6 +426,87 @@ def get_similar_images(image_id: int, page: int = 1, per_page: int = 5, mode: st
         copy_img = add_boards_info(copy_img)
         result.append(_sanitize_image_dict(copy_img))
     return result
+
+class CropSearchRequest(BaseModel):
+    image_id: Optional[int] = None
+    x: Optional[float] = 0.0
+    y: Optional[float] = 0.0
+    width: Optional[float] = 1.0
+    height: Optional[float] = 1.0
+    image_base64: Optional[str] = None
+    page: Optional[int] = 1
+    per_page: Optional[int] = 30
+    exclude_self: Optional[bool] = False
+
+@router.post("/similar-images/crop")
+def post_similar_images_by_crop(req: CropSearchRequest):
+    import siglip_utils
+    if siglip_utils.siglip_vectors is None or len(siglip_utils.siglip_ids) == 0:
+        siglip_utils.load_siglip_embeddings()
+
+    page = req.page or 1
+    per_page = req.per_page or 30
+    top_k = page * per_page
+
+    similar_pairs = []
+    if req.image_base64:
+        try:
+            raw_data = req.image_base64
+            if "," in raw_data:
+                raw_data = raw_data.split(",", 1)[1]
+            img_bytes = base64.b64decode(raw_data)
+            similar_pairs = siglip_utils.get_similar_images_by_image_bytes(img_bytes, top_k=top_k)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid image_base64: {e}")
+    elif req.image_id is not None:
+        similar_pairs = siglip_utils.get_similar_images_by_crop(
+            image_id=req.image_id,
+            x=req.x if req.x is not None else 0.0,
+            y=req.y if req.y is not None else 0.0,
+            width=req.width if req.width is not None else 1.0,
+            height=req.height if req.height is not None else 1.0,
+            top_k=top_k,
+            exclude_self=req.exclude_self if req.exclude_self is not None else False
+        )
+    else:
+        raise HTTPException(status_code=400, detail="Must provide image_id or image_base64")
+
+    start = (page - 1) * per_page
+    result = []
+    for iid, score in similar_pairs[start:]:
+        img = utils.images_data.get(iid)
+        if not img:
+            continue
+        utils.increment_show(iid)
+        copy_img = img.copy()
+        copy_img.pop("tags_set", None)
+        copy_img["similarity_score"] = round(score, 3)
+        copy_img = add_boards_info(copy_img)
+        result.append(_sanitize_image_dict(copy_img))
+    return result
+
+@router.get("/similar-images/{image_id}/crop")
+def get_similar_images_by_crop_get(
+    image_id: int,
+    x: float = Query(0.0),
+    y: float = Query(0.0),
+    width: float = Query(1.0),
+    height: float = Query(1.0),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(30, ge=1, le=100),
+    exclude_self: bool = Query(False)
+):
+    req = CropSearchRequest(
+        image_id=image_id,
+        x=x,
+        y=y,
+        width=width,
+        height=height,
+        page=page,
+        per_page=per_page,
+        exclude_self=exclude_self
+    )
+    return post_similar_images_by_crop(req)
 # Lightweight in-memory search index for faster queries
 _SEARCH_INDEX = {
     "built_for_count": 0,
@@ -724,7 +814,7 @@ def search_images(
             model, processor = get_siglip_cpu()
             inputs = processor(text=[query], return_tensors="pt", padding=True)
             with torch.no_grad():
-                text_features = model.get_text_features(**inputs)
+                text_features = siglip_utils.extract_feature_tensor(model.get_text_features(**inputs))
                 text_features = text_features / text_features.norm(dim=-1, keepdim=True)
                 q_vec = text_features.cpu().numpy().astype(np.float32)[0]
         except Exception as e:
@@ -818,9 +908,10 @@ def get_liked_images(page: int = 1, per_page: int = 10):
         response.append(_sanitize_image_dict(copy_img))
     return response
 
+images_base_dir = os.getenv("IMAGES_DIR", "/mnt/SSD/ai/Data/Images")
 fallback_folders = [
-    r"E:\unity\cache\_\ai\stable-diffusion-webui\outputs\deepfake\out",
-    r"E:\unity\cache\_\ai\stable-diffusion-webui\outputs\deepfake\out\Saved"
+    images_base_dir,
+    os.path.join(images_base_dir, "Saved"),
 ]
 
 
@@ -863,6 +954,45 @@ def get_random_image_file(user: str = Query(None, description="User name")):
     random.seed()  # Reset seed to avoid affecting other random calls
     return FileResponse(image_path, media_type="image/jpeg")
 
+
+BACKGROUNDS_DIR = os.getenv("BACKGROUNDS_DIR", "/mnt/HDD1/unity/cache/.temp/Pictures/Backgrounds")
+VERTICAL_BACKGROUNDS_DIR = os.getenv("VERTICAL_BACKGROUNDS_DIR", os.path.join(BACKGROUNDS_DIR, "Vertical"))
+VALID_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif", ".svg"}
+
+
+def _get_random_background_file(directory: str) -> str:
+    if not os.path.exists(directory) or not os.path.isdir(directory):
+        raise HTTPException(status_code=404, detail=f"Background directory not found: {directory}")
+    files = [
+        os.path.join(directory, f)
+        for f in os.listdir(directory)
+        if not f.startswith(".")
+        and os.path.isfile(os.path.join(directory, f))
+        and os.path.splitext(f)[1].lower() in VALID_IMAGE_EXTENSIONS
+    ]
+    if not files:
+        files = [
+            os.path.join(directory, f)
+            for f in os.listdir(directory)
+            if not f.startswith(".") and os.path.isfile(os.path.join(directory, f))
+        ]
+    if not files:
+        raise HTTPException(status_code=404, detail="No background files found in directory")
+    return random.choice(files)
+
+
+@router.get("/random-background")
+def get_random_background(vertical: bool = Query(False, description="Whether to return a vertical background")):
+    target_dir = VERTICAL_BACKGROUNDS_DIR if vertical else BACKGROUNDS_DIR
+    selected_file = _get_random_background_file(target_dir)
+    return FileResponse(selected_file, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+
+@router.get("/random-background/vertical")
+@router.get("/random-background-vertical")
+def get_random_vertical_background():
+    selected_file = _get_random_background_file(VERTICAL_BACKGROUNDS_DIR)
+    return FileResponse(selected_file, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 @router.post("/open-image-location/{image_id}")
 def open_image_location(image_id: int):
     import subprocess

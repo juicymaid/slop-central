@@ -52,12 +52,94 @@
 
     <!-- Main Image Section -->
     <div v-else-if="currentPin"
-      class="main-image-section mb-12 bg-panel border border-slate rounded-[3rem] shadow-[0_4px_25px_rgba(0,0,0,0.5)] p-4 sm:p-6 md:p-8 transition-colors duration-200">
+      class="main-image-section mb-12 bg-panel-50 backdrop-blur-2xl border border-slate rounded-[3rem] shadow-[0_4px_25px_rgba(0,0,0,0.5)] p-4 sm:p-6 md:p-8 transition-colors duration-200">
       <div class="flex flex-col lg:flex-row gap-6 lg:gap-10">
         <!-- Image column: flexes wider on large screens -->
         <div class="w-full lg:w-[55%] xl:w-[60%] flex-shrink-0 relative">
-          <img @click="showFullscreen" :src="ImageSrc(currentPin.Path)" :alt="currentPin.Title"
-            class="rounded-[2rem] w-full max-h-[85vh] object-contain shadow-lg hover:shadow-xl transition-shadow border border-slate cursor-zoom-in bg-obsidian">
+          <div ref="imageContainerRef" class="relative flex items-center justify-center overflow-hidden rounded-[2rem] bg-obsidian border border-slate shadow-lg select-none">
+            <img ref="imageRef" @click="handleImageClick" @load="updateOverlayRect" :src="ImageSrc(currentPin.Path)" :alt="currentPin.Title"
+              class="w-full max-h-[85vh] object-contain transition-shadow"
+              :class="isVisualSearchActive ? 'cursor-crosshair' : 'cursor-zoom-in hover:shadow-xl'">
+
+            <!-- Visual Search Crop Overlay Layer -->
+            <div v-if="isVisualSearchActive"
+              class="absolute pointer-events-auto overflow-hidden touch-none"
+              :style="cropOverlayStyle"
+              @pointerdown="onBackdropPointerDown">
+
+              <!-- Crop Box with outer shadow mask -->
+              <div class="absolute border-2 border-white/90 rounded-2xl shadow-[0_0_0_9999px_rgba(0,0,0,0.55),0_0_15px_rgba(255,255,255,0.3)] touch-none cursor-move z-10"
+                :style="{
+                  left: `${cropBox.x * 100}%`,
+                  top: `${cropBox.y * 100}%`,
+                  width: `${cropBox.width * 100}%`,
+                  height: `${cropBox.height * 100}%`
+                }"
+                @pointerdown.stop="onPointerDown($event, 'move')">
+
+                <!-- 4 Pinterest-style Corner L-brackets -->
+                <div class="absolute -top-[4px] -left-[4px] w-7 h-7 border-t-[5px] border-l-[5px] border-white rounded-tl-xl shadow-[0_0_8px_rgba(0,0,0,0.8)] cursor-nwse-resize pointer-events-auto z-20"
+                  @pointerdown.stop="onPointerDown($event, 'nw')"></div>
+                <div class="absolute -top-[4px] -right-[4px] w-7 h-7 border-t-[5px] border-r-[5px] border-white rounded-tr-xl shadow-[0_0_8px_rgba(0,0,0,0.8)] cursor-nesw-resize pointer-events-auto z-20"
+                  @pointerdown.stop="onPointerDown($event, 'ne')"></div>
+                <div class="absolute -bottom-[4px] -left-[4px] w-7 h-7 border-b-[5px] border-l-[5px] border-white rounded-bl-xl shadow-[0_0_8px_rgba(0,0,0,0.8)] cursor-nesw-resize pointer-events-auto z-20"
+                  @pointerdown.stop="onPointerDown($event, 'sw')"></div>
+                <div class="absolute -bottom-[4px] -right-[4px] w-7 h-7 border-b-[5px] border-r-[5px] border-white rounded-br-xl shadow-[0_0_8px_rgba(0,0,0,0.8)] cursor-nwse-resize pointer-events-auto z-20"
+                  @pointerdown.stop="onPointerDown($event, 'se')"></div>
+
+                <!-- 4 Edge handles for axial resizing -->
+                <div class="absolute -top-2 left-1/2 -translate-x-1/2 w-10 h-4 flex items-center justify-center cursor-ns-resize pointer-events-auto z-20"
+                  @pointerdown.stop="onPointerDown($event, 'n')">
+                  <div class="w-8 h-1.5 bg-white/95 rounded-full shadow-[0_0_4px_rgba(0,0,0,0.6)]"></div>
+                </div>
+                <div class="absolute -bottom-2 left-1/2 -translate-x-1/2 w-10 h-4 flex items-center justify-center cursor-ns-resize pointer-events-auto z-20"
+                  @pointerdown.stop="onPointerDown($event, 's')">
+                  <div class="w-8 h-1.5 bg-white/95 rounded-full shadow-[0_0_4px_rgba(0,0,0,0.6)]"></div>
+                </div>
+                <div class="absolute top-1/2 -left-2 -translate-y-1/2 w-4 h-10 flex items-center justify-center cursor-ew-resize pointer-events-auto z-20"
+                  @pointerdown.stop="onPointerDown($event, 'w')">
+                  <div class="w-1.5 h-8 bg-white/95 rounded-full shadow-[0_0_4px_rgba(0,0,0,0.6)]"></div>
+                </div>
+                <div class="absolute top-1/2 -right-2 -translate-y-1/2 w-4 h-10 flex items-center justify-center cursor-ew-resize pointer-events-auto z-20"
+                  @pointerdown.stop="onPointerDown($event, 'e')">
+                  <div class="w-1.5 h-8 bg-white/95 rounded-full shadow-[0_0_4px_rgba(0,0,0,0.6)]"></div>
+                </div>
+
+                <!-- Center move indicator -->
+                <div class="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 hover:opacity-100 transition-opacity">
+                  <div class="p-2 bg-black/60 backdrop-blur-sm rounded-full text-white shadow-md">
+                    <Move class="w-4 h-4" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Top-left controls when visual search is active -->
+            <div v-if="isVisualSearchActive" class="absolute top-4 left-4 z-30 flex items-center gap-2">
+              <button @click.stop="closeVisualSearch"
+                class="p-2.5 bg-obsidian/85 hover:bg-obsidian text-ivory rounded-full backdrop-blur-md border border-slate/60 hover:border-champagne/50 transition-all shadow-lg flex items-center justify-center cursor-pointer"
+                title="Close visual search">
+                <X class="w-5 h-5" />
+              </button>
+              <span class="px-3 py-1 bg-obsidian/85 backdrop-blur-md rounded-full text-xs font-mono text-champagne border border-slate/60 flex items-center gap-1.5 shadow-md">
+                <Search class="w-3.5 h-3.5" /> Visual Search
+              </span>
+            </div>
+
+            <!-- Bottom-right action buttons -->
+            <div class="absolute bottom-4 right-4 z-30 flex gap-2">
+              <div @click.stop="toggleVisualSearch"
+                :class="[
+                  'backdrop-blur-2xl rounded-2xl p-3 cursor-pointer transition-all shadow-lg border',
+                  isVisualSearchActive
+                    ? 'bg-champagne text-obsidian border-champagne shadow-[0_0_15px_rgba(201,168,76,0.35)] scale-105'
+                    : 'bg-dark-input/60 hover:bg-dark-input text-ivory/70 hover:text-ivory border-slate/60 hover:border-champagne/40'
+                ]"
+                :title="isVisualSearchActive ? 'Close visual search' : 'Visual search / select area'">
+                <Search class="w-5 h-5" :class="isVisualSearchActive ? 'text-obsidian stroke-[2.5]' : 'text-ivory/80'" />
+              </div>
+            </div>
+          </div>
           <!-- Rank Badge -->
           <RouterLink :to="'/rate?id=' + currentPin.Id">
             <div class="mb-2 flex justify-center mt-2">
@@ -88,10 +170,70 @@
                 currentPin.Rating.toFixed(1) }}</p>
             </div>
           </div>
+
+          <div>
+            
+          </div>
         </div>
 
-        <!-- Details column -->
-        <div class="w-full lg:flex-1 min-w-0 relative">
+        <!-- Visual Search Results Column -->
+        <div v-if="isVisualSearchActive" class="w-full lg:flex-1 min-w-0 relative flex flex-col h-full">
+          <div class="flex items-center justify-between pb-4 mb-4 border-b border-slate">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-2xl bg-champagne/15 border border-champagne/30 flex items-center justify-center text-champagne shadow-sm">
+                <Search class="w-5 h-5" />
+              </div>
+              <div>
+                <div class="flex items-center gap-2">
+                  <h2 class="text-xl font-serif font-bold text-ivory">Visual Search</h2>
+                  <span v-if="!isVisualSearching && visualSearchResults.length"
+                    class="text-xs font-mono px-2.5 py-0.5 rounded-full bg-champagne/15 text-champagne border border-champagne/30">
+                    {{ visualSearchResults.length }} results
+                  </span>
+                </div>
+                <p class="text-xs text-ivory/50 mt-0.5">Move or resize the selection box on the image to update</p>
+              </div>
+            </div>
+            <button @click="closeVisualSearch"
+              class="magnetic-button px-4 py-2 bg-slate hover:bg-panel text-ivory border border-slate hover:border-champagne/30 rounded-full text-xs font-sans font-semibold transition-all flex items-center gap-1.5 shadow-sm cursor-pointer">
+              <X class="w-4 h-4" />
+              <span>Done</span>
+            </button>
+          </div>
+
+          <!-- Visual search loading state -->
+          <div v-if="isVisualSearching" class="columns-2 sm:columns-3 gap-3 flex-1 overflow-y-auto max-h-[78vh] pr-1">
+            <div v-for="n in 9" :key="n" class="mb-3 break-inside-avoid">
+              <div class="skeleton rounded-2xl w-full" :style="{ height: (160 + (n % 4) * 50) + 'px' }"></div>
+            </div>
+          </div>
+
+          <!-- Visual search error state -->
+          <div v-else-if="visualSearchError" class="p-8 text-center bg-slate/20 rounded-3xl border border-slate my-auto">
+            <p class="text-red-400 text-sm mb-3">{{ visualSearchError }}</p>
+            <button @click="triggerCropSearch"
+              class="px-5 py-2 bg-champagne text-obsidian font-semibold text-xs rounded-full hover:brightness-110 transition-all cursor-pointer">
+              Retry Search
+            </button>
+          </div>
+
+          <!-- Visual search empty state -->
+          <div v-else-if="visualSearchResults.length === 0" class="p-10 text-center bg-slate/20 rounded-3xl border border-slate my-auto">
+            <Search class="w-10 h-10 text-ivory/30 mx-auto mb-3" />
+            <p class="text-ivory/70 font-serif text-lg">No visually matching images found</p>
+            <p class="text-ivory/40 text-xs mt-1">Try expanding or moving the selection box over a different region.</p>
+          </div>
+
+          <!-- Visual search results grid -->
+          <div v-else class="columns-2 sm:columns-3 gap-3 flex-1 overflow-y-auto max-h-[78vh] pr-1">
+            <div v-for="pin in visualSearchResults" :key="pin.Id" class="mb-3 break-inside-avoid">
+              <Image :pin="pin" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Details column (standard mode) -->
+        <div v-else class="w-full lg:flex-1 min-w-0 relative">
           <div class="flex justify-between gap-0">
             <div class="flex gap-2 items-center text-ivory/60">
               <Eye class="w-5 h-5" />
@@ -227,13 +369,20 @@
           </div>
 
           <div
-            v-if="(activeTab == 'original' && currentPin.Prompt) || (activeTab == 'generated' && currentPin.taggerPrompt)"
+            v-if="(activeTab == 'original' && currentPin.Prompt) || (activeTab == 'generated' && currentPin.taggerPrompt) || hasWorkflow"
             class="flex flex-wrap items-center mt-8 mb-6 gap-3">
             <button @click="copyPrompt(false)"
               class="magnetic-button text-sm px-5 py-2.5 bg-slate/50 hover:bg-slate border border-slate text-ivory/80 hover:text-ivory rounded-full flex items-center transition-all">
               <span class="relative z-10 flex">
                 <span>Copy prompt</span>
                 <span v-if="copied" class="ml-2 text-green-400">✓</span>
+              </span>
+            </button>
+            <button v-if="hasWorkflow" @click="copyWorkflow"
+              class="magnetic-button text-sm px-5 py-2.5 bg-slate/50 hover:bg-slate border border-slate text-ivory/80 hover:text-ivory rounded-full flex items-center transition-all">
+              <span class="relative z-10 flex items-center">
+                <span>Copy workflow</span>
+                <span v-if="workflowCopied" class="ml-2 text-green-400">✓</span>
               </span>
             </button>
             <button @click="remixImage"
@@ -265,6 +414,58 @@
             </button>
           </div>
 
+          <!-- Post Author / Origin Section -->
+          <div v-if="currentPin.post_info" class="mt-8 mb-6 p-5 rounded-2xl bg-panel border border-slate shadow-lg relative overflow-hidden group">
+            <div class="absolute top-0 right-0 w-48 h-48 bg-gradient-to-br from-champagne/10 to-transparent rounded-full blur-2xl pointer-events-none -mr-16 -mt-16"></div>
+            <div class="flex items-center justify-between mb-3 relative z-10">
+              <span class="text-xs font-mono uppercase tracking-widest text-champagne font-semibold flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-champagne animate-pulse"></span>
+                Post Origin
+              </span>
+              <span v-if="currentPin.post_info.post?.created_at" class="text-xs font-mono text-ivory/40">
+                {{ formatPostTime(currentPin.post_info.post.created_at) }}
+              </span>
+            </div>
+
+            <div class="flex items-start gap-4 relative z-10">
+              <RouterLink :to="'/user/' + currentPin.post_info.character.id" class="shrink-0 group/avatar">
+                <div class="relative">
+                  <img :src="currentPin.post_info.character.avatar || 'https://images.unsplash.com/photo-1511275539165-cc46b1ee89bf?w=100&h=100&fit=crop'"
+                    alt=""
+                    class="w-14 h-14 rounded-full object-cover border-2 border-slate group-hover/avatar:border-champagne transition-all shadow-md group-hover/avatar:scale-105" />
+                </div>
+              </RouterLink>
+
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <RouterLink :to="'/user/' + currentPin.post_info.character.id" class="font-sans font-bold text-ivory hover:text-champagne transition-colors truncate">
+                    {{ currentPin.post_info.character.name }}
+                  </RouterLink>
+                  <span class="text-xs font-mono text-ivory/40">@{{ currentPin.post_info.character.id }}</span>
+                </div>
+
+                <p v-if="currentPin.post_info.post?.title" class="text-sm font-sans text-ivory/90 mt-1 line-clamp-2 leading-relaxed">
+                  "{{ currentPin.post_info.post.title }}"
+                </p>
+
+                <div class="flex items-center gap-2 mt-3 flex-wrap">
+                  <RouterLink :to="'/user/' + currentPin.post_info.character.id"
+                    class="magnetic-button text-xs px-3.5 py-1.5 bg-champagne text-obsidian rounded-full font-sans font-semibold hover:brightness-110 transition-all flex items-center gap-1 shadow-sm">
+                    <span>View Profile</span>
+                  </RouterLink>
+                  <RouterLink :to="'/chat/' + currentPin.post_info.character.id"
+                    class="magnetic-button text-xs px-3.5 py-1.5 bg-slate/60 hover:bg-slate border border-slate text-ivory rounded-full font-sans font-medium transition-all flex items-center gap-1">
+                    <span>Chat</span>
+                  </RouterLink>
+                  <RouterLink :to="'/posts'"
+                    class="magnetic-button text-xs px-3.5 py-1.5 bg-slate/40 hover:bg-slate/80 border border-slate/60 text-ivory/70 hover:text-ivory rounded-full font-sans transition-all">
+                    <span>All Posts</span>
+                  </RouterLink>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="flex items-center gap-6 mt-8 mb-4 border-b border-slate pb-6">
             <RouterLink :to="'/models/' + currentPin.ModelHash">
               <div class="group">
@@ -275,11 +476,19 @@
               </div>
             </RouterLink>
 
-            <RouterLink :to="'/chat/' + currentPin.Id">
+            <RouterLink v-if="currentPin.post_info?.character?.id" :to="'/chat/' + currentPin.post_info.character.id">
               <div class="group">
                 <p class="text-ivory/60 font-mono text-xs uppercase tracking-widest mb-1">Actions</p>
                 <p class="text-ivory font-sans font-semibold group-hover:text-champagne transition-colors">
-                  Chat with character
+                  Chat with {{ currentPin.post_info.character.name }}
+                </p>
+              </div>
+            </RouterLink>
+            <RouterLink v-else :to="'/posts'">
+              <div class="group">
+                <p class="text-ivory/60 font-mono text-xs uppercase tracking-widest mb-1">Actions</p>
+                <p class="text-ivory font-sans font-semibold group-hover:text-champagne transition-colors">
+                  Explore Characters
                 </p>
               </div>
             </RouterLink>
@@ -469,6 +678,12 @@
                   <span v-if="currentPin.description" style="white-space: pre-line;">{{ currentPin.description }}</span>
                   <span v-else>N/A</span>
                 </p>
+                <p v-if="hasWorkflow" class="text-ivory/70"><strong class="text-ivory">Workflow:</strong>
+                  <button @click="copyWorkflow" class="text-champagne hover:underline ml-1 cursor-pointer">
+                    Copy workflow JSON
+                  </button>
+                  <span v-if="workflowCopied" class="ml-2 text-green-400">✓</span>
+                </p>
               </div>
             </div>
           </div>
@@ -549,22 +764,281 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch, onBeforeUnmount, inject, computed } from 'vue'
+import { ref, onMounted, watch, onBeforeUnmount, inject, computed, nextTick } from 'vue'
 import { apiUrl, GetFromApi, ImageSrc, PostToApi, webState } from '../api'
 import Image from '../components/Image.vue'
 import { useRoute } from 'vue-router'
-import { Star, ChevronDown, Eye } from 'lucide-vue-next'
+import { Star, ChevronDown, Eye, Tv, Search, X, Move } from 'lucide-vue-next'
 import BoardDropDown from '@/components/BoardDropDown.vue'
 import ImageMasonry from '@/components/ImageMasonry.vue'
+import { api as viewerApi } from 'v-viewer'
 
 const selectedBoard = ref(0)
 const copied = ref(false)
 const lorasCopied = ref(false)
+const workflowCopied = ref(false)
 const isDarkMode = inject('isDarkMode', ref(false))
 const hoverRating = ref(0)
 const showComments = ref(false)
 const showAllTags = ref(false)
 const showTagColorSettings = ref(false)
+
+
+// Visual Search State
+const isVisualSearchActive = ref(false)
+const visualSearchResults = ref([])
+const isVisualSearching = ref(false)
+const visualSearchError = ref(null)
+const imageContainerRef = ref(null)
+const imageRef = ref(null)
+
+const cropBox = ref({ x: 0.15, y: 0.15, width: 0.7, height: 0.7 })
+const cropOverlayRect = ref({ left: 0, top: 0, width: 0, height: 0 })
+
+const cropOverlayStyle = computed(() => {
+  if (cropOverlayRect.value.width > 0 && cropOverlayRect.value.height > 0) {
+    return {
+      left: `${cropOverlayRect.value.left}px`,
+      top: `${cropOverlayRect.value.top}px`,
+      width: `${cropOverlayRect.value.width}px`,
+      height: `${cropOverlayRect.value.height}px`
+    }
+  }
+  return {
+    left: '0px',
+    top: '0px',
+    width: '100%',
+    height: '100%'
+  }
+})
+
+let activeHandle = null
+let dragStartPointer = { x: 0, y: 0 }
+let dragStartCropBox = { x: 0.15, y: 0.15, width: 0.7, height: 0.7 }
+let searchSeq = 0
+
+function updateOverlayRect() {
+  const img = imageRef.value || (typeof document !== 'undefined' ? document.querySelector('.main-image-section img') : null)
+  if (!img) return
+  const naturalW = img.naturalWidth || img.width || 1
+  const naturalH = img.naturalHeight || img.height || 1
+  const clientW = img.clientWidth || img.offsetWidth || 0
+  const clientH = img.clientHeight || img.offsetHeight || 0
+
+  if (!clientW || !clientH) return
+
+  const naturalAspect = naturalW / naturalH
+  const clientAspect = clientW / clientH
+
+  let renderedW = clientW
+  let renderedH = clientH
+  let offsetLeft = 0
+  let offsetTop = 0
+
+  if (clientAspect > naturalAspect) {
+    renderedH = clientH
+    renderedW = clientH * naturalAspect
+    offsetLeft = (clientW - renderedW) / 2
+  } else {
+    renderedW = clientW
+    renderedH = clientW / naturalAspect
+    offsetTop = (clientH - renderedH) / 2
+  }
+
+  cropOverlayRect.value = {
+    left: Math.round(offsetLeft),
+    top: Math.round(offsetTop),
+    width: Math.round(renderedW),
+    height: Math.round(renderedH)
+  }
+}
+
+function clamp(val, min, max) {
+  return Math.max(min, Math.min(max, val))
+}
+
+function toggleVisualSearch() {
+  isVisualSearchActive.value = !isVisualSearchActive.value
+  if (isVisualSearchActive.value) {
+    cropBox.value = { x: 0.15, y: 0.15, width: 0.7, height: 0.7 }
+    nextTick(() => {
+      updateOverlayRect()
+      triggerCropSearch()
+    })
+  }
+}
+
+function closeVisualSearch() {
+  isVisualSearchActive.value = false
+}
+
+function handleImageClick() {
+  if (isVisualSearchActive.value) return
+  showFullscreen()
+}
+
+async function triggerCropSearch() {
+  if (!currentPin.value || !isVisualSearchActive.value) return
+  const currentSeq = ++searchSeq
+  isVisualSearching.value = true
+  visualSearchError.value = null
+  try {
+    const res = await PostToApi('similar-images/crop', {
+      image_id: currentPin.value.Id,
+      x: cropBox.value.x,
+      y: cropBox.value.y,
+      width: cropBox.value.width,
+      height: cropBox.value.height,
+      per_page: 30,
+      exclude_self: true
+    })
+    if (currentSeq === searchSeq) {
+      visualSearchResults.value = Array.isArray(res) ? res : []
+    }
+  } catch (err) {
+    if (currentSeq === searchSeq) {
+      visualSearchError.value = 'Failed to load visual search results.'
+      console.error('Visual search error:', err)
+    }
+  } finally {
+    if (currentSeq === searchSeq) {
+      isVisualSearching.value = false
+    }
+  }
+}
+
+function onPointerDown(e, handle) {
+  e.preventDefault()
+  e.stopPropagation()
+  try {
+    e.target.setPointerCapture(e.pointerId)
+  } catch {}
+  activeHandle = handle
+  dragStartPointer = { x: e.clientX, y: e.clientY }
+  dragStartCropBox = { ...cropBox.value }
+  window.addEventListener('pointermove', onPointerMove)
+  window.addEventListener('pointerup', onPointerUp)
+  window.addEventListener('pointercancel', onPointerUp)
+}
+
+function onBackdropPointerDown(e) {
+  e.preventDefault()
+  e.stopPropagation()
+  if (!imageContainerRef.value || cropOverlayRect.value.width <= 0) return
+  const rect = e.currentTarget.getBoundingClientRect()
+  const clickX = clamp((e.clientX - rect.left) / rect.width, 0, 1)
+  const clickY = clamp((e.clientY - rect.top) / rect.height, 0, 1)
+
+  try {
+    e.target.setPointerCapture(e.pointerId)
+  } catch {}
+
+  activeHandle = 'draw'
+  dragStartPointer = { x: e.clientX, y: e.clientY }
+  dragStartCropBox = { x: clickX, y: clickY, width: 0.05, height: 0.05 }
+  cropBox.value = { x: clickX, y: clickY, width: 0.05, height: 0.05 }
+
+  window.addEventListener('pointermove', onPointerMove)
+  window.addEventListener('pointerup', onPointerUp)
+  window.addEventListener('pointercancel', onPointerUp)
+}
+
+function onPointerMove(e) {
+  if (!activeHandle || cropOverlayRect.value.width <= 0 || cropOverlayRect.value.height <= 0) return
+
+  const overlayW = cropOverlayRect.value.width
+  const overlayH = cropOverlayRect.value.height
+  const dx = (e.clientX - dragStartPointer.x) / overlayW
+  const dy = (e.clientY - dragStartPointer.y) / overlayH
+  const MIN_SIZE = 0.05
+
+  if (activeHandle === 'move') {
+    const newX = clamp(dragStartCropBox.x + dx, 0, 1 - dragStartCropBox.width)
+    const newY = clamp(dragStartCropBox.y + dy, 0, 1 - dragStartCropBox.height)
+    cropBox.value = {
+      ...cropBox.value,
+      x: Number(newX.toFixed(4)),
+      y: Number(newY.toFixed(4))
+    }
+  } else if (activeHandle === 'se') {
+    const newW = clamp(dragStartCropBox.width + dx, MIN_SIZE, 1 - dragStartCropBox.x)
+    const newH = clamp(dragStartCropBox.height + dy, MIN_SIZE, 1 - dragStartCropBox.y)
+    cropBox.value = { ...cropBox.value, width: Number(newW.toFixed(4)), height: Number(newH.toFixed(4)) }
+  } else if (activeHandle === 'nw') {
+    const newX = clamp(dragStartCropBox.x + dx, 0, dragStartCropBox.x + dragStartCropBox.width - MIN_SIZE)
+    const newY = clamp(dragStartCropBox.y + dy, 0, dragStartCropBox.y + dragStartCropBox.height - MIN_SIZE)
+    const newW = (dragStartCropBox.x + dragStartCropBox.width) - newX
+    const newH = (dragStartCropBox.y + dragStartCropBox.height) - newY
+    cropBox.value = { x: Number(newX.toFixed(4)), y: Number(newY.toFixed(4)), width: Number(newW.toFixed(4)), height: Number(newH.toFixed(4)) }
+  } else if (activeHandle === 'ne') {
+    const newY = clamp(dragStartCropBox.y + dy, 0, dragStartCropBox.y + dragStartCropBox.height - MIN_SIZE)
+    const newW = clamp(dragStartCropBox.width + dx, MIN_SIZE, 1 - dragStartCropBox.x)
+    const newH = (dragStartCropBox.y + dragStartCropBox.height) - newY
+    cropBox.value = { ...cropBox.value, y: Number(newY.toFixed(4)), width: Number(newW.toFixed(4)), height: Number(newH.toFixed(4)) }
+  } else if (activeHandle === 'sw') {
+    const newX = clamp(dragStartCropBox.x + dx, 0, dragStartCropBox.x + dragStartCropBox.width - MIN_SIZE)
+    const newH = clamp(dragStartCropBox.height + dy, MIN_SIZE, 1 - dragStartCropBox.y)
+    const newW = (dragStartCropBox.x + dragStartCropBox.width) - newX
+    cropBox.value = { ...cropBox.value, x: Number(newX.toFixed(4)), width: Number(newW.toFixed(4)), height: Number(newH.toFixed(4)) }
+  } else if (activeHandle === 'n') {
+    const newY = clamp(dragStartCropBox.y + dy, 0, dragStartCropBox.y + dragStartCropBox.height - MIN_SIZE)
+    const newH = (dragStartCropBox.y + dragStartCropBox.height) - newY
+    cropBox.value = { ...cropBox.value, y: Number(newY.toFixed(4)), height: Number(newH.toFixed(4)) }
+  } else if (activeHandle === 's') {
+    const newH = clamp(dragStartCropBox.height + dy, MIN_SIZE, 1 - dragStartCropBox.y)
+    cropBox.value = { ...cropBox.value, height: Number(newH.toFixed(4)) }
+  } else if (activeHandle === 'w') {
+    const newX = clamp(dragStartCropBox.x + dx, 0, dragStartCropBox.x + dragStartCropBox.width - MIN_SIZE)
+    const newW = (dragStartCropBox.x + dragStartCropBox.width) - newX
+    cropBox.value = { ...cropBox.value, x: Number(newX.toFixed(4)), width: Number(newW.toFixed(4)) }
+  } else if (activeHandle === 'e') {
+    const newW = clamp(dragStartCropBox.width + dx, MIN_SIZE, 1 - dragStartCropBox.x)
+    cropBox.value = { ...cropBox.value, width: Number(newW.toFixed(4)) }
+  } else if (activeHandle === 'draw') {
+    const startX = dragStartCropBox.x
+    const startY = dragStartCropBox.y
+    const currX = clamp(startX + dx, 0, 1)
+    const currY = clamp(startY + dy, 0, 1)
+
+    const x = Math.min(startX, currX)
+    const y = Math.min(startY, currY)
+    const width = Math.max(MIN_SIZE, Math.abs(currX - startX))
+    const height = Math.max(MIN_SIZE, Math.abs(currY - startY))
+
+    cropBox.value = {
+      x: Number(clamp(x, 0, 1 - width).toFixed(4)),
+      y: Number(clamp(y, 0, 1 - height).toFixed(4)),
+      width: Number(width.toFixed(4)),
+      height: Number(height.toFixed(4))
+    }
+  }
+}
+
+function onPointerUp(e) {
+  if (activeHandle) {
+    try {
+      if (e?.target?.releasePointerCapture && e?.pointerId != null) {
+        e.target.releasePointerCapture(e.pointerId)
+      }
+    } catch {}
+    activeHandle = null
+    window.removeEventListener('pointermove', onPointerMove)
+    window.removeEventListener('pointerup', onPointerUp)
+    window.removeEventListener('pointercancel', onPointerUp)
+    triggerCropSearch()
+  }
+}
+function formatPostTime(timestamp) {
+  if (!timestamp) return ''
+  const d = new Date(timestamp * 1000)
+  const now = new Date()
+  const diff = (now - d) / 1000
+  if (diff < 60) return 'just now'
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago'
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago'
+  if (diff < 604800) return Math.floor(diff / 86400) + 'd ago'
+  return d.toLocaleDateString()
+}
 
 // Default color scheme for tag types
 const defaultTagColors = {
@@ -650,6 +1124,50 @@ function copyLoras() {
     })
     .catch(err => {
       console.error('Failed to copy loras: ', err)
+    })
+}
+
+const workflowString = computed(() => {
+  if (!currentPin.value || !currentPin.value.Workflow) return ''
+  const wf = currentPin.value.Workflow
+  if (typeof wf === 'object') {
+    if (Object.keys(wf).length === 0) return ''
+    try {
+      return JSON.stringify(wf, null, 2)
+    } catch (e) {
+      return ''
+    }
+  }
+  if (typeof wf === 'string') {
+    const trimmed = wf.trim()
+    if (!trimmed || trimmed === '{}' || trimmed === '[]' || trimmed === 'null' || trimmed === '""') return ''
+    try {
+      const parsed = JSON.parse(trimmed)
+      if (parsed && typeof parsed === 'object' && (Array.isArray(parsed) ? parsed.length > 0 : Object.keys(parsed).length > 0)) {
+        return JSON.stringify(parsed, null, 2)
+      }
+      return ''
+    } catch (e) {
+      return trimmed
+    }
+  }
+  return ''
+})
+
+const hasWorkflow = computed(() => !!workflowString.value)
+
+function copyWorkflow() {
+  if (!workflowString.value) return
+
+  navigator.clipboard.writeText(workflowString.value)
+    .then(() => {
+      workflowCopied.value = true
+      setTimeout(() => {
+        workflowCopied.value = false
+      }, 2000)
+    })
+    .catch(err => {
+      console.error('Failed to copy workflow: ', err)
     })
 }
 
@@ -830,7 +1348,7 @@ function formatPromptText(promptText) {
     let tag = match[1].trim();
     let delimiter = match[2] || '';
 
-    const normalizedTag = tag.toLowerCase().replace(/[\s_]+/g, '_');
+    const normalizedTag = tag.toLowerCase().replace(/[\s_]+/g, '_').replace(/[^a-z0-9_]/g, '').replace('(', '').replace(')', '');
     const alternateTag = tag.toLowerCase();
     let tagType = tag_data[normalizedTag] || tag_data[alternateTag];
     if (tagType == undefined) tagType = 6;
@@ -959,6 +1477,7 @@ async function postReply(reply, index) {
 onMounted(async () => {
   Refresh()
   window.addEventListener('scroll', handleScroll)
+  window.addEventListener('resize', updateOverlayRect)
   //scroll to the top of the page on mount
   window.scrollTo(0, 0)
 
@@ -996,12 +1515,16 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('scroll', handleScroll)
+  window.removeEventListener('resize', updateOverlayRect)
+  window.removeEventListener('pointermove', onPointerMove)
+  window.removeEventListener('pointerup', onPointerUp)
+  window.removeEventListener('pointercancel', onPointerUp)
 })
 
 watch(() => route.params.id, async () => {
+  isVisualSearchActive.value = false
+  visualSearchResults.value = []
   await Refresh();
-
-
 
   if (hasScrolledPastImage.value) {
     window.scrollTo({ top: 0, behavior: 'instant' });
@@ -1107,8 +1630,6 @@ async function rateImage(rating) {
     console.error('Error rating image:', error)
   }
 }
-
-import { api as viewerApi } from 'v-viewer'
 
 function showFullscreen() {
   const images = [

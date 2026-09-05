@@ -15,7 +15,7 @@ def _cosine(a, na, b, nb):
     return sum(x*y for x, y in zip(a, b)) / (na * nb + 1e-12)
 
 @router.post("/ai-search/rebuild")
-def ai_search_rebuild(model: str = Query("nomic-embed-text"), force: bool = Query(False)):
+def ai_search_rebuild(model: str = Query("text-embedding-nomic-embed-text-v2-moe"), force: bool = Query(False)):
     utils.load_images()
     result = utils.build_image_embeddings(model_name=model, force=force)
     return result
@@ -23,7 +23,7 @@ def ai_search_rebuild(model: str = Query("nomic-embed-text"), force: bool = Quer
 @router.get("/ai-search")
 def ai_search(
     query: str = Query(..., description="Natural language or tag-style query"),
-    model: str = Query("qwen3-embedding:4b"),
+    model: str = Query("text-embedding-nomic-embed-text-v2-moe"),
     top_k: int = Query(20, ge=1, le=200)
 ):
     utils.load_images()
@@ -93,7 +93,7 @@ def siglip_search(
         model, processor = get_siglip_cpu()
         inputs = processor(text=[query], return_tensors="pt", padding=True)
         with torch.no_grad():
-            text_features = model.get_text_features(**inputs)
+            text_features = siglip_utils.extract_feature_tensor(model.get_text_features(**inputs))
             text_features = text_features / text_features.norm(dim=-1, keepdim=True)
             q_vec = text_features.cpu().numpy().astype(np.float32)[0]
     except Exception as e:
@@ -132,7 +132,7 @@ def get_siglip_map():
     import os
     import json
     utils.load_images()
-    coords_path = "siglip_2d_coords.json"
+    coords_path = siglip_utils.SIGLIP_2D_COORDS_FILE
     if not os.path.exists(coords_path):
         siglip_utils.load_siglip_embeddings()
         if siglip_utils.siglip_vectors is not None and len(siglip_utils.siglip_ids) > 0:

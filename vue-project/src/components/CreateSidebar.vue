@@ -1,5 +1,20 @@
 <script setup>
+import { request, UpdateVRAM, current_model, formatRequest, defaultStyles, GetFromApi, PostToApi, apiUrl, webState } from '@/api'
 import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import SelectModelModal from './SelectModelModal.vue'
+import AiHordeModelModal from './AiHordeModelModal.vue'
+import DownloadModel from './CivitAILoraModal.vue'
+import CivitAILoraModal from './CivitAILoraModal.vue'
+import DownloadLoraModal from './downloadLoraModal.vue'
+import { getRandomPrompt } from '@/scripts/ranbooru'
+import PillPrompt from './pillPrompt.vue'
+import ChatPanel from './ChatPanel.vue'
+import CanvasView from '@/views/canvasView.vue'
+import AutoComplete from './autoComplete.vue'
+import BackendSettingsPanel from './BackendSettingsPanel.vue'
+import ComfyWorkflowImportModal from './ComfyWorkflowImportModal.vue'
+import { Image, InfoIcon, Settings } from 'lucide-vue-next'
+import ClearArt from './ClearArt.vue'
 import { onUiUpdate } from '@/scripts/autoComplete'
 import '@/scripts/edit-attention.js'
 import '@/scripts/edit-order.js'
@@ -22,12 +37,18 @@ import {
     getActiveWorkflow,
     removeWorkflow as removeComfyWorkflow,
     connectComfyWebSocket,
+    ensureComfyWebSocket,
+    executeComfyPrompt,
+    extractComfyOutputs,
     closeComfyWebSocket,
     interruptComfyExecution,
     getComfyHistory,
     fetchComfyImage,
     blobToDataUrl,
     getComfySystemStats,
+    mapSamplerToComfy,
+    unmapSamplerFromComfy,
+    findPositiveAndNegativeNodes,
 } from '@/backends/comfyui'
 
 const chatHistory = ref([])
@@ -39,12 +60,39 @@ const isMobile = ref(false)
 const checkMobile = () => {
     isMobile.value = window.innerWidth < 768
 }
+
+const sidebarBackgroundUrl = ref('')
+const sidebarBackgroundLoaded = ref(false)
+let sidebarBackgroundInterval = null
+
+const refreshSidebarBackground = () => {
+    const newUrl = `${apiUrl}/random-background-vertical?t=${Date.now()}`
+    if (typeof window !== 'undefined') {
+        const img = new window.Image()
+        img.onload = () => {
+            sidebarBackgroundUrl.value = newUrl
+            sidebarBackgroundLoaded.value = true
+        }
+        img.onerror = () => {
+            if (!sidebarBackgroundUrl.value) {
+                sidebarBackgroundLoaded.value = false
+            }
+        }
+        img.src = newUrl
+    }
+}
+
 onMounted(() => {
     checkMobile()
     window.addEventListener('resize', checkMobile)
+    refreshSidebarBackground()
+    sidebarBackgroundInterval = setInterval(refreshSidebarBackground, 60000)
 })
 onBeforeUnmount(() => {
     window.removeEventListener('resize', checkMobile)
+    if (sidebarBackgroundInterval) {
+        clearInterval(sidebarBackgroundInterval)
+    }
 })
 
 const workflow = ref('Text-to-image')
@@ -346,10 +394,19 @@ const samplerCost = {
 }
 
 function calculateCost(request) {
-    const baseCost = 1;
-    const baseResolution = 512 * 512;
+    var baseCost = 1;
+    var baseResolution = 512 * 512;
     const baseSamplerCost = samplerCost[request.sampler_name] || 1;
     const baseSteps = 30;
+
+    var model = String(current_model.model?.title || current_model.model?.filename || activeComfyModelName.value || "")
+    
+    // Tier 2 models (Anima, ZIT) have a higher base cost and resolution
+    if (model.includes("anima/") || model.includes("zit/")) {
+        baseCost = 8;
+        baseResolution = 1024 * 1024;
+    }
+    
 
     var imageCost = baseCost * ((request.width * request.height) / baseResolution).toFixed(0) * baseSamplerCost * (request.steps / baseSteps) * request.batch_size * request.n_iter
 
@@ -386,8 +443,9 @@ const isDataUrl = (value) => typeof value === 'string' && value.startsWith('data
 const resolveImageSrc = (image) => {
     if (!image) return ''
     if (isDataUrl(image)) return image
+    if (image.startsWith('blob:') || image.startsWith('http')) return image
     if (image.startsWith('/files')) return apiUrl + image
-    if (image.startsWith('http')) return image
+    if (image.startsWith('files/')) return apiUrl + '/' + image
     return `data:image/png;base64,${image}`
 }
 
@@ -668,7 +726,13 @@ const isComfyBackend = computed(() => activeBackend.value.id === 'comfyui')
 const canSelectModels = computed(() => backendCapabilities.value.supportsLocalModels)
 const canSelectLoras = computed(() => backendCapabilities.value.supportsLoras)
 const showWorkflowImportModal = ref(false)
+const editingWorkflow = ref(null)
 const textareaRefs = reactive({})
+
+function editComfyWorkflow(wf) {
+    editingWorkflow.value = wf
+    showWorkflowImportModal.value = true
+}
 const promptActionTarget = ref(null)
 
 const comfyWorkflowsList = computed(() => comfyState.workflows)
@@ -678,9 +742,316 @@ const activeComfyWorkflowId = computed({
 })
 const activeComfyWorkflow = computed(() => getActiveWorkflow())
 
+const activeComfyModelName = computed(() => {
+    if (!isComfyBackend.value || !activeComfyWorkflow.value) return ''
+
+    if (current_model.model?.title || current_model.model?.filename) {
+        return current_model.model.title || current_model.model.filename
+    }
+
+    const inputs = activeComfyWorkflow.value.exposedInputs || []
+    const ckptInput = inputs.find(i => i.role === 'checkpoint' || (i.inputKey || '').toLowerCase() === 'ckpt_name' || (i.inputKey || '').toLowerCase() === 'unet_name')
+    if (ckptInput?.value) return String(ckptInput.value)
+
+    const wf = activeComfyWorkflow.value.workflow || {}
+    for (const [nodeId, node] of Object.entries(wf)) {
+        const classType = (node.class_type || '').toLowerCase()
+        if (classType.includes('checkpointloader') || classType.includes('unetloader')) {
+            if (node.inputs?.ckpt_name) return String(node.inputs.ckpt_name)
+            if (node.inputs?.unet_name) return String(node.inputs.unet_name)
+        }
+    }
+
+    return ''
+})
+const comfyHasModelLoader = computed(() => {
+    if (!isComfyBackend.value || !activeComfyWorkflow.value) return false
+    const wf = activeComfyWorkflow.value.workflow
+    if (!wf) return false
+
+    for (const [nodeId, node] of Object.entries(wf)) {
+        const classType = (node.class_type || '').toLowerCase()
+        if (
+            classType.includes('checkpoint') ||
+            classType.includes('unet') ||
+            classType.includes('diffusionmodel') ||
+            classType.includes('dualclip') ||
+            classType.includes('modelloader')
+        ) {
+            return true
+        }
+        if (node.inputs) {
+            if ('ckpt_name' in node.inputs || 'unet_name' in node.inputs || 'model_name' in node.inputs) {
+                return true
+            }
+        }
+    }
+
+    if (activeComfyWorkflow.value.exposedInputs) {
+        return activeComfyWorkflow.value.exposedInputs.some(input => {
+            const key = (input.inputKey || '').toLowerCase()
+            const label = (input.label || '').toLowerCase()
+            return key.includes('ckpt') || key.includes('unet') || key.includes('model') || label.includes('model')
+        })
+    }
+
+    return false
+})
+
+const comfyHasResolutionSelect = computed(() => {
+    if (!isComfyBackend.value || !activeComfyWorkflow.value) return false
+    const wf = activeComfyWorkflow.value.workflow
+    if (!wf) return false
+
+    for (const [nodeId, node] of Object.entries(wf)) {
+        const classType = (node.class_type || '').toLowerCase()
+        if (classType.includes('emptylatent') || classType.includes('latent') || classType.includes('image')) {
+            if (node.inputs && ('width' in node.inputs || 'height' in node.inputs)) {
+                return true
+            }
+        }
+    }
+
+    if (activeComfyWorkflow.value.exposedInputs) {
+        return activeComfyWorkflow.value.exposedInputs.some(input => {
+            const key = (input.inputKey || '').toLowerCase()
+            return key === 'width' || key === 'height' || key.includes('resolution') || key.includes('size')
+        })
+    }
+
+    return false
+})
+
+const comfyHasPromptInputs = computed(() => {
+    if (!isComfyBackend.value) return true
+    if (!activeComfyWorkflow.value) return true
+    const wf = activeComfyWorkflow.value.workflow
+    if (!wf) return true
+
+    for (const [nodeId, node] of Object.entries(wf)) {
+        const classType = (node.class_type || '').toLowerCase()
+        if (classType.includes('cliptextencode') || classType.includes('prompt') || classType.includes('text')) {
+            return true
+        }
+    }
+
+    if (activeComfyWorkflow.value.exposedInputs) {
+        return activeComfyWorkflow.value.exposedInputs.some(input => {
+            const key = (input.inputKey || '').toLowerCase()
+            const label = (input.label || '').toLowerCase()
+            return key.includes('text') || key.includes('prompt') || label.includes('prompt')
+        })
+    }
+
+    return true
+})
+
+const comfyHasClipSkip = computed(() => {
+    if (!isComfyBackend.value || !activeComfyWorkflow.value) return false
+    const wf = activeComfyWorkflow.value.workflow || {}
+    for (const [nodeId, node] of Object.entries(wf)) {
+        const classType = (node.class_type || '').toLowerCase()
+        if (classType.includes('clipsetlastlayer') || classType.includes('clip_skip')) return true
+        if (node.inputs && ('stop_at_clip_layer' in node.inputs || 'clip_skip' in node.inputs)) return true
+    }
+    return (activeComfyWorkflow.value.exposedInputs || []).some(i => {
+        const k = (i.inputKey || '').toLowerCase()
+        return k.includes('clip_skip') || k.includes('stop_at_clip_layer')
+    })
+})
+
+const comfyHasImageInput = computed(() => {
+    if (!isComfyBackend.value || !activeComfyWorkflow.value) return false
+    const wf = activeComfyWorkflow.value.workflow || {}
+    for (const [nodeId, node] of Object.entries(wf)) {
+        const classType = (node.class_type || '').toLowerCase()
+        if (classType.includes('loadimage') || classType.includes('image_input')) return true
+        if (node.inputs && 'image' in node.inputs && Array.isArray(node.inputs.image) === false) return true
+    }
+    return (activeComfyWorkflow.value.exposedInputs || []).some(i => {
+        const k = (i.inputKey || '').toLowerCase()
+        return k === 'image' || k.includes('image_input') || i.role === 'image'
+    })
+})
+
+function applyWorkflowSettingsToUI(wf) {
+    if (!isComfyBackend.value || !wf || !wf.workflow) return
+    const workflowJson = wf.workflow
+
+    // 1. Model
+    let modelName = ''
+    const exposed = wf.exposedInputs || []
+    const modelExp = exposed.find(i => i.role === 'checkpoint' || (i.inputKey || '').toLowerCase() === 'ckpt_name' || (i.inputKey || '').toLowerCase() === 'unet_name')
+    if (modelExp?.value) {
+        modelName = String(modelExp.value)
+    } else {
+        for (const [nodeId, node] of Object.entries(workflowJson)) {
+            const classType = (node.class_type || '').toLowerCase()
+            if (classType.includes('checkpointloader') || classType.includes('unetloader')) {
+                if (node.inputs?.ckpt_name) { modelName = String(node.inputs.ckpt_name); break }
+                if (node.inputs?.unet_name) { modelName = String(node.inputs.unet_name); break }
+            }
+        }
+    }
+    if (modelName) {
+        current_model.model = {
+            title: modelName,
+            filename: modelName,
+            model_name: modelName.replaceAll('\\', '/').split('/').pop().replace(/\.(safetensors|ckpt|pt)$/i, '')
+        }
+    }
+
+    // 2. KSampler settings (steps, cfg, sampler_name, seed)
+    for (const [nodeId, node] of Object.entries(workflowJson)) {
+        const classType = (node.class_type || '').toLowerCase()
+        if (classType.includes('ksampler') || classType.includes('sampler')) {
+            const inputs = node.inputs || {}
+            if (inputs.steps !== undefined) request.steps = Number(inputs.steps)
+            if (inputs.cfg !== undefined) request.cfg_scale = Number(inputs.cfg)
+            if (inputs.sampler_name) request.sampler_name = unmapSamplerFromComfy(inputs.sampler_name)
+            if (inputs.seed !== undefined && inputs.seed >= 0) request.seed = Number(inputs.seed)
+            break
+        }
+    }
+
+    // 3. Resolution (width, height)
+    for (const [nodeId, node] of Object.entries(workflowJson)) {
+        const classType = (node.class_type || '').toLowerCase()
+        if (classType.includes('emptylatent') || classType.includes('latentimage')) {
+            const inputs = node.inputs || {}
+            if (inputs.width !== undefined) request.width = Number(inputs.width)
+            if (inputs.height !== undefined) request.height = Number(inputs.height)
+            if (request.width === 1024 && request.height === 1024) aspectRatio.value = 'Square'
+            else if (request.width === 1216 && request.height === 832) aspectRatio.value = 'Landscape'
+            else if (request.width === 832 && request.height === 1216) aspectRatio.value = 'Portrait'
+            break
+        }
+    }
+
+    // 4. Prompts (positive and negative)
+    const { posNodeId, negNodeId } = findPositiveAndNegativeNodes(workflowJson)
+    if (posNodeId && workflowJson[posNodeId]?.inputs?.text) {
+        request.prompt = workflowJson[posNodeId].inputs.text
+    }
+    if (negNodeId && workflowJson[negNodeId]?.inputs?.text) {
+        request.negative_prompt = workflowJson[negNodeId].inputs.text
+    }
+
+    // 5. LoRAs: If a Power Lora Loader exists, only its active slots are style LoRAs.
+    // Dedicated LoraLoader/LoraLoaderModelOnly nodes are fixed pipeline stages (e.g. DMD2, Lightning) and must NOT be added to user LoRAs.
+    const activeLoras = []
+    const hasPowerLora = Object.values(workflowJson).some(node => {
+        const classType = (node.class_type || '').toLowerCase()
+        return classType.includes('power lora loader') || classType.includes('powerloraloader')
+    })
+
+    for (const [nodeId, node] of Object.entries(workflowJson)) {
+        const classType = (node.class_type || '').toLowerCase()
+        const inputs = node.inputs || {}
+
+        if (classType.includes('power lora loader') || classType.includes('powerloraloader')) {
+            for (const [inputKey, inputVal] of Object.entries(inputs)) {
+                if (inputKey.startsWith('lora_') && inputVal && typeof inputVal === 'object') {
+                    if (inputVal.on && inputVal.lora && inputVal.lora !== '[none]') {
+                        activeLoras.push({
+                            name: inputVal.lora,
+                            title: inputVal.lora,
+                            filename: inputVal.lora,
+                            path: inputVal.lora,
+                            weight: parseFloat(inputVal.strength ?? 1)
+                        })
+                    }
+                }
+            }
+        } else if (!hasPowerLora && (classType.includes('loraloader') || classType.includes('lora'))) {
+            if (inputs.lora_name && inputs.lora_name !== '[none]') {
+                activeLoras.push({
+                    name: inputs.lora_name,
+                    title: inputs.lora_name,
+                    filename: inputs.lora_name,
+                    path: inputs.lora_name,
+                    weight: parseFloat(inputs.strength_model ?? 1)
+                })
+            }
+        }
+    }
+    current_model.loras = activeLoras
+}
+
+const otherComfyExposedInputs = computed(() => {
+    if (!isComfyBackend.value || !activeComfyWorkflow.value) return []
+    return (activeComfyWorkflow.value.exposedInputs || []).filter(input => {
+        const key = (input.inputKey || '').toLowerCase()
+
+        if (key.includes('ckpt') || key.includes('unet') || (key.includes('model') && !key.includes('strength'))) return false
+        if (key === 'text' || key.includes('prompt')) return false
+        if (key === 'width' || key === 'height') return false
+        if (key === 'seed' || key === 'steps' || key === 'cfg' || key === 'sampler_name' || key === 'scheduler' || key === 'denoise') return false
+
+        return true
+    })
+})
+
+function syncStateToComfyWorkflow() {
+    if (!isComfyBackend.value || !activeComfyWorkflow.value) return
+    const inputs = activeComfyWorkflow.value.exposedInputs || []
+    const { posNodeId, negNodeId } = findPositiveAndNegativeNodes(activeComfyWorkflow.value.workflow || {})
+
+    let textInputs = inputs.filter(i => i.spec?.type === 'textarea' || (i.inputKey || '').toLowerCase().includes('text') || (i.label || '').toLowerCase().includes('prompt'))
+    let posInput = inputs.find(i => i.role === 'positive') ||
+                   inputs.find(i => String(i.nodeId) === String(posNodeId)) ||
+                   inputs.find(i => (i.label || '').toLowerCase().includes('positive')) || textInputs[0]
+    let negInput = inputs.find(i => i.role === 'negative') ||
+                   inputs.find(i => String(i.nodeId) === String(negNodeId)) ||
+                   inputs.find(i => (i.label || '').toLowerCase().includes('negative')) ||
+                   inputs.find(i => i !== posInput && (i.spec?.type === 'textarea' || (i.inputKey || '').toLowerCase().includes('text')))
+
+    let modelInput = inputs.find(i => {
+        const k = (i.inputKey || '').toLowerCase()
+        return k === 'ckpt_name' || k === 'unet_name' || k === 'model_name'
+    })
+    if (modelInput && current_model.model) {
+        modelInput.value = current_model.model.title || current_model.model.filename || current_model.model.model_name
+    }
+
+    let widthInput = inputs.find(i => (i.inputKey || '').toLowerCase() === 'width')
+    let heightInput = inputs.find(i => (i.inputKey || '').toLowerCase() === 'height')
+    if (widthInput && request.width) widthInput.value = request.width
+    if (heightInput && request.height) heightInput.value = request.height
+
+    let stepsInput = inputs.find(i => (i.inputKey || '').toLowerCase() === 'steps')
+    let cfgInput = inputs.find(i => (i.inputKey || '').toLowerCase() === 'cfg' || (i.inputKey || '').toLowerCase() === 'cfg_scale')
+    let samplerInput = inputs.find(i => (i.inputKey || '').toLowerCase() === 'sampler_name')
+    let seedInput = inputs.find(i => (i.inputKey || '').toLowerCase() === 'seed')
+
+    if (stepsInput && request.steps) stepsInput.value = request.steps
+    if (cfgInput && request.cfg_scale) cfgInput.value = request.cfg_scale
+    if (samplerInput && request.sampler_name) {
+        samplerInput.value = mapSamplerToComfy(request.sampler_name, samplerInput.spec?.options)
+    }
+    if (seedInput) {
+        if (request.seed === -1 || request.seed < 0 || request.seed === undefined) {
+            if (!seedInput.value || seedInput.value <= 0) {
+                seedInput.value = Math.floor(Math.random() * 1000000000000000)
+            }
+        } else {
+            seedInput.value = request.seed
+        }
+    }
+}
+
+watch(activeComfyWorkflowId, () => {
+    if (isComfyBackend.value && activeComfyWorkflow.value) {
+        applyWorkflowSettingsToUI(activeComfyWorkflow.value)
+        syncStateToComfyWorkflow()
+    }
+})
+
 function handleWorkflowImported(workflow) {
     comfyState.activeWorkflowId = workflow.id
     showWorkflowImportModal.value = false
+    applyWorkflowSettingsToUI(workflow)
+    syncStateToComfyWorkflow()
 }
 
 function deleteComfyWorkflow(workflowId) {
@@ -689,7 +1060,6 @@ function deleteComfyWorkflow(workflowId) {
     saveComfyWorkflows()
 }
 
-// Watch for ComfyUI workflow input changes and auto-save
 let comfyInputSaveTimer = null
 watch(() => comfyState.workflows, () => {
     clearTimeout(comfyInputSaveTimer)
@@ -697,14 +1067,13 @@ watch(() => comfyState.workflows, () => {
         saveComfyWorkflows()
     }, 500)
 }, { deep: true })
-
 //current selected model and loras
 //save this in local storage
 
 
 // Main API request object and state
 //save this in local storage
-import { request, UpdateVRAM, current_model, formatRequest, defaultStyles, GetFromApi, PostToApi } from '@/api'
+
 
 watch(() => webState.sidebarWidth, (newWidth) => {
     if (newWidth > 0) {
@@ -1359,6 +1728,122 @@ async function LoadHistory() {
 }
 
 const showDragOverlay = ref(false)
+const interrogateInProgress = ref(false)
+
+async function interrogateImageFile(file) {
+    if (!file) return;
+    try {
+        interrogateInProgress.value = true
+        var url = apiUrl + "/save-file?filename=interrogate_input_file.png";
+        var formData = new FormData();
+        formData.append('file', file);
+        await fetch(url, {
+            method: 'POST',
+            body: formData
+        });
+
+        var tagger = await PostToApi("interrogate?path=" + encodeURIComponent("./storage/interrogate_input_file.png"));
+        if (tagger && tagger.tag_string) {
+            request.prompt = tagger.tag_string;
+        }
+    } catch (e) {
+        console.error("Failed to interrogate file:", e);
+    } finally {
+        interrogateInProgress.value = false;
+        autoResizePositivePrompt();
+    }
+}
+
+async function interrogateImageUrl(urlString) {
+    try {
+        interrogateInProgress.value = true
+        var taggerPrompt = await PostToApi("interrogate?url=" + encodeURIComponent(urlString))
+        if (taggerPrompt && taggerPrompt.tag_string) {
+            request.prompt = taggerPrompt.tag_string;
+        }
+    } catch (e) {
+        console.error("Failed to interrogate url:", e);
+    } finally {
+        interrogateInProgress.value = false;
+        autoResizePositivePrompt();
+    }
+}
+
+function isImageUrl(text) {
+    if (!text || typeof text !== 'string') return false;
+    const trimmed = text.trim();
+    if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+        return false;
+    }
+    // Check if it has a common image extension or image query / path indicators
+    const cleaned = trimmed.split('?')[0].split('#')[0].toLowerCase();
+    const imageExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.avif'];
+    if (imageExtensions.some(ext => cleaned.endsWith(ext))) {
+        return true;
+    }
+    // Also consider URLs from common image CDNs/paths
+    if (/(format=(png|jpg|jpeg|webp)|image|img|photos)/i.test(trimmed)) {
+        return true;
+    }
+    return false;
+}
+
+async function handlePromptPaste(event) {
+    const clipboardData = event.clipboardData || window.clipboardData;
+    if (!clipboardData) return;
+
+    // 1. Check for image files in clipboard
+    const items = clipboardData.items;
+    if (items && items.length > 0) {
+        for (let i = 0; i < items.length; i++) {
+            if (items[i].type.indexOf("image") !== -1) {
+                const file = items[i].getAsFile();
+                if (file) {
+                    event.preventDefault();
+                    await interrogateImageFile(file);
+                    return;
+                }
+            }
+        }
+    }
+
+    if (clipboardData.files && clipboardData.files.length > 0) {
+        const file = clipboardData.files[0];
+        if (file.type.startsWith("image/")) {
+            event.preventDefault();
+            await interrogateImageFile(file);
+            return;
+        }
+    }
+
+    // 2. Check for text that is an image URL or local image link
+    const text = clipboardData.getData('text/plain');
+    if (text) {
+        const trimmed = text.trim();
+        const websiteRootUrl = window.location.origin + '/';
+
+        if (trimmed.replace(websiteRootUrl, '').includes("image/")) {
+            const imageID = trimmed.replace(websiteRootUrl, '').split("image/")[1].split(/[\/\?#]/)[0];
+            if (imageID) {
+                event.preventDefault();
+                try {
+                    const image = await GetFromApi("image/" + imageID);
+                    if (image && image.Prompt) {
+                        request.prompt = image.Prompt;
+                        autoResizePositivePrompt();
+                    }
+                } catch (e) {
+                    console.error("Failed to fetch local image prompt:", e);
+                }
+                return;
+            }
+        } else if (isImageUrl(trimmed)) {
+            event.preventDefault();
+            await interrogateImageUrl(trimmed);
+            return;
+        }
+    }
+}
 
 async function handlePromptDrop(event) {
     event.preventDefault()
@@ -1378,11 +1863,8 @@ async function handlePromptDrop(event) {
                 request.prompt = image.Prompt
             }
         } else if (data.startsWith("http://") || data.startsWith("https://")) {
-            var taggerPrompt = await PostToApi("interrogate?url=" + encodeURIComponent(data))
-            request.prompt = taggerPrompt.tag_string ?? ""
-        }
-
-        else {
+            await interrogateImageUrl(data)
+        } else {
             request.prompt = data
         }
 
@@ -1390,22 +1872,10 @@ async function handlePromptDrop(event) {
         var file = event.dataTransfer.files[0];
         if (file) {
             console.log("File dropped:", file);
-
-            var url = apiUrl + "/save-file?filename=interrogate_input_file.png";
-
-            var formData = new FormData();
-            formData.append('file', file);
-            var response = await fetch(url, {
-                method: 'POST',
-                body: formData
-            });
-
-            var tagger = await PostToApi("interrogate?path=" + encodeURIComponent("./storage/interrogate_input_file.png"));
-
-            request.prompt = tagger.tag_string ?? ""
-
+            await interrogateImageFile(file);
         }
     }
+    interrogateInProgress.value = false;
 
     autoResizePositivePrompt()
     showDragOverlay.value = false
@@ -1594,21 +2064,7 @@ const updateAspectRatio = (ratio) => {
     }
 }
 
-import { apiUrl, webState } from '@/api'
-import SelectModelModal from './SelectModelModal.vue'
-import AiHordeModelModal from './AiHordeModelModal.vue'
-import DownloadModel from './CivitAILoraModal.vue'
-import CivitAILoraModal from './CivitAILoraModal.vue'
-import DownloadLoraModal from './downloadLoraModal.vue'
-import { getRandomPrompt } from '@/scripts/ranbooru'
-import PillPrompt from './pillPrompt.vue'
-import ChatPanel from './ChatPanel.vue'
-import CanvasView from '@/views/canvasView.vue'
-import AutoComplete from './autoComplete.vue'
-import BackendSettingsPanel from './BackendSettingsPanel.vue'
-import ComfyWorkflowImportModal from './ComfyWorkflowImportModal.vue'
-import { Image, InfoIcon, Settings } from 'lucide-vue-next'
-import ClearArt from './ClearArt.vue'
+
 
 const startResize = (e) => {
     isResizing.value = true
@@ -1658,7 +2114,7 @@ const getAllHistoryImages = () => {
                     image: img,
                     title: item.request && item.request.prompt ? item.request.prompt : 'No Title',
                     timestamp: item.timestamp || Date.now(),
-                    id: item.id + (index + 1) || null,
+                    id: item.id ? (item.id + index) : null,
                     isPreview: false
                 });
             });
@@ -2113,79 +2569,40 @@ async function ProcessRequest(queueItem) {
     // ── ComfyUI Generation ──────────────────────────────────────────
     if (backendRequest.adapter === 'comfyui') {
         try {
-            // POST the prompt to ComfyUI
-            const response = await fetch(backendRequest.requestUrl, {
-                method: 'POST',
-                headers: backendRequest.headers,
-                body: JSON.stringify(backendRequest.payload),
+            generationState.value = { job: 'Connecting to ComfyUI...' }
+            generationProgress.value = 0
+
+            const { images: comfyImages } = await executeComfyPrompt(backendRequest, {
+                onProgress: (data) => {
+                    generationProgress.value = data.max > 0 ? data.value / data.max : 0
+                    generationState.value = {
+                        ...generationState.value,
+                        sampling_step: data.value,
+                        sampling_steps: data.max,
+                        job: `Step ${data.value}/${data.max}`,
+                    }
+                },
+                onExecuting: (data) => {
+                    generationState.value.job = `Processing node ${data.node}`
+                },
+                onPreview: (previewUrl) => {
+                    generationState.value.current_image = previewUrl
+                },
             })
 
-            if (!response.ok) {
-                const errorText = await response.text()
-                console.error('ComfyUI prompt failed:', errorText)
-                isGenerating.value = false
-                return
-            }
+            generationProgress.value = 1
+            generationState.value.job = 'Complete'
 
-            const result = await response.json()
-            const promptId = result.prompt_id
-            if (!promptId) {
-                console.error('ComfyUI did not return a prompt_id')
-                isGenerating.value = false
-                return
-            }
-
-            generationState.value = { job: 'Queued' }
-
-            // Connect WebSocket and wait for completion
-            const comfyImages = await new Promise((resolve, reject) => {
-                const outputImages = []
-                let currentNode = ''
-
-                const ws = connectComfyWebSocket(backendRequest.baseUrl, {
-                    onProgress: (data) => {
-                        if (data.prompt_id === promptId) {
-                            generationProgress.value = data.max > 0 ? data.value / data.max : 0
-                            generationState.value = {
-                                ...generationState.value,
-                                sampling_step: data.value,
-                                sampling_steps: data.max,
-                                job: `Step ${data.value}/${data.max}`,
-                            }
-                        }
-                    },
-                    onExecuting: (data) => {
-                        if (data.prompt_id === promptId) {
-                            if (data.node === null) {
-                                // Execution complete
-                                generationProgress.value = 1
-                                generationState.value.job = 'Complete'
-                                closeComfyWebSocket()
-                                resolve(outputImages)
-                            } else {
-                                currentNode = data.node
-                                generationState.value.job = `Processing node ${data.node}`
-                            }
-                        }
-                    },
-                    onExecuted: (data) => {
-                        if (data.prompt_id === promptId && data.output?.images) {
-                            for (const img of data.output.images) {
-                                outputImages.push(img)
-                            }
-                        }
-                    },
-                    onError: (data) => {
-                        console.error('ComfyUI execution error:', data)
-                        closeComfyWebSocket()
-                        reject(new Error(data.exception_message || 'ComfyUI execution error'))
-                    },
-                })
-            })
-
-            // Fetch images from ComfyUI and convert to displayable format
+            // 4. Fetch images from ComfyUI and save locally
+            generationState.value.job = 'Saving images...'
             const imagePaths = []
             let firstSavedId = null
+            const activeWf = getActiveWorkflow()
+            const promptText = baseRequest.prompt || activeWf?.exposedInputs
+                ?.find(i => i.spec?.type === 'textarea' || i.spec?.type === 'text')
+                ?.value || 'ComfyUI Generation'
+            const negativePromptText = baseRequest.negative_prompt || ''
+
             for (const imgInfo of comfyImages) {
                 try {
                     const blob = await fetchComfyImage(
@@ -2196,36 +2613,41 @@ async function ProcessRequest(queueItem) {
                     )
                     const dataUrl = await blobToDataUrl(blob)
 
-                    // Save to local img-api storage
-                    const activeWf = getActiveWorkflow()
-                    const promptText = activeWf?.exposedInputs
-                        ?.find(i => i.spec?.type === 'textarea' || i.spec?.type === 'text')
-                        ?.value || 'ComfyUI Generation'
+                    // Immediately show in preview if not already showing
+                    if (!generationState.value.current_image) {
+                        generationState.value.current_image = dataUrl
+                    }
 
-                    const saveResponse = await fetch(apiUrl + '/save-cloud', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            image_base64: dataUrl,
-                            prompt: promptText,
-                            negative_prompt: '',
-                            sampler: 'comfyui',
-                            cfg_scale: 0,
-                            steps: 0,
-                            seed: 0,
-                            width: 0,
-                            height: 0,
-                            model_name: activeWf?.name || 'ComfyUI Workflow',
-                            model_hash: ''
+                    // Save to local img-api storage
+                    try {
+                        const saveResponse = await fetch(apiUrl + '/save-cloud', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                image_base64: dataUrl,
+                                prompt: promptText,
+                                negative_prompt: negativePromptText,
+                                sampler: 'comfyui',
+                                cfg_scale: 0,
+                                steps: 0,
+                                seed: 0,
+                                width: 0,
+                                height: 0,
+                                model_name: activeWf?.name || 'ComfyUI Workflow',
+                                model_hash: ''
+                            })
                         })
-                    })
-                    if (saveResponse.ok) {
-                        const savedImg = await saveResponse.json()
-                        imagePaths.push(savedImg.Path)
-                        if (firstSavedId === null) {
-                            firstSavedId = savedImg.Id
+                        if (saveResponse.ok) {
+                            const savedImg = await saveResponse.json()
+                            imagePaths.push(savedImg.Path)
+                            if (firstSavedId === null) {
+                                firstSavedId = savedImg.Id
+                            }
+                        } else {
+                            imagePaths.push(dataUrl)
                         }
-                    } else {
+                    } catch (saveErr) {
+                        console.error('Error saving image to API:', saveErr)
                         imagePaths.push(dataUrl)
                     }
                 } catch (e) {
@@ -2233,27 +2655,27 @@ async function ProcessRequest(queueItem) {
                 }
             }
 
-            // Add to history (push to end of history array so the newest is history[history.length - 1])
-            const activeWf = getActiveWorkflow()
-            history.value.push({
-                request: {
-                    prompt: activeWf?.exposedInputs?.find(i => i.spec?.type === 'textarea' || i.spec?.type === 'text')?.value || 'ComfyUI Generation',
-                    negative_prompt: '',
-                    comfyui_workflow: activeWf?.name,
-                },
-                images: imagePaths,
-                timestamp: Date.now(),
-                id: firstSavedId,
-                path: imagePaths[0] || null,
-            })
-
-            generationState.value.current_image = null
+            // 5. Add to history and update active preview
+            if (imagePaths.length > 0) {
+                const historyItem = {
+                    request: {
+                        prompt: promptText,
+                        negative_prompt: negativePromptText,
+                        comfyui_workflow: activeWf?.name,
+                    },
+                    images: imagePaths,
+                    timestamp: Date.now(),
+                    id: firstSavedId,
+                    path: imagePaths[0] || null,
+                }
+                history.value.push(historyItem)
+                generationState.value.current_image = imagePaths[0]
+            }
 
         } catch (error) {
             console.error('ComfyUI generation failed:', error)
         } finally {
             isGenerating.value = false
-            closeComfyWebSocket()
             if (generationQueue.value.length > 0) {
                 await ProcessRequest(generationQueue.value.shift())
             }
@@ -2872,7 +3294,23 @@ watch(activeTab, (newTab) => {
         isFullscreen ? 'fixed inset-0 flex' : 'fixed top-0 left-0',
         webState.sidebarWidth == 0 ? 'hidden' : ''
     ]" :style="isFullscreen ? {} : { width: isMobile ? '100vw' : `${webState.sidebarWidth}px`, height: '100vh' }"
-        class="sidebar-shell text-[#F4F6FA] shadow-[0_24px_60px_rgba(0,0,0,0.45)] z-50">
+        class="sidebar-shell text-[#F4F6FA] shadow-[0_24px_60px_rgba(0,0,0,0.45)] z-50 overflow-hidden">
+
+        <!-- Sidebar Background Wallpaper Layer -->
+        <div
+            v-if="sidebarBackgroundUrl"
+            class="absolute inset-0 pointer-events-none z-0 overflow-hidden"
+        >
+            <img
+                :src="sidebarBackgroundUrl"
+                alt=""
+                class="w-full h-full object-cover select-none pointer-events-none transition-opacity duration-700"
+                :class="sidebarBackgroundLoaded ? 'opacity-75' : 'opacity-0'"
+                @load="sidebarBackgroundLoaded = true"
+                @error="sidebarBackgroundLoaded = false"
+            />
+            <div class="absolute inset-0 bg-[#0f1117]/80 backdrop-blur-[2px]"></div>
+        </div>
 
         <div v-if="showStyleManager"
             class="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm"
@@ -2964,7 +3402,7 @@ watch(activeTab, (newTab) => {
 
         <!-- Sidebar -->
         <div :style="isFullscreen ? { width: `${webState.sidebarWidth}px` } : {}"
-            class="flex flex-col h-full border-r border-[#222836]">
+            class="flex flex-col h-full border-r border-[#222836] relative z-10">
             <!-- Fixed Header with close button -->
             <div class="flex items-center justify-between p-4 border-b borderborde flex-shrink-0">
                 <!-- Fixed Tab Navigation -->
@@ -3360,6 +3798,14 @@ watch(activeTab, (newTab) => {
                                     <option v-for="wf in comfyWorkflowsList" :key="wf.id" :value="wf.id">{{ wf.name }}
                                     </option>
                                 </select>
+                                <button v-if="activeComfyWorkflow" @click="editComfyWorkflow(activeComfyWorkflow)"
+                                    class="p-2 text-gray-400 hover:text-blue-400 transition-colors"
+                                    title="Edit workflow">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                    </svg>
+                                </button>
                                 <button v-if="activeComfyWorkflow" @click="deleteComfyWorkflow(activeComfyWorkflow.id)"
                                     class="p-2 text-gray-400 hover:text-red-400 transition-colors"
                                     title="Delete workflow">
@@ -3370,127 +3816,8 @@ watch(activeTab, (newTab) => {
                                 </button>
                             </div>
 
-                            <!-- Dynamic ComfyUI Inputs -->
-                            <div v-if="activeComfyWorkflow && activeComfyWorkflow.exposedInputs.length > 0"
-                                class="mt-4 space-y-4 pt-4 border-t border-[#2A2A35]">
-                                <div v-for="input in activeComfyWorkflow.exposedInputs"
-                                    :key="`${input.nodeId}.${input.inputKey}`" class="space-y-2">
-                                    <div class="flex items-center justify-between">
-                                        <label class="text-sm font-medium text-gray-300 flex items-center gap-2">
-                                            {{ input.label }}
-                                            <span class="text-[10px] text-gray-500 font-mono">{{ input.spec?.type }}</span>
-                                        </label>
-                                        <div class="flex items-center gap-1">
-                                            <!-- Action buttons for textareas (AI Enhance & Dice randomize) -->
-                                            <template v-if="input.spec?.type === 'textarea'">
-                                                <button type="button" @click="openEnhancePanel(input)" 
-                                                    class="text-gray-400 hover:text-blue-400 p-1 transition-colors" 
-                                                    title="AI Enhance">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-sparkles">
-                                                        <path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z" />
-                                                        <path d="M20 2v4" />
-                                                        <path d="M22 4h-4" />
-                                                        <circle cx="4" cy="20" r="2" />
-                                                    </svg>
-                                                </button>
-                                                <button type="button" @click="randomizePrompt('local', input)" 
-                                                    class="text-gray-400 hover:text-amber-400 p-1 transition-colors" 
-                                                    title="Local Random Prompt">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-dice-1">
-                                                        <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
-                                                        <path d="M12 12h.01" />
-                                                    </svg>
-                                                </button>
-                                                <button type="button" @click="randomizePrompt('booru', input)" 
-                                                    class="text-gray-400 hover:text-purple-400 p-1 transition-colors" 
-                                                    title="Booru Random Prompt">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-dice-2">
-                                                        <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
-                                                        <path d="M15 9h.01" />
-                                                        <path d="M9 15h.01" />
-                                                    </svg>
-                                                </button>
-                                            </template>
-                                            
-                                            <!-- Ellipsis Options Button -->
-                                            <button type="button" class="text-gray-500 hover:text-white p-1 transition-colors">
-                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z" />
-                                                </svg>
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    <!-- Textarea (Multiline String) with Autocomplete -->
-                                    <div v-if="input.spec?.type === 'textarea'" class="relative">
-                                        <textarea v-model="input.value"
-                                            :ref="el => { if (el) textareaRefs[`${input.nodeId}.${input.inputKey}`] = el }"
-                                            class="w-full bg-[#1A1A24] border border-[#2A2A35] text-sm text-[#FAF8F5] placeholder-gray-600 rounded-lg px-3 py-2.5 min-h-[100px] focus:outline-none focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/20"
-                                            :title="input.spec?.tooltip"
-                                            rows="4" />
-                                        <AutoComplete v-model:input="input.value" :textareaRef="textareaRefs[`${input.nodeId}.${input.inputKey}`]" />
-                                    </div>
-
-                                    <!-- Simple Text -->
-                                    <input v-else-if="input.spec?.type === 'text'" v-model="input.value" type="text"
-                                        class="w-full bg-[#1A1A24] border border-[#2A2A35] text-sm text-[#FAF8F5] placeholder-gray-600 rounded-lg px-3 py-2.5 focus:outline-none focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/20"
-                                        :title="input.spec?.tooltip" />
-
-                                    <!-- Integer / Float Custom Pill Slider -->
-                                    <div v-else-if="input.spec?.type === 'int' || input.spec?.type === 'float'"
-                                        class="flex items-center justify-between bg-[#1A1A24] rounded-lg px-4 py-2.5 border border-[#2A2A35] transition-all focus-within:border-blue-500/40">
-                                        <button type="button" @click="input.value = Math.max((input.spec?.min ?? 0), input.value - (input.spec?.step || (input.spec?.type === 'int' ? 1 : 0.1)))"
-                                            class="text-gray-400 hover:text-white transition-colors text-lg font-bold select-none px-1">
-                                            —
-                                        </button>
-                                        <input type="number" v-model.number="input.value"
-                                            :step="input.spec?.step || (input.spec?.type === 'int' ? 1 : 0.1)"
-                                            class="w-full text-center bg-transparent border-0 outline-none focus:ring-0 font-mono text-sm font-semibold text-gray-200" />
-                                        <div class="flex items-center gap-2">
-                                            <!-- Seed randomize button if input key matches seed -->
-                                            <button v-if="input.inputKey.toLowerCase().includes('seed') || input.label.toLowerCase().includes('seed')" 
-                                                type="button" 
-                                                @click="input.value = Math.floor(Math.random() * (input.spec?.max || 18446744073709551615))"
-                                                class="text-blue-400 hover:text-blue-300 transition-colors p-1"
-                                                title="Randomize Seed">
-                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4.5 h-4.5">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12c0-1.232-.046-2.453-.138-3.662a4.006 4.006 0 0 0-3.7-3.7 48.656 48.656 0 0 0-7.324 0 4.006 4.006 0 0 0-3.7 3.7c-.017.22-.032.441-.046.662M19.5 12l3-3m-3 3-3-3M3 12c0 1.232.046 2.453.138 3.662a4.006 4.006 0 0 0 3.7 3.7 48.656 48.656 0 0 0 7.324 0 4.006 4.006 0 0 0 3.7-3.7c.017-.22.032-.441.046-.662M3 12l-3 3m3-3 3 3" />
-                                                </svg>
-                                            </button>
-                                            <button type="button" @click="input.value = Math.min((input.spec?.max ?? (input.spec?.type === 'int' ? 18446744073709551615 : 1000.0)), input.value + (input.spec?.step || (input.spec?.type === 'int' ? 1 : 0.1)))"
-                                                class="text-gray-400 hover:text-white transition-colors text-lg font-bold select-none px-1">
-                                                +
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    <!-- Select/Dropdown -->
-                                    <div v-else-if="input.spec?.type === 'select'" class="relative">
-                                        <select v-model="input.value"
-                                            class="w-full bg-[#1A1A24] border border-[#2A2A35] text-sm text-[#FAF8F5] rounded-lg px-3 py-2.5 focus:outline-none focus:border-blue-500/60 appearance-none"
-                                            :title="input.spec?.tooltip">
-                                            <option v-for="opt in input.spec?.options" :key="opt" :value="opt">{{ opt }}
-                                            </option>
-                                        </select>
-                                        <div class="absolute inset-y-0 right-3 flex items-center pointer-events-none text-gray-500">
-                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                                            </svg>
-                                        </div>
-                                    </div>
-
-                                    <!-- Boolean/Toggle -->
-                                    <label v-else-if="input.spec?.type === 'boolean'"
-                                        class="relative inline-flex items-center cursor-pointer"
-                                        :title="input.spec?.tooltip">
-                                        <input type="checkbox" v-model="input.value" class="sr-only peer">
-                                        <div
-                                            class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
-                                        </div>
-                                    </label>
-                                </div>
-                            </div>
                         </div>
+
                         <!-- Start BackEnd Options with status (isrunning/stopped) and launch button if stopped-->
                         <div class="mb-4">
                             <div class="flex items-center justify-between mb-2">
@@ -3537,11 +3864,10 @@ watch(activeTab, (newTab) => {
                             </button>
                         </div>
 
-
-                        <!-- Standard Forge Inputs Wrapper -->
-                        <div v-if="!isComfyBackend" class="space-y-6">
+                        <!-- Generation Inputs Wrapper -->
+                        <div class="space-y-6">
                             <!-- Model -->
-                            <div v-if="!compactMode">
+                            <div v-if="!compactMode && ((!isComfyBackend && canSelectModels) || (isComfyBackend && comfyHasModelLoader))">
                                 <div v-if="!backendCapabilities.supportsLocalModels"
                                     class="sidebar-card p-4 text-sm text-gray-300">
                                     <p class="font-medium text-[#FAF8F5] mb-1">Models are backend-specific</p>
@@ -3574,13 +3900,13 @@ watch(activeTab, (newTab) => {
                                                         class="text-base md:text-lg font-semibold text-[#FAF8F5] flex items-center gap-2 truncate">
                                                         <span class="truncate">
                                                             {{
-                                                                (current_model?.model?.title || current_model?.model?.name
-                                                                    ||
-                                                                    '')?.split('\\').pop().replace(".safetensors",
-                                                                        "")
+                                                                (current_model?.model?.title || current_model?.model?.filename || current_model?.model?.name
+                                                                    || activeComfyModelName
+                                                                    || 'Select Model'
+                                                                )?.split('\\').pop().split('/').pop().replace(/\.(safetensors|ckpt|pt)$/i, "")
                                                             }}
                                                         </span>
-                                                        <a v-if="current_model.model.info?.modelId"
+                                                        <a v-if="current_model.model?.info?.modelId"
                                                             :href="`https://civitai.com/models/${current_model.model.info.modelId}`"
                                                             target="_blank" rel="noopener noreferrer"
                                                             class="ml-1 text-blue-400 hover:underline flex items-center"
@@ -3591,13 +3917,12 @@ watch(activeTab, (newTab) => {
                                                                 <path strokeLinecap="round" strokeLinejoin="round"
                                                                     d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
                                                             </svg>
-
                                                             <span class="hidden sm:inline"></span>
                                                         </a>
                                                     </p>
                                                     <p
                                                         class="text-xs text-[#9AA3B2] truncate max-w-[180px] md:max-w-xs">
-                                                        {{ current_model.model.title }}
+                                                        {{ current_model.model?.title || current_model.model?.filename || activeComfyModelName || '' }}
                                                     </p>
                                                 </div>
                                             </div>
@@ -3762,8 +4087,9 @@ watch(activeTab, (newTab) => {
                                 </div>
                             </div>
 
-                            <!-- Styles -->
-                            <div class="mt-4">
+                            <!-- Styles & Prompts Section -->
+                            <div v-if="!isComfyBackend || (isComfyBackend && comfyHasPromptInputs)" class="space-y-6">
+                                <!-- Styles -->
                                 <div class="flex items-center justify-between mb-2">
                                     <label class="text-sm text-gray-300 font-medium">Styles</label>
                                     <div class="flex items-center gap-2">
@@ -3843,8 +4169,8 @@ watch(activeTab, (newTab) => {
                                 </div>
 
                                 <div
-                                    class="sidebar-card p-4 space-y-2 focus-within:border-champagne/40 transition-colors duration-200">
-                                    <div class="relative rounded-lg min-h-[72px]"
+                                    class="sidebar-card p-4 space-y-2 focus-within:border-champagne/40 transition-colors duration-200 relative focus-within:z-30">
+                                    <div class="relative rounded-lg min-h-[72px] focus-within:z-30"
                                         @dragenter.prevent="(e) => { showDragOverlay = true; }" @dragover.prevent
                                         @dragleave="(e) => { showDragOverlay = false; }"
                                         @drop.prevent="handlePromptDrop">
@@ -3867,12 +4193,16 @@ watch(activeTab, (newTab) => {
                                             class="positive_prompt w-full text-sm bg-transparent text-transparent caret-ivory placeholder-gray-500 leading-relaxed resize-none focus:outline-none relative z-10 p-0 m-0 border-none outline-none overflow-hidden"
                                             style="font-family: inherit !important; font-size: inherit !important; line-height: inherit !important; font-style: normal !important;"
                                             rows="3" ref="positivePrompt" @input="autoResizeTextArea($event.target)"
-                                            @keydown="handleAutocompleteKeydown" />
+                                            @keydown="handleAutocompleteKeydown" @paste="handlePromptPaste" />
 
-                                        <AutoComplete v-model:input="request.prompt" :textareaRef="positivePrompt" />
-                                        <div v-if="showDragOverlay"
+                                        <AutoComplete class="z-[99999]" v-model:input="request.prompt" :textareaRef="positivePrompt" />
+                                        <div v-if="showDragOverlay && !interrogateInProgress"
                                             class="drop-overlay absolute inset-0 z-10 rounded-lg border-2 border-dashed border-blue-400 bg-black/60 backdrop-blur-sm flex items-center justify-center px-4 text-center text-[#FAF8F5] text-sm font-semibold pointer-events-none">
                                             Drop here to Interrogate
+                                        </div>
+                                        <div v-if="interrogateInProgress"
+                                            class="drop-overlay absolute inset-0 z-10 rounded-lg border-2 border-dashed border-blue-400 bg-black/60 backdrop-blur-sm flex items-center justify-center px-4 text-center text-[#FAF8F5] text-sm font-semibold pointer-events-none">
+                                            Interrogating...
                                         </div>
                                     </div>
 
@@ -3910,9 +4240,9 @@ watch(activeTab, (newTab) => {
 
 
 
-                                <div class="mt-3">
+                                <div class="mt-3 relative focus-within:z-20">
                                     <label class="text-sm text-gray-300 font-medium block mb-2">Negative Prompt</label>
-                                    <div class="relative rounded-lg">
+                                    <div class="relative rounded-lg focus-within:z-20">
                                         <input id="negative_prompt" type="text" v-model="request.negative_prompt"
                                             placeholder="Negative Prompt"
                                             class="sidebar-input w-full text-sm p-3 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 placeholder-gray-500"
@@ -3925,7 +4255,7 @@ watch(activeTab, (newTab) => {
                             </div>
 
                             <!--Image input-->
-                            <div>
+                            <div v-if="!isComfyBackend || (isComfyBackend && comfyHasImageInput)">
                                 <label class="text-sm text-gray-300 font-medium block mb-2">Img2Img</label>
                                 <div class="sidebar-card">
                                     <input ref="imageInputRef" type="file" accept="image/*" class="hidden"
@@ -3980,7 +4310,7 @@ watch(activeTab, (newTab) => {
                             </div>
 
                             <!-- Aspect Ratio -->
-                            <div v-if="!compactMode">
+                            <div v-if="(!isComfyBackend && !compactMode) || (isComfyBackend && comfyHasResolutionSelect && !compactMode)">
                                 <label class="text-sm text-gray-300 font-medium block mb-3">Aspect Ratio</label>
                                 <div class="sidebar-subtle p-1.5 flex gap-1">
                                     <button @click="updateAspectRatio('Square')" :class="aspectRatio === 'Square'
@@ -4334,7 +4664,7 @@ watch(activeTab, (newTab) => {
 
                                     </div>
                                     <!-- Clip Skip -->
-                                    <div>
+                                    <div v-if="!isComfyBackend || (isComfyBackend && comfyHasClipSkip)">
                                         <div class="flex items-center justify-between mb-2">
                                             <label class="text-sm font-medium text-gray-300">Clip Skip</label>
                                         </div>
@@ -4442,6 +4772,110 @@ watch(activeTab, (newTab) => {
                                             </div>
                                         </div>
                                     </div>
+
+                                    <!-- ComfyUI Custom Exposed Inputs -->
+                                    <div v-if="isComfyBackend && otherComfyExposedInputs.length > 0" class="pt-4 border-t border-[#232834] space-y-4">
+                                        <h4 class="text-xs uppercase tracking-wider text-gray-400 font-semibold mb-2">Workflow Inputs</h4>
+                                        <div v-for="input in otherComfyExposedInputs" :key="`${input.nodeId}.${input.inputKey}`" class="space-y-2">
+                                            <div class="flex items-center justify-between">
+                                                <label class="text-sm font-medium text-gray-300 flex items-center gap-2">
+                                                    {{ input.label }}
+                                                    <span class="text-[10px] text-gray-500 font-mono">{{ input.spec?.type }}</span>
+                                                </label>
+                                                <div class="flex items-center gap-1">
+                                                    <template v-if="input.spec?.type === 'textarea'">
+                                                        <button type="button" @click="openEnhancePanel(input)" class="text-gray-400 hover:text-blue-400 p-1 transition-colors" title="AI Enhance">
+                                                            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-sparkles">
+                                                                <path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z" />
+                                                                <path d="M20 2v4" />
+                                                                <path d="M22 4h-4" />
+                                                                <circle cx="4" cy="20" r="2" />
+                                                            </svg>
+                                                        </button>
+                                                        <button type="button" @click="randomizePrompt('local', input)" class="text-gray-400 hover:text-amber-400 p-1 transition-colors" title="Local Random Prompt">
+                                                            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-dice-1">
+                                                                <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                                                                <path d="M12 12h.01" />
+                                                            </svg>
+                                                        </button>
+                                                        <button type="button" @click="randomizePrompt('booru', input)" class="text-gray-400 hover:text-purple-400 p-1 transition-colors" title="Booru Random Prompt">
+                                                            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-dice-2">
+                                                                <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                                                                <path d="M15 9h.01" />
+                                                                <path d="M9 15h.01" />
+                                                            </svg>
+                                                        </button>
+                                                    </template>
+                                                </div>
+                                            </div>
+
+                                            <!-- Textarea -->
+                                            <div v-if="input.spec?.type === 'textarea'" class="relative focus-within:z-30">
+                                                <textarea v-model="input.value"
+                                                    :ref="el => { if (el) textareaRefs[`${input.nodeId}.${input.inputKey}`] = el }"
+                                                    class="w-full bg-[#1A1A24] border border-[#2A2A35] text-sm text-[#FAF8F5] placeholder-gray-600 rounded-lg px-3 py-2.5 min-h-[100px] focus:outline-none focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/20"
+                                                    :title="input.spec?.tooltip"
+                                                    rows="4" />
+                                                <AutoComplete v-model:input="input.value" :textareaRef="textareaRefs[`${input.nodeId}.${input.inputKey}`]" />
+                                            </div>
+
+                                            <!-- Text -->
+                                            <input v-else-if="input.spec?.type === 'text'" v-model="input.value" type="text"
+                                                class="w-full bg-[#1A1A24] border border-[#2A2A35] text-sm text-[#FAF8F5] placeholder-gray-600 rounded-lg px-3 py-2.5 focus:outline-none focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/20"
+                                                :title="input.spec?.tooltip" />
+
+                                            <!-- Int / Float Slider Pill -->
+                                            <div v-else-if="input.spec?.type === 'int' || input.spec?.type === 'float'"
+                                                class="flex items-center justify-between bg-[#1A1A24] rounded-lg px-4 py-2.5 border border-[#2A2A35] transition-all focus-within:border-blue-500/40">
+                                                <button type="button" @click="input.value = Math.max((input.spec?.min ?? 0), input.value - (input.spec?.step || (input.spec?.type === 'int' ? 1 : 0.1)))"
+                                                    class="text-gray-400 hover:text-white transition-colors text-lg font-bold select-none px-1">
+                                                    —
+                                                </button>
+                                                <input type="number" v-model.number="input.value"
+                                                    :step="input.spec?.step || (input.spec?.type === 'int' ? 1 : 0.1)"
+                                                    class="w-full text-center bg-transparent border-0 outline-none focus:ring-0 font-mono text-sm font-semibold text-gray-200" />
+                                                <div class="flex items-center gap-2">
+                                                    <button v-if="input.inputKey.toLowerCase().includes('seed') || input.label.toLowerCase().includes('seed')" 
+                                                        type="button" 
+                                                        @click="input.value = Math.floor(Math.random() * (input.spec?.max || 18446744073709551615))"
+                                                        class="text-blue-400 hover:text-blue-300 transition-colors p-1"
+                                                        title="Randomize Seed">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4.5 h-4.5">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12c0-1.232-.046-2.453-.138-3.662a4.006 4.006 0 0 0-3.7-3.7 48.656 48.656 0 0 0-7.324 0 4.006 4.006 0 0 0-3.7 3.7c-.017.22-.032.441-.046.662M19.5 12l3-3m-3 3-3-3M3 12c0 1.232.046 2.453.138 3.662a4.006 4.006 0 0 0 3.7 3.7 48.656 48.656 0 0 0 7.324 0 4.006 4.006 0 0 0 3.7-3.7c.017-.22.032-.441.046-.662M3 12l-3 3m3-3 3 3" />
+                                                        </svg>
+                                                    </button>
+                                                    <button type="button" @click="input.value = Math.min((input.spec?.max ?? (input.spec?.type === 'int' ? 18446744073709551615 : 1000.0)), input.value + (input.spec?.step || (input.spec?.type === 'int' ? 1 : 0.1)))"
+                                                        class="text-gray-400 hover:text-white transition-colors text-lg font-bold select-none px-1">
+                                                        +
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            <!-- Select/Dropdown -->
+                                            <div v-else-if="input.spec?.type === 'select'" class="relative">
+                                                <select v-model="input.value"
+                                                    class="w-full bg-[#1A1A24] border border-[#2A2A35] text-sm text-[#FAF8F5] rounded-lg px-3 py-2.5 focus:outline-none focus:border-blue-500/60 appearance-none"
+                                                    :title="input.spec?.tooltip">
+                                                    <option v-for="opt in input.spec?.options" :key="opt" :value="opt">{{ opt }}</option>
+                                                </select>
+                                                <div class="absolute inset-y-0 right-3 flex items-center pointer-events-none text-gray-500">
+                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                                                    </svg>
+                                                </div>
+                                            </div>
+
+                                            <!-- Boolean/Toggle -->
+                                            <label v-else-if="input.spec?.type === 'boolean'"
+                                                class="relative inline-flex items-center cursor-pointer"
+                                                :title="input.spec?.tooltip">
+                                                <input type="checkbox" v-model="input.value" class="sr-only peer">
+                                                <div
+                                                    class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                                                </div>
+                                            </label>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -4451,8 +4885,8 @@ watch(activeTab, (newTab) => {
 
                             <div class="flex-1 relative">
                                 <span class="absolute top-2 left-2 bg-black/50 text-white text-xs px-2 py-1 rounded z-10">Preview</span>
-                                <img @click="showFullscreen([resolveImageSrc(history[history.length - 1].images[0])])"
-                                    v-if="generationState.current_image || history.length > 0" :src="generationState.current_image
+                                <img @click="showFullscreen([resolveImageSrc(generationState.current_image || history[history.length - 1]?.images?.[0])])"
+                                    v-if="generationState.current_image || (history.length > 0 && history[history.length - 1].images?.length > 0)" :src="generationState.current_image
                                         ? resolveImageSrc(generationState.current_image)
                                         : resolveImageSrc(history[history.length - 1].images[0])"
                                     :alt="generationState.current_image ? 'Generated Preview' : 'Image URL Preview'"
@@ -4760,7 +5194,7 @@ watch(activeTab, (newTab) => {
                                             <img @click="showFullscreen([resolveImageSrc(image)])" :key="imgIndex"
                                                 :src="resolveImageSrc(image)" alt="Generated image"
                                                 class="object-cover cursor-pointer transition-transform duration-300 h-64 ml-2 mb-2 rounded-lg shadow-md shadow-gray-800" />
-                                            <RouterLink v-if="item.id" :to="`/image/${item.id + imgIndex + 1}`"
+                                            <RouterLink v-if="item.id" :to="`/image/${item.id + imgIndex}`"
                                                 @click="isFullscreen = false"
                                                 class="absolute top-2 right-2 bg-gray-900/80 hover:bg-blue-600 text-[#FAF8F5] rounded-full p-2 shadow transition"
                                                 title="Open image in new tab">
@@ -4857,12 +5291,12 @@ watch(activeTab, (newTab) => {
 
         </div>
 
-        <div v-if="isFullscreen && activeTab == 'chat'" class="flex-1 flex flex-col min-h-0">
+        <div v-if="isFullscreen && activeTab == 'chat'" class="flex-1 flex flex-col min-h-0 relative z-10">
             <ChatPanel :history="chatHistory" />
         </div>
 
         <!-- Fullscreen History Gallery -->
-        <div v-else-if="isFullscreen" class="flex-1 bg-[#0a0a0a] flex flex-col">
+        <div v-else-if="isFullscreen" class="flex-1 bg-[#0a0a0a] flex flex-col relative z-10">
             <div class="border-b border-gray-700 px-8 py-6">
                 <h2 class="text-3xl font-bold text-[#FAF8F5] mb-1">Generation History</h2>
             </div>
@@ -5089,24 +5523,24 @@ watch(activeTab, (newTab) => {
         </div>
     </div>
     <div class="fixed bottom-0 z-50 " :style="{ left: `${webState.sidebarWidth}px` }">
-        <!-- ComfyUI Workflow Import Modal -->
-        <ComfyWorkflowImportModal v-if="showWorkflowImportModal" :baseUrl="url" @close="showWorkflowImportModal = false"
+        <!-- ComfyUI Workflow Import / Edit Modal -->
+        <ComfyWorkflowImportModal v-if="showWorkflowImportModal" :baseUrl="url" :workflowToEdit="editingWorkflow"
+            @close="showWorkflowImportModal = false; editingWorkflow = null"
             @imported="handleWorkflowImported" />
-
     </div>
 </template>
 
 <style scoped>
 .sidebar-shell {
     --sidebar-bg: #0f1117;
-    --sidebar-surface: #151922;
-    --sidebar-surface-strong: #11141b;
-    --sidebar-border: #262b36;
-    --sidebar-border-soft: #2e3442;
+    --sidebar-surface: rgba(21, 25, 34, 0.5);
+    --sidebar-surface-strong: rgba(17, 20, 27, 0.55);
+    --sidebar-border: rgba(38, 43, 54, 0.7);
+    --sidebar-border-soft: rgba(46, 52, 66, 0.6);
     --sidebar-muted: #9aa3b2;
     --sidebar-accent: #4c9bff;
     --sidebar-accent-strong: #2f7dff;
-    --sidebar-chip: #2a2f3b;
+    --sidebar-chip: rgba(42, 47, 59, 0.65);
     --sidebar-chip-active: #5a48d6;
     background: radial-gradient(900px 320px at 10% -15%, rgba(76, 155, 255, 0.14), transparent 60%), var(--sidebar-bg);
     color: #f4f6fa;
@@ -5116,6 +5550,8 @@ watch(activeTab, (newTab) => {
 
 .sidebar-card {
     background: var(--sidebar-surface);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
     border: 1px solid var(--sidebar-border);
     border-radius: 10px;
     box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
@@ -5128,12 +5564,16 @@ watch(activeTab, (newTab) => {
 
 .sidebar-subtle {
     background: var(--sidebar-surface-strong);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
     border: 1px solid var(--sidebar-border-soft);
     border-radius: 14px;
 }
 
 .sidebar-input {
     background: var(--sidebar-surface-strong);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
     border: 1px solid var(--sidebar-border);
     color: #e7eaf2;
 }
@@ -5142,6 +5582,32 @@ watch(activeTab, (newTab) => {
     outline: none;
     border-color: var(--sidebar-accent);
     box-shadow: 0 0 0 3px rgba(76, 155, 255, 0.2);
+}
+
+/* Universal translucent blurred inputs for all input fields, textareas, selects inside sidebar */
+.sidebar-shell input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not(.bg-transparent),
+.sidebar-shell textarea:not(.bg-transparent):not(.positive_prompt),
+.sidebar-shell select {
+    background-color: rgba(17, 20, 27, 0.55);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+}
+
+.sidebar-shell textarea.positive_prompt {
+    background-color: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
+.sidebar-shell .flex.items-center.bg-\[\#1a1a1a\],
+.sidebar-shell .bg-\[\#0A0A10\],
+.sidebar-shell .bg-\[\#0f0f15\],
+.sidebar-shell .bg-\[\#121620\],
+.sidebar-shell .bg-\[\#141821\],
+.sidebar-shell .bg-\[\#11141B\] {
+    background-color: rgba(17, 20, 27, 0.55);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
 }
 
 .positive_prompt {

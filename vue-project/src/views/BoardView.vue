@@ -30,6 +30,7 @@ import ImageMasonry from '@/components/ImageMasonry.vue';
 import { onMounted, ref, onBeforeUnmount, inject } from 'vue';
 import { useRoute } from 'vue-router';
 
+
 const route = useRoute();
 const isDarkMode = inject('isDarkMode', ref(false));
 

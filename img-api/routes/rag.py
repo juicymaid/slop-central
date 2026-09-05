@@ -18,7 +18,7 @@ router = APIRouter()
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 LM_STUDIO_BASE = "http://127.0.0.1:1234"
-EMBEDDING_MODEL = "nomic-embed-text"   # Default; configurable via env var
+EMBEDDING_MODEL = "text-embedding-nomic-embed-text-v2-moe"   # Default; configurable via env var
 EMBEDDING_MODEL = os.environ.get("RAG_EMBED_MODEL", EMBEDDING_MODEL)
 
 RAG_INDEX_FILE = "storage/rag_index.npz"   # Persisted embeddings cache

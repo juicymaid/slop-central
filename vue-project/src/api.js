@@ -1,6 +1,7 @@
 import { reactive, ref } from "vue"
 
-const hostname = typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1'
+const rawHostname = typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1'
+const hostname = (!rawHostname || rawHostname === 'tauri.localhost' || rawHostname === 'localhost' || rawHostname === 'tauri') ? '127.0.0.1' : rawHostname
 export const apiUrl = `http://${hostname}:8000`
 export const wsUrl = `ws://${hostname}:8000`
 
@@ -128,6 +129,14 @@ export async function UpdateVRAM(params) {
 }
 
 export function ImageSrc(path) {
+    if (!path) return ''
+    if (typeof path !== 'string') return ''
+    if (path.startsWith('data:') || path.startsWith('blob:') || path.startsWith('http://') || path.startsWith('https://')) {
+        return path
+    }
+    if (!path.startsWith('/')) {
+        return `${apiUrl}/${path}`
+    }
     return `${apiUrl}${path}`
 }
 

@@ -372,7 +372,10 @@ def generate_comic_panel(
     return updated_panel
 
 
-from RedDownloader import RedDownloader
+try:
+    from RedDownloader import RedDownloader
+except ImportError:
+    RedDownloader = None
 from routes import tagger, comments
 
 

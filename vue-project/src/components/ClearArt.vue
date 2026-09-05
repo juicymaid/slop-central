@@ -1,7 +1,7 @@
 <template>
     <!--Clear Art is a artwork with a transparent background-->
     <video v-if="isVideo" :src="url" autoplay loop muted playsinline></video>
-    <img v-else :src="url" alt="" />
+    <img v-else :src="url" alt="" referrerpolicy="no-referrer" @error="handleArtError" />
 </template>
 
 <script setup>
@@ -209,4 +209,11 @@ onMounted(() => {
         url.value = _url
     }
 })
+function handleArtError() {
+    const localUrls = urls.filter(u => u.startsWith('/'))
+    if (localUrls.length > 0) {
+        const fallback = localUrls[Math.floor(Math.random() * localUrls.length)]
+        url.value = `${apiUrl}${fallback}`
+    }
+}
 </script>

@@ -7,13 +7,12 @@ import tailwindcss from '@tailwindcss/vite'
 import VueDevTools from 'vite-plugin-vue-devtools'
 
 const localAppData = process.env.LOCALAPPDATA || ''
-const codePath = localAppData ? `${localAppData}/Programs/Microsoft VS Code/bin/code.cmd`.replace(/\\/g, '/') : 'code'
 
 export default defineConfig({
   plugins: [
     vue(), tailwindcss(),
     VueDevTools({
-      launchEditor: codePath,
+      launchEditor: "code",
     }),
   ],
   server: {

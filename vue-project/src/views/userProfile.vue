@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen bg-[#0D0D12] text-[#FAF8F5] font-sans selection:bg-[#C9A84C]/30 relative overflow-hidden">
+  <div class="min-h-screen  text-[#FAF8F5] font-sans selection:bg-[#C9A84C]/30 relative overflow-hidden">
     <!-- Noise overlay -->
     <svg class="pointer-events-none fixed inset-0 z-50 h-full w-full opacity-5" xmlns="http://www.w3.org/2000/svg">
       <filter id="noise">
@@ -108,8 +108,20 @@
                 {{ post.title }}
               </p>
 
-              <div v-if="post.image_url" class="rounded-xl border border-[#2A2A35] overflow-hidden bg-[#0D0D12]">
-                <img :src="apiUrl + post.image_url" class="w-full h-auto object-cover" />
+              <div v-if="post.image_url" class="rounded-xl border border-[#2A2A35] overflow-hidden bg-[#0D0D12] relative group/postimg">
+                <router-link v-if="post.image_id" :to="'/image/' + post.image_id" class="block relative group/link">
+                  <img :src="apiUrl + post.image_url" class="w-full h-auto object-cover transition-transform duration-500 group-hover/postimg:scale-[1.01]" />
+                  <div class="absolute inset-0 bg-[#0D0D12]/40 opacity-0 group-hover/postimg:opacity-100 transition-opacity flex items-center justify-center">
+                    <span class="px-4 py-2 bg-[#C9A84C] text-[#0D0D12] rounded-full font-bold text-xs font-sans shadow-lg flex items-center gap-1.5 transform translate-y-2 group-hover/postimg:translate-y-0 transition-transform">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                      View Image #{{ post.image_id }}
+                    </span>
+                  </div>
+                </router-link>
+                <img v-else :src="apiUrl + post.image_url" class="w-full h-auto object-cover" />
               </div>
               <div v-else class="rounded-xl border border-[#2A2A35] bg-[#0D0D12] p-6 text-center">
                 <span class="text-[#FAF8F5]/30 font-mono text-xs uppercase tracking-widest">No image generated</span>
@@ -157,14 +169,106 @@
       </div>
 
       <!-- Media Tab -->
-      <div v-if="activeTab === 'media'" class="mt-6">
-        <div class="py-24 text-center">
+      <div v-if="activeTab === 'media'" class="mt-6 space-y-6">
+        <!-- Media Tags Bar & Settings -->
+        <div class="bg-[#14141A] rounded-2xl border border-[#2A2A35] p-5 shadow-lg flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-1.5">
+              <span class="text-xs font-mono uppercase tracking-widest text-[#C9A84C] font-semibold">Media Query Tags</span>
+              <span class="text-xs font-mono text-[#FAF8F5]/40">({{ characterMedia.length }} matched images)</span>
+            </div>
+            
+            <div v-if="!editingTags" class="flex items-center gap-2 flex-wrap">
+              <span v-for="tag in currentTagsList" :key="tag"
+                class="px-2.5 py-1 bg-[#0D0D12] text-[#FAF8F5]/80 border border-[#2A2A35] rounded-lg text-xs font-mono">
+                {{ tag }}
+              </span>
+              <span v-if="!currentTagsList.length" class="text-xs text-[#FAF8F5]/30 font-mono italic">
+                No tags configured (defaulting to prompt prefix / name)
+              </span>
+            </div>
+            
+            <div v-else class="flex gap-2 mt-2">
+              <input v-model="tagsInput" type="text" placeholder="e.g. tohru, maid, dragon maid, blonde hair"
+                class="flex-1 bg-[#0D0D12] text-[#FAF8F5] text-xs font-mono border border-[#2A2A35] rounded-xl px-3.5 py-2 focus:outline-none focus:border-[#C9A84C] focus:ring-1 focus:ring-[#C9A84C]"
+                @keydown.enter="saveTags" />
+              <button @click="saveTags" :disabled="savingTags"
+                class="px-4 py-2 bg-[#C9A84C] text-[#0D0D12] font-sans font-bold text-xs rounded-xl hover:brightness-110 transition-all disabled:opacity-50">
+                {{ savingTags ? 'Saving…' : 'Save' }}
+              </button>
+              <button @click="cancelEditTags"
+                class="px-3 py-2 bg-[#2A2A35] text-[#FAF8F5]/70 font-sans text-xs rounded-xl hover:bg-[#353545] transition-all">
+                Cancel
+              </button>
+            </div>
+          </div>
+
+          <div v-if="!editingTags" class="shrink-0 flex items-center gap-2">
+            <button @click="startEditTags"
+              class="px-4 py-2 bg-[#2A2A35]/80 hover:bg-[#2A2A35] text-[#FAF8F5] border border-[#2A2A35] rounded-xl text-xs font-sans font-semibold transition-all flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5 text-[#C9A84C]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+              Edit Tags
+            </button>
+            <button @click="loadCharacterMedia"
+              class="p-2 bg-[#2A2A35]/60 hover:bg-[#2A2A35] text-[#FAF8F5]/60 hover:text-[#FAF8F5] rounded-xl transition-all" title="Refresh media">
+              <svg class="w-4 h-4" :class="{ 'animate-spin': mediaLoading }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Loading State -->
+        <div v-if="mediaLoading" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+          <div v-for="n in 8" :key="n" class="aspect-[3/4] rounded-2xl bg-[#14141A] border border-[#2A2A35] animate-pulse"></div>
+        </div>
+
+        <!-- Media Grid -->
+        <div v-else-if="characterMedia.length > 0" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+          <div v-for="img in characterMedia" :key="img.Id"
+            class="group/card relative rounded-2xl overflow-hidden bg-[#14141A] border border-[#2A2A35] hover:border-[#C9A84C]/40 transition-all duration-300 shadow-md hover:shadow-xl aspect-[3/4]">
+            <router-link :to="'/image/' + img.Id" class="block w-full h-full">
+              <img :src="ImageSrc(img.Path)"
+                class="w-full h-full object-cover transition-transform duration-500 group-hover/card:scale-105"
+                loading="lazy" />
+              
+              <!-- Card Hover Overlay -->
+              <div class="absolute inset-0 bg-gradient-to-t from-[#0D0D12]/90 via-[#0D0D12]/20 to-transparent opacity-0 group-hover/card:opacity-100 transition-opacity p-3 flex flex-col justify-between">
+                <!-- Top Badge if linked to post -->
+                <div class="flex justify-between items-center">
+                  <span v-if="img.post_info"
+                    class="px-2 py-0.5 bg-[#C9A84C] text-[#0D0D12] text-[10px] font-mono uppercase tracking-wider font-bold rounded-full shadow">
+                    Post
+                  </span>
+                  <span v-else></span>
+
+                  <span v-if="img.Rating" class="px-2 py-0.5 bg-[#0D0D12]/80 backdrop-blur-sm text-yellow-400 text-xs font-mono rounded-full border border-[#2A2A35]">
+                    ★ {{ img.Rating.toFixed(0) }}
+                  </span>
+                </div>
+
+                <!-- Bottom info -->
+                <div class="min-w-0">
+                  <p class="text-xs font-sans text-[#FAF8F5] line-clamp-2 leading-tight drop-shadow">
+                    {{ img.Prompt || img.taggerPrompt || 'No prompt' }}
+                  </p>
+                  <p class="text-[10px] font-mono text-[#FAF8F5]/40 mt-1">#{{ img.Id }}</p>
+                </div>
+              </div>
+            </router-link>
+          </div>
+        </div>
+
+        <!-- Empty State -->
+        <div v-else class="py-24 text-center bg-[#14141A]/50 rounded-2xl border border-[#2A2A35]">
           <svg class="mx-auto w-16 h-16 text-[#2A2A35] mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1"
               d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
           </svg>
-          <p class="text-[#FAF8F5]/30 font-mono text-sm uppercase tracking-widest">Media gallery coming soon</p>
-          <p class="text-[#FAF8F5]/20 font-sans text-xs mt-2">This tab is reserved for future media content.</p>
+          <p class="text-[#FAF8F5]/40 font-mono text-sm uppercase tracking-widest">No matching media found</p>
+          <p class="text-[#FAF8F5]/20 font-sans text-xs mt-2">Try editing the media query tags above to match images of this character.</p>
         </div>
       </div>
 
@@ -174,7 +278,7 @@
 
 
 <script setup>
-import { apiUrl, GetFromApi } from '@/api';
+import { apiUrl, GetFromApi, ImageSrc } from '@/api';
 import { onMounted, ref, computed, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { marked } from 'marked';
@@ -186,6 +290,11 @@ const route = useRoute();
 
 const character = ref(null);
 const characterComments = ref([]);
+const characterMedia = ref([]);
+const mediaLoading = ref(false);
+const editingTags = ref(false);
+const tagsInput = ref('');
+const savingTags = ref(false);
 const descExpanded = ref(false);
 
 const parsedDescription = computed(() => {
@@ -193,14 +302,22 @@ const parsedDescription = computed(() => {
   return marked.parse(raw)
 })
 
-
 const activeTab = ref('posts');
 
 const tabs = computed(() => [
   { id: 'posts', label: 'Posts', count: character.value?.posts?.length || 0 },
   { id: 'comments', label: 'Comments', count: characterComments.value.length },
-  { id: 'media', label: 'Media' },
+  { id: 'media', label: 'Media', count: characterMedia.value.length },
 ]);
+
+const currentTagsList = computed(() => {
+  const raw = (character.value?.tags || '').trim();
+  if (raw) {
+    return raw.split(',').map(t => t.trim()).filter(Boolean);
+  }
+  const fallback = (character.value?.prompt_prefix || character.value?.name || '').trim();
+  return fallback ? fallback.split(',').map(t => t.trim()).filter(Boolean) : [];
+});
 
 function formatTime(timestamp) {
   if (!timestamp) return '';
@@ -212,6 +329,38 @@ function formatTime(timestamp) {
   if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
   if (diff < 604800) return Math.floor(diff / 86400) + 'd ago';
   return d.toLocaleDateString();
+}
+
+function startEditTags() {
+  tagsInput.value = character.value?.tags || character.value?.prompt_prefix || '';
+  editingTags.value = true;
+}
+
+function cancelEditTags() {
+  editingTags.value = false;
+  tagsInput.value = '';
+}
+
+async function saveTags() {
+  if (!character.value?.id) return;
+  savingTags.value = true;
+  try {
+    const res = await fetch(`${apiUrl}/characters/${character.value.id}/tags`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tags: tagsInput.value.trim() })
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      character.value.tags = updated.tags;
+      editingTags.value = false;
+      await loadCharacterMedia();
+    }
+  } catch (e) {
+    console.error("Failed to update character tags:", e);
+  } finally {
+    savingTags.value = false;
+  }
 }
 
 async function loadCharacter() {
@@ -229,25 +378,52 @@ async function loadCharacter() {
 async function loadCharacterComments() {
   try {
     const charId = route.params.username;
-    // Try to load comments where this character is involved
     const data = await GetFromApi(`users/${charId}/comments`);
     if (data && Array.isArray(data)) {
       characterComments.value = data;
     }
   } catch (e) {
-    // Character may not have old-style comments - that's ok
     characterComments.value = [];
+  }
+}
+
+async function loadCharacterMedia() {
+  const charId = route.params.username;
+  if (!charId) return;
+  mediaLoading.value = true;
+  try {
+    const data = await GetFromApi(`characters/${charId}/media?per_page=60`);
+    if (data && Array.isArray(data.images)) {
+      characterMedia.value = data.images;
+    } else if (Array.isArray(data)) {
+      characterMedia.value = data;
+    } else {
+      characterMedia.value = [];
+    }
+  } catch (e) {
+    console.error("Failed to fetch character media:", e);
+    characterMedia.value = [];
+  } finally {
+    mediaLoading.value = false;
   }
 }
 
 onMounted(() => {
   loadCharacter();
   loadCharacterComments();
+  loadCharacterMedia();
 });
 
 watch(() => route.params.username, () => {
   loadCharacter();
   loadCharacterComments();
+  loadCharacterMedia();
+});
+
+watch(activeTab, (newTab) => {
+  if (newTab === 'media' && characterMedia.value.length === 0) {
+    loadCharacterMedia();
+  }
 });
 </script>
 

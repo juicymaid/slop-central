@@ -12,8 +12,7 @@ from routes import models
 router = APIRouter()
 
 folders = [
-    r"E:\unity\cache\_\ai\stable-diffusion-webui\outputs",
-    r"H:\ent\ai\StabilityMatrix\Packages\ComfyUI\output",
+    os.getenv("IMAGES_DIR", "/mnt/SSD/ai/Data/Images"),
 ]
 
 scan_inprogress = False
@@ -25,85 +24,90 @@ files_found = 0
 error = False
 active_connections = []
 
+scan_state = {
+    "status": "idle",
+    "message": "Ready to scan",
+    "processed": 0,
+    "successful": 0,
+    "total": 0,
+    "percent": 0.0,
+    "latest_file": "",
+    "error": False,
+    "error_message": "",
+    "scanned_images": [],
+    "completed_stats": {"total_processed": 0, "total_added": 0, "start_id": 0},
+}
+
 # Prompt update states
 update_inprogress = False
 update_total = 0
 update_processed = 0
 update_successful = 0
 update_error = False
-@router.websocket("/ws/scan")
-async def websocket_scan(websocket: WebSocket):
-    global scan_inprogress, active_connections
 
-    await websocket.accept()
-    active_connections.append(websocket)
-
-    try:
-        if scan_inprogress:
-            await websocket.send_json({
-                "type": "error",
-                "message": "Scan already in progress"
-            })
-            return
-
-        scan_inprogress = True
-
-        # Send initial status
-        await websocket.send_json({
-            "type": "status",
-            "status": "starting",
-            "message": "Starting scan process"
-        })
-
-        # Run the scan in a background thread so the websocket stays responsive
-        await asyncio.to_thread(websocket_scan_images_sync, websocket)
-    except WebSocketDisconnect:
-        print("WebSocket client disconnected")
-    except Exception as e:
-        print(f"WebSocket error: {e}")
+async def broadcast_scan_message(msg: dict):
+    to_remove = []
+    for ws in list(active_connections):
         try:
-            await websocket.send_json({
-                "type": "error",
-                "message": str(e)
-            })
-        except:
-            pass
-    finally:
-        if websocket in active_connections:
-            active_connections.remove(websocket)
+            await ws.send_json(msg)
+        except Exception:
+            to_remove.append(ws)
+    for ws in to_remove:
+        if ws in active_connections:
+            active_connections.remove(ws)
 
-def websocket_scan_images_sync(websocket: WebSocket):
-    # This function is now synchronous and will be run in a thread
-    # Use asyncio.run to call async functions if needed
-    asyncio.run(_websocket_scan_images_sync(websocket))
+async def run_scan_task():
+    global scan_inprogress, scan_state, images_to_scan, retrieved_unscanned_images, scanned_images, error
 
-async def _websocket_scan_images_sync(websocket: WebSocket):
-    global images_to_scan, scan_inprogress, scanned_images, retrieved_unscanned_images, error
+    if scan_inprogress:
+        return
 
-    # Reset scan state
+    scan_inprogress = True
+    error = False
     retrieved_unscanned_images = False
     scanned_images = []
-    error = False
+
+    scan_state["status"] = "starting"
+    scan_state["message"] = "Starting scan process"
+    scan_state["processed"] = 0
+    scan_state["successful"] = 0
+    scan_state["total"] = 0
+    scan_state["percent"] = 0.0
+    scan_state["latest_file"] = ""
+    scan_state["error"] = False
+    scan_state["error_message"] = ""
+    scan_state["scanned_images"] = []
+
+    await broadcast_scan_message({
+        "type": "status",
+        "status": "starting",
+        "message": "Starting scan process",
+    })
 
     try:
-        await websocket.send_json({
+        scan_state["status"] = "retrieving_files"
+        scan_state["message"] = "Retrieving unscanned images..."
+        await broadcast_scan_message({
             "type": "status",
             "status": "retrieving_files",
-            "message": "Retrieving unscanned images..."
+            "message": "Retrieving unscanned images...",
         })
 
         images_to_scan = await get_all_unscanned_images()
         retrieved_unscanned_images = True
+        scan_state["total"] = len(images_to_scan)
+        scan_state["status"] = "files_found"
+        scan_state["message"] = f"Found {len(images_to_scan)} unscanned images"
 
-        await websocket.send_json({
+        await broadcast_scan_message({
             "type": "status",
             "status": "files_found",
             "message": f"Found {len(images_to_scan)} unscanned images",
-            "total_files": len(images_to_scan)
+            "total_files": len(images_to_scan),
         })
 
         # Load existing images once at start of scan
-        utils.ensure_loaded()
+        await asyncio.to_thread(utils.ensure_loaded)
         all_images = utils.raw_all_images.copy()
 
         processed_count = 0
@@ -117,45 +121,53 @@ async def _websocket_scan_images_sync(websocket: WebSocket):
             end_idx = min(start_idx + batch_size, len(images_to_scan))
             batch = images_to_scan[start_idx:end_idx]
 
-            # Run get_metadata in threads to avoid blocking
+            # Run get_metadata in threads to avoid blocking event loop
             tasks = [asyncio.to_thread(get_metadata_sync, image_path) for image_path in batch]
             batch_results = await asyncio.gather(*tasks)
 
             for metadata in batch_results:
                 processed_count += 1
+                scan_state["processed"] = processed_count
+                pct = round(processed_count / max(1, len(images_to_scan)) * 100, 1)
+                scan_state["percent"] = pct
 
                 if metadata:
                     success_count += 1
+                    scan_state["successful"] = success_count
                     # Check if this image has been moved
                     was_moved = find_and_update_moved_image(metadata, all_images)
                     if not was_moved:
                         scanned_images.append(metadata)
+                        scan_state["scanned_images"].append(metadata)
 
-                    await websocket.send_json({
+                    await broadcast_scan_message({
                         "type": "image_discovered",
                         "processed": processed_count,
                         "successful": success_count,
                         "total": len(images_to_scan),
-                        "percent": round(processed_count / len(images_to_scan) * 100, 1),
-                        "image_path": metadata.get("Path", "Unknown")
+                        "percent": pct,
+                        "image_path": metadata.get("Path", "Unknown"),
+                        "image_id": metadata.get("Id"),
                     })
                 else:
-                    await websocket.send_json({
+                    await broadcast_scan_message({
                         "type": "image_failed",
                         "processed": processed_count,
                         "successful": success_count,
                         "total": len(images_to_scan),
-                        "percent": round(processed_count / len(images_to_scan) * 100, 1)
+                        "percent": pct,
                     })
 
                 if processed_count % 5 == 0 or processed_count == len(images_to_scan):
-                    await websocket.send_json({
+                    latest_p = metadata.get("Path", "Unknown") if metadata else "Unknown"
+                    scan_state["latest_file"] = latest_p
+                    await broadcast_scan_message({
                         "type": "progress",
                         "processed": processed_count,
                         "successful": success_count,
                         "total": len(images_to_scan),
-                        "percent": round(processed_count / len(images_to_scan) * 100, 1),
-                        "latest_file": metadata.get("Path", "Unknown") if metadata else "Unknown"
+                        "percent": pct,
+                        "latest_file": latest_p,
                     })
 
         highest_id = 0
@@ -165,19 +177,29 @@ async def _websocket_scan_images_sync(websocket: WebSocket):
         for index, metadata in enumerate(scanned_images):
             metadata["Id"] = highest_id + 1 + index
 
-        await websocket.send_json({
+        scan_state["status"] = "saving"
+        scan_state["message"] = "Saving new and updated images..."
+        await broadcast_scan_message({
             "type": "status",
             "status": "saving",
-            "message": f"Saving new and updated images..."
+            "message": "Saving new and updated images...",
         })
 
         start_id = highest_id
         all_images.extend(scanned_images)
         utils.raw_all_images = all_images
-        utils.save_images()
-        utils.load_images()
+        await asyncio.to_thread(utils.save_images)
+        await asyncio.to_thread(utils.load_images)
 
-        await websocket.send_json({
+        scan_state["status"] = "completed"
+        scan_state["message"] = "Scan completed successfully"
+        scan_state["completed_stats"] = {
+            "total_processed": processed_count,
+            "total_added": len(scanned_images),
+            "start_id": start_id,
+        }
+
+        await broadcast_scan_message({
             "type": "complete",
             "status": "completed",
             "message": "Scan completed successfully",
@@ -188,98 +210,116 @@ async def _websocket_scan_images_sync(websocket: WebSocket):
 
     except Exception as e:
         error = True
+        scan_state["error"] = True
+        scan_state["error_message"] = str(e)
+        scan_state["status"] = "error"
         print(f"Error during scan: {e}")
-        await websocket.send_json({
+        await broadcast_scan_message({
             "type": "error",
-            "message": str(e)
+            "message": str(e),
         })
     finally:
         scan_inprogress = False
+
+@router.websocket("/ws/scan")
+async def websocket_scan(websocket: WebSocket, action: str = "auto"):
+    global scan_inprogress, active_connections
+
+    await websocket.accept()
+    active_connections.append(websocket)
+
+    try:
+        if scan_inprogress:
+            # Send snapshot of current status immediately to catching-up client
+            await websocket.send_json({
+                "type": "status",
+                "status": scan_state["status"],
+                "message": scan_state["message"],
+                "total_files": scan_state["total"],
+            })
+            await websocket.send_json({
+                "type": "progress",
+                "processed": scan_state["processed"],
+                "successful": scan_state["successful"],
+                "total": scan_state["total"],
+                "percent": scan_state["percent"],
+                "latest_file": scan_state["latest_file"],
+            })
+            # Replay already discovered images
+            for img in scan_state["scanned_images"]:
+                await websocket.send_json({
+                    "type": "image_discovered",
+                    "processed": scan_state["processed"],
+                    "successful": scan_state["successful"],
+                    "total": scan_state["total"],
+                    "percent": scan_state["percent"],
+                    "image_path": img.get("Path", "Unknown"),
+                    "image_id": img.get("Id"),
+                })
+        else:
+            if action in ("start", "auto"):
+                asyncio.create_task(run_scan_task())
+            else:
+                await websocket.send_json({
+                    "type": "status",
+                    "status": scan_state["status"],
+                    "message": scan_state["message"],
+                })
+
+        # Keep connection open for live broadcast listening and client actions
+        while True:
+            data = await websocket.receive_text()
+            try:
+                msg = json.loads(data)
+                if isinstance(msg, dict) and msg.get("action") == "start" and not scan_inprogress:
+                    asyncio.create_task(run_scan_task())
+            except Exception:
+                pass
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        print(f"WebSocket client error: {e}")
+    finally:
+        if websocket in active_connections:
+            active_connections.remove(websocket)
 
 def get_metadata_sync(file_path):
     # Synchronous wrapper for get_metadata
     return asyncio.run(get_metadata(file_path))
 
 @router.post("/start-scan")
-def start_scan(background_tasks: BackgroundTasks):
-    global scan_inprogress, retrieved_unscanned_images, error
+async def start_scan(background_tasks: BackgroundTasks = None):
+    global scan_inprogress
     
     if scan_inprogress:
         raise HTTPException(status_code=400, detail="Scan already in progress")
     
-    scan_inprogress = True
-    retrieved_unscanned_images = False
-    error = False
-    
-    # Run the scanning process in the background
-    background_tasks.add_task(background_scan_images)
+    asyncio.create_task(run_scan_task())
     return {"message": "Scan started in background"}
 
 async def background_scan_images():
-    global images_to_scan, scan_inprogress, scanned_images, retrieved_unscanned_images, error
-    try:
-        print("Retrieving unscanned images...")
-        images_to_scan = await get_all_unscanned_images()
-        retrieved_unscanned_images = True
-        print(f"Found {len(images_to_scan)} unscanned images")
-
-        # Load existing images once at start of scan
-        utils.ensure_loaded()
-        all_images = utils.raw_all_images.copy()
-
-        async def scan_single_image(image_path):
-            try:
-                print(f"[{len(scanned_images)}/{len(images_to_scan)}] Scanning image:", image_path)
-                metadata = await get_metadata(image_path)
-                if metadata:
-                    return metadata
-                return None
-            except Exception as img_error:
-                print(f"Error processing image {image_path}: {img_error}")
-                return None
-
-        tasks = [asyncio.create_task(scan_single_image(image_path)) for image_path in images_to_scan]
-        results = await asyncio.gather(*tasks)
-
-        for metadata in results:
-            if metadata:
-                was_moved = find_and_update_moved_image(metadata, all_images)
-                if not was_moved:
-                    scanned_images.append(metadata)
-
-        highest_id = 0
-        if all_images:
-            highest_id = max(image["Id"] for image in all_images)
-
-        for index, metadata in enumerate(scanned_images):
-            metadata["Id"] = highest_id + 1 + index
-            print(f"[{index + 1}/{len(scanned_images)}] Prompt:  {metadata['Prompt']}")
-
-        all_images.extend(scanned_images)
-        utils.raw_all_images = all_images
-        utils.save_images()
-
-        print("Scan completed. Images saved to SQLite database")
-        utils.load_images()
-        print("Images reloaded into memory")
-
-    except Exception as e:
-        print("Error occurred during scanning:", e)
-        error = True
-    finally:
-        scan_inprogress = False
+    await run_scan_task()
 
 @router.get("/scan-status")
 def get_scan_status():
-    return{
+    return {
         "scan_inprogress": scan_inprogress,
-        "retrieved_unscanned_images": retrieved_unscanned_images,
-        "images_to_scan": len(images_to_scan) if retrieved_unscanned_images else 0,
-        "scanned_images": len(scanned_images) if retrieved_unscanned_images else 0,
-        "new_images": [img["Path"] for img in scanned_images] if retrieved_unscanned_images else [],
+        "status": scan_state["status"],
+        "message": scan_state["message"],
+        "processed": scan_state["processed"],
+        "successful": scan_state["successful"],
+        "total": scan_state["total"],
+        "percent": scan_state["percent"],
+        "latest_file": scan_state["latest_file"],
+        "error": scan_state["error"],
+        "error_message": scan_state["error_message"],
+        "new_images": [img.get("Path") for img in scan_state["scanned_images"] if img.get("Path")],
+        "scanned_images": scan_state["scanned_images"],
+        "completed_stats": scan_state["completed_stats"],
+        "retrieved_unscanned_images": scan_state["status"] not in ("idle", "retrieving_files"),
+        "images_to_scan": scan_state["total"],
         "all_files": all_files,
         "files_checked": files_found,
-        "error": error,
     }
 
 @router.get("/unscanned")
@@ -299,12 +339,9 @@ async def get_all_unscanned_images():
                 files_found += 1
                 if file.lower().endswith(valid_extensions):
                     abs_path = os.path.join(root, file)
-                    rel_path = os.path.relpath(abs_path, start=folder)
-                    rel_path_unix = os.path.join(os.path.basename(folder), rel_path).replace(os.sep, "/")
-                    full_relative = f"/files/{rel_path_unix}"
-                    full_relative = full_relative.replace("/outputs/","/automatic/").replace("/output/","/comfyui/")
+                    rel_path = os.path.relpath(abs_path, start=folder).replace(os.sep, "/")
+                    full_relative = f"/files/automatic/{rel_path}"
                     images.append(full_relative)
-
         return images
 
     tasks = [asyncio.to_thread(scan_folder, folder) for folder in folders]
@@ -798,80 +835,138 @@ async def convert_videos_to_gifs():
         "details": conversion_results
     }
 
+prune_status = {
+    "status": "idle",  # idle, running, completed, error
+    "processed": 0,
+    "total": 0,
+    "percent": 0,
+    "files_removed": 0,
+    "missing_removed": 0,
+    "duplicates_removed": 0,
+    "models_filled": 0,
+    "remaining_images": 0,
+    "message": "Ready to prune images",
+}
+
+
+@router.get("/prune-status")
+def get_prune_status():
+    """Get the current status and progress of library pruning."""
+    return prune_status
+
+
 @router.post("/prune-images")
-async def prune_images():
-    print("Prune: loading models...")
-    _models = models.load_models()
-    print(f"Prune: loaded {len(_models)} models")
+def prune_images(background_tasks: BackgroundTasks):
+    """Start pruning missing and duplicate images in the background."""
+    global prune_status
+    if prune_status["status"] == "running":
+        raise HTTPException(status_code=400, detail="Image pruning already in progress")
 
-    utils.ensure_loaded()
-    all_images = utils.raw_all_images.copy()
-    print(f"Prune: loaded {len(all_images)} images from SQLite")
-    
-    files_removed = 0
-    missing_removed = 0
-    models_filled = 0
+    prune_status["status"] = "running"
+    prune_status["processed"] = 0
+    prune_status["total"] = 0
+    prune_status["percent"] = 0
+    prune_status["files_removed"] = 0
+    prune_status["missing_removed"] = 0
+    prune_status["duplicates_removed"] = 0
+    prune_status["models_filled"] = 0
+    prune_status["remaining_images"] = 0
+    prune_status["message"] = "Loading images and models for prune check..."
 
-    total = len(all_images)
-    step = max(1, total // 20)  # ~5% progress updates
+    background_tasks.add_task(background_prune_images)
+    return {"message": "Image pruning started in background", "status": prune_status}
 
-    print("Prune: checking file existence and filling model names...")
-    for i, image in enumerate(list(all_images), start=1):  # iterate over a copy; we may remove from original
-        path = image["Path"]
-        if path.startswith("/files/"):
-            path = path.replace("/files", utils.api_file_root)
 
-        if not os.path.exists(path):
-            print(f"Prune: missing file -> {path}")
-            all_images.remove(image)
-            files_removed += 1
-            missing_removed += 1
-        elif image.get("Model") is None or image.get("Model") == "None":
-            if image.get("ModelHash") in _models:
-                image["Model"] = _models[image["ModelHash"]]["Name"]
-                models_filled += 1
+def background_prune_images():
+    """Background worker to check file existence, duplicates, and model metadata."""
+    global prune_status
+    try:
+        print("Prune: loading models...")
+        _models = models.load_models()
+        print(f"Prune: loaded {len(_models)} models")
+
+        utils.ensure_loaded()
+        all_images = utils.raw_all_images.copy()
+        total = len(all_images)
+        prune_status["total"] = total
+        prune_status["message"] = f"Checking file existence for {total} images..."
+        print(f"Prune: loaded {total} images from SQLite")
+
+        files_removed = 0
+        missing_removed = 0
+        models_filled = 0
+
+        # Pass 1: Checking missing files and filling model names (0% - 50%)
+        for i, image in enumerate(list(all_images), start=1):
+            path = image.get("Path", "")
+            if path.startswith("/files/"):
+                path = path.replace("/files", utils.api_file_root)
+
+            if not os.path.exists(path):
+                all_images.remove(image)
+                files_removed += 1
+                missing_removed += 1
+            elif image.get("Model") is None or image.get("Model") == "None":
+                if image.get("ModelHash") in _models:
+                    image["Model"] = _models[image["ModelHash"]]["Name"]
+                    models_filled += 1
+                else:
+                    image["Model"] = None
+
+            if i % 25 == 0 or i == total:
+                pct = round((i / max(1, total)) * 50, 1)
+                prune_status["processed"] = i
+                prune_status["percent"] = pct
+                prune_status["files_removed"] = files_removed
+                prune_status["missing_removed"] = missing_removed
+                prune_status["models_filled"] = models_filled
+                prune_status["message"] = f"Pass 1/2: Checked {i}/{total} files ({pct}%)"
+
+        # Pass 2: Removing duplicate entries by Path (50% - 100%)
+        prune_status["message"] = "Pass 2/2: Checking for duplicate entries..."
+        unique_images = {}
+        duplicates_removed = 0
+        total2 = len(all_images)
+
+        for j, image in enumerate(list(all_images), start=1):
+            img_path = image.get("Path")
+            if img_path not in unique_images:
+                unique_images[img_path] = image
             else:
-                image["Model"] = None
+                all_images.remove(image)
+                files_removed += 1
+                duplicates_removed += 1
 
-        if i % step == 0 or i == total:
-            pct = round(i / max(1, total) * 100, 1)
-            print(f"Prune: pass 1 {i}/{total} ({pct}%) - missing removed {missing_removed}, models filled {models_filled}")
+            if j % 25 == 0 or j == total2:
+                pct = round(50 + (j / max(1, total2)) * 50, 1)
+                prune_status["percent"] = pct
+                prune_status["files_removed"] = files_removed
+                prune_status["duplicates_removed"] = duplicates_removed
+                prune_status["message"] = f"Pass 2/2: Deduplicating {j}/{total2} ({pct}%)"
 
-    print("Prune: removing duplicate entries by Path...")
-    unique_images = {}
-    duplicates_removed = 0
-    total2 = len(all_images)
-    step2 = max(1, total2 // 20)
+        all_images = list(unique_images.values())
+        utils.raw_all_images = all_images
+        utils.save_images()
+        utils.load_images()
 
-    for j, image in enumerate(list(all_images), start=1):
-        if image["Path"] not in unique_images:
-            unique_images[image["Path"]] = image
-        else:
-            print(f"Prune: duplicate -> Id {image.get('Id')} Path {image['Path']}")
-            all_images.remove(image)
-            files_removed += 1
-            duplicates_removed += 1
+        prune_status["status"] = "completed"
+        prune_status["percent"] = 100
+        prune_status["files_removed"] = files_removed
+        prune_status["missing_removed"] = missing_removed
+        prune_status["duplicates_removed"] = duplicates_removed
+        prune_status["models_filled"] = models_filled
+        prune_status["remaining_images"] = len(all_images)
+        prune_status["message"] = (
+            f"Pruning complete! Removed {files_removed} files "
+            f"({missing_removed} missing, {duplicates_removed} duplicates). "
+            f"Remaining: {len(all_images)} images."
+        )
+        print(f"Prune: complete. Remaining images: {len(all_images)}")
 
-        if j % step2 == 0 or j == total2:
-            pct = round(j / max(1, total2) * 100, 1)
-            print(f"Prune: pass 2 {j}/{total2} ({pct}%) - duplicates removed {duplicates_removed}")
-
-    all_images = list(unique_images.values())
-
-    utils.raw_all_images = all_images
-    utils.save_images()
-
-    utils.load_images()
-
-    print(f"Prune: completed. Removed {files_removed} (missing: {missing_removed}, duplicates: {duplicates_removed}). Remaining: {len(all_images)}")
-    print("Prune: images.json written and images reloaded.")
-
-    return {
-        "message": "Pruned images",
-        "files_removed": files_removed,
-        "remaining_images": len(all_images)
-    }
-
+    except Exception as e:
+        prune_status["status"] = "error"
+        prune_status["message"] = f"Error during pruning: {str(e)}"
+        print(f"Prune: fatal error: {e}")
 
 
 
